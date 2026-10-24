@@ -126,7 +126,16 @@ fn compact_preview(
         )
     })?;
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for id in ["ask-review", "review-details", "choose-commits", "refresh"] {
+            let bounds = window.find(id).bounds();
+            assert!(
+                bounds.size.width >= px(12.) && bounds.right() <= window.viewport_size().width,
+                "{id}: {bounds:?}"
+            );
+        }
+    })?;
     cx.capture_screenshot(handle)?.save(output)?;
     Ok(())
 }

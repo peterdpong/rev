@@ -4,7 +4,18 @@ use gpui_kit::component::{TitleBar, text::TextView};
 
 impl Patch {
     pub(super) fn top_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let mut leading = row().gap_1().h_full().flex_shrink_0().pl(px(80.)).pr_2();
+        let navigation_width = if self.sidebar_collapsed {
+            px(112.)
+        } else {
+            px(225.)
+        };
+        let mut leading = row()
+            .w(navigation_width)
+            .gap_1()
+            .h_full()
+            .flex_shrink_0()
+            .pl(px(80.))
+            .pr_2();
         if self.sidebar_collapsed {
             leading = leading.child(self.sidebar_toggle(window, cx));
         } else {
@@ -21,7 +32,13 @@ impl Patch {
                 )
                 .child(self.sidebar_toggle(window, cx));
         }
-        let mut main = row().flex_1().min_w_0().px_3().gap_2().text_size(px(12.));
+        let mut main = row()
+            .w((window.viewport_size().width - navigation_width).max(px(0.)))
+            .flex_shrink_0()
+            .min_w_0()
+            .px_3()
+            .gap_2()
+            .text_size(px(12.));
         if let Some(review) = self.review.clone() {
             let label = review
                 .pull_request
@@ -367,6 +384,13 @@ impl Patch {
                     .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
             );
         column()
+            .w((window.viewport_size().width
+                - if self.sidebar_collapsed {
+                    px(0.)
+                } else {
+                    px(225.)
+                })
+            .max(px(0.)))
             .flex_shrink_0()
             .child(summary)
             .child(controls)
