@@ -55,6 +55,23 @@ Project tabs and last-selected files persist across launches. Draft prompts and 
 | ⌘Enter | Submit the prompt or dialog |
 | Escape | Close the prompt or dialog |
 
+## Commit comparisons
+
+Use **All commits** in the review toolbar. Click one commit, or click one end and **Shift-click** the other to select an inclusive range, then **View diff**. **Full branch diff** returns to the normal branch/PR comparison. The selection stays with its branch tab; feedback, viewed files, and agent conversations are scoped to that comparison.
+
+[Commit picker preview](docs/gpui-commits.png)
+
+History follows the first-parent chain, newest first, with **Load older commits** for longer histories. A merge commit is compared with its first parent. Root commits compare against an empty tree. Switching to **Working tree** clears the commit filter.
+
+```sh
+patch commits --repo ~/dev/my-repo
+patch diff --commit HEAD~1
+patch diff --from HEAD~3 --to HEAD~1
+patch open --from HEAD~3 --to HEAD~1
+```
+
+Both range endpoints are included. Commit comparisons do not switch branches or modify the checkout. Agent questions use the selected endpoint; applying feedback requires the checkout to match it.
+
 ## CLI
 
 After `npm run build:host`, use `node bin/patch.mjs`, or use the native `target/release/patch` executable after `npm run build`.

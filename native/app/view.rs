@@ -121,7 +121,10 @@ impl Patch {
                     let active = self.review.as_ref().is_some_and(|r| r.key == tab.id);
                     let request = tab.request.clone();
                     let file = tab.file.clone();
-                    let running = self.runs.get(&id).is_some_and(|r| r.status == "running");
+                    let running = self
+                        .runs
+                        .get(tab.scope_key.as_ref().unwrap_or(&id))
+                        .is_some_and(|r| r.status == "running");
                     group = group.child(
                         row()
                             .mx_2()
@@ -242,7 +245,25 @@ impl Patch {
         let working = review.request.mode.as_deref() == Some("working");
         let mut request = review.request.clone();
         request.mode = Some(if working { "branch" } else { "working" }.into());
+        request.commit_range = None;
         let busy = self.loading || self.submitting;
+        let run_scope = self
+            .runs
+            .iter()
+            .find(|(scope, run)| {
+                run.status == "running"
+                    && self.run_requests.get(*scope).is_some_and(|request| {
+                        request.repo == review.request.repo
+                            && request.base == review.request.base
+                            && request.head == review.request.head
+                    })
+            })
+            .map(|(scope, _)| scope.clone())
+            .or_else(|| {
+                self.runs
+                    .contains_key(&review.scope_key)
+                    .then(|| review.scope_key.clone())
+            });
         column()
             .child(
                 row()
@@ -262,12 +283,12 @@ impl Patch {
                                 review.request.head.as_deref().unwrap_or("HEAD")
                             )),
                     )
-                    .when(self.runs.contains_key(&review.key), |d| {
+                    .when_some(run_scope, |d, scope| {
                         d.child(
                             button(
                                 "agent-output",
                                 self.runs
-                                    .get(&review.key)
+                                    .get(&scope)
                                     .map(|r| {
                                         if r.status == "running" {
                                             "Agent running…"
@@ -278,9 +299,7 @@ impl Patch {
                                     .unwrap_or_default(),
                             )
                             .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.open_modal(ModalKind::Run, None, None, window, cx)
-                                },
+                                move |this, _, window, cx| this.open_run(scope.clone(), window, cx),
                             )),
                         )
                     })
@@ -316,6 +335,26 @@ impl Patch {
                             .child(format!("−{total_removed}")),
                     )
                     .child(div().flex_1())
+                    .child(
+                        button(
+                            "choose-commits",
+                            if let Some(range) = &review.request.commit_range {
+                                if review.commit_count == 1 {
+                                    range.end[..8].to_string()
+                                } else {
+                                    format!("{} commits", review.commit_count)
+                                }
+                            } else {
+                                "All commits".into()
+                            },
+                        )
+                        .dropdown_caret(true)
+                        .disabled(busy || self.patch_loading)
+                        .tooltip("Review one commit or a range of commits")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_commit_picker(window, cx)),
+                        ),
+                    )
                     .child(
                         button(
                             "scope",
@@ -421,6 +460,113 @@ impl Patch {
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(list),
+            )
+            .into_any_element()
+    }
+
+    fn commit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let commit = &self.commit_picker.commits[index];
+        let selected = self.commit_picker.selected(index);
+        let label = format!("{} {}", &commit.sha[..8], commit.subject);
+        Button::new(("commit", index))
+            .ghost()
+            .w_full()
+            .h(px(48.))
+            .px_2()
+            .accessibility_label(label)
+            .tooltip(format!(
+                "{} · {} · Shift-click to select a range",
+                commit.author, commit.date
+            ))
+            .selected(selected)
+            .child(
+                row()
+                    .w_full()
+                    .min_w_0()
+                    .child(div().w(px(16.)).flex_shrink_0().child(if selected {
+                        "✓"
+                    } else {
+                        ""
+                    }))
+                    .child(
+                        column()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(13.))
+                                    .child(commit.subject.clone()),
+                            )
+                            .child(
+                                row()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(MUTED))
+                                    .child(
+                                        div()
+                                            .font_family("Menlo")
+                                            .child(commit.sha[..8].to_string()),
+                                    )
+                                    .child(div().truncate().child(commit.author.clone())),
+                            ),
+                    ),
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                this.choose_commit(index, event.modifiers().shift, cx)
+            }))
+            .into_any_element()
+    }
+
+    fn commit_choices(&self, cx: &mut Context<Self>) -> AnyElement {
+        column()
+            .gap_2()
+            .child(
+                Button::new("all-commits")
+                    .ghost()
+                    .w_full()
+                    .h(px(32.))
+                    .px_2()
+                    .accessibility_label("Full branch diff")
+                    .child(
+                        row()
+                            .w_full()
+                            .child(div().w(px(16.)).flex_shrink_0().child(
+                                if self.commit_picker.range.is_none() {
+                                    "✓"
+                                } else {
+                                    ""
+                                },
+                            ))
+                            .child("Full branch diff"),
+                    )
+                    .selected(self.commit_picker.range.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_all_commits(cx))),
+            )
+            .when(!self.commit_picker.commits.is_empty(), |body| {
+                body.child(
+                    uniform_list(
+                        "commit-list",
+                        self.commit_picker.commits.len(),
+                        cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                            range
+                                .map(|index| this.commit_row(index, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .h(px((self.commit_picker.commits.len().min(7) * 48) as f32))
+                    .w_full(),
+                )
+            })
+            .when(self.commit_picker.loading, |body| {
+                body.child(div().text_color(rgb(MUTED)).child("Loading commits…"))
+            })
+            .when(
+                self.commit_picker.has_more && !self.commit_picker.loading,
+                |body| {
+                    body.child(button("older-commits", "Load older commits").on_click(
+                        cx.listener(|this, _, window, cx| this.load_more_commits(window, cx)),
+                    ))
+                },
             )
             .into_any_element()
     }
@@ -755,10 +901,26 @@ impl Patch {
             ModalKind::Change => "Agent change",
             ModalKind::Changes => "Changes",
             ModalKind::Run => "Agent response",
+            ModalKind::Commits => "Commits",
         };
         let mut body = column().gap_4();
         let mut footer = row().justify_end().gap_2();
-        if matches!(modal.kind, ModalKind::Open | ModalKind::Review) {
+        if modal.kind == ModalKind::Commits {
+            body = body.child(self.commit_choices(cx));
+            footer = footer.child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child(if self.commit_picker.range.is_none() {
+                        "Full branch diff".to_string()
+                    } else if self.commit_picker.count == 1 {
+                        "1 commit".to_string()
+                    } else {
+                        format!("{} commits", self.commit_picker.count)
+                    }),
+            );
+        } else if matches!(modal.kind, ModalKind::Open | ModalKind::Review) {
             body = body
                 .child(self.form_field(0, "Repository", "Repository folder"))
                 .child(
@@ -985,6 +1147,7 @@ impl Patch {
                     ModalKind::Change => "Queue change",
                     ModalKind::Changes => "Send to agent",
                     ModalKind::Clone => "Clone",
+                    ModalKind::Commits => "View diff",
                     _ => "Open",
                 }
             };
@@ -994,6 +1157,7 @@ impl Patch {
                     .label(label)
                     .disabled(
                         self.submitting
+                            || (modal.kind == ModalKind::Commits && self.commit_picker.loading)
                             || (modal.kind == ModalKind::Changes && self.comment_ids.is_empty()),
                     )
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),

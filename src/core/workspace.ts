@@ -9,12 +9,12 @@ export function rememberReview(workspace: Workspace, review: Review): ReviewTab 
     project = { repo: review.repo, name: review.name, collapsed: false, tabs: [] };
     workspace.projects.push(project);
   }
-  const head = review.head === 'HEAD' ? (review.branch === 'detached HEAD' ? review.headSha : review.branch) : review.head;
+  const head = review.head === 'HEAD' ? (review.branch === 'detached HEAD' ? review.branchHeadSha : review.branch) : review.head;
   const pr = /^refs\/revue\/[^/]+\/[^/]+\/(\d+)\/head$/.exec(head);
   const existing = project.tabs.find(t => t.id === review.key);
   const tab: ReviewTab = {
-    id: review.key, kind: pr ? 'pr' : 'branch', label: pr ? `PR #${pr[1]}` : head.replace(/^refs\/(heads|remotes)\//, ''),
-    request: { repo: review.repo, base: review.base, head, mode: review.mode }, file: existing?.file,
+    id: review.key, scopeKey: review.scopeKey, kind: pr ? 'pr' : 'branch', label: pr ? `PR #${pr[1]}` : head.replace(/^refs\/(heads|remotes)\//, ''),
+    request: { repo: review.repo, base: review.base, head, mode: review.mode, ...(review.commitRange ? { commitRange: review.commitRange } : {}) }, file: existing?.file,
   };
   if (existing) Object.assign(existing, tab); else project.tabs.push(tab);
   project.collapsed = false;

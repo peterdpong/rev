@@ -351,8 +351,127 @@ pub fn run() -> anyhow::Result<()> {
     })?;
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-split.png"))?;
+
+    // Exercise commit selection through the real local service, including
+    // applying a historical scope and restoring the existing branch tab.
+    let service = Backend::start().map_err(anyhow::Error::msg)?;
+    cx.update_window(handle, |_, window, cx| {
+        app.update(cx, |app, _| app.backend = Some(service.clone()));
+        window.click("choose-commits", cx);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!app.read(cx).commit_picker.loading);
+        assert!(app.read(cx).commit_picker.commits.len() >= 2);
+        window.click(("commit", 0usize), cx);
+        assert_eq!(app.read(cx).commit_picker.count, 1);
+        let position = window.find(("commit", 1usize)).bounds().center();
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                click_count: 1,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                click_count: 1,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            }),
+            cx,
+        );
+        assert_eq!(app.read(cx).commit_picker.count, 2);
+        let picker = &app.read(cx).commit_picker;
+        assert_eq!(picker.range.as_ref().unwrap().start, picker.commits[1].sha);
+        assert_eq!(picker.range.as_ref().unwrap().end, picker.commits[0].sha);
+    })?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-commits.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        let position = window.find(("commit", 1usize)).bounds().center();
+        pointer_down(window, position, cx);
+        pointer_up(window, position, cx);
+        assert_eq!(app.read(cx).commit_picker.count, 1);
+        window.click("submit-modal", cx);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(app.read(cx).error.is_none(), "{:?}", app.read(cx).error);
+        assert_eq!(app.read(cx).review.as_ref().unwrap().commit_count, 1);
+        assert!(
+            app.read(cx)
+                .review
+                .as_ref()
+                .unwrap()
+                .request
+                .commit_range
+                .is_some()
+        );
+        assert_eq!(app.read(cx).workspace.projects[0].tabs.len(), 1);
+        app.update(cx, |app, _| {
+            let review = app.review.as_ref().unwrap();
+            app.run_requests.insert(review.scope_key.clone(), review.request.clone());
+            app.runs.insert(review.scope_key.clone(), decode(json!({
+                "id": "scope-fixture", "status": "running", "mode": "ask", "events": [], "approvals": []
+            })).unwrap());
+        });
+        window.click("choose-commits", cx);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("all-commits", cx);
+        assert_eq!(app.read(cx).commit_picker.count, 0);
+        window.press("cmd-enter", cx);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(app.read(cx).error.is_none(), "{:?}", app.read(cx).error);
+        assert!(
+            app.read(cx)
+                .review
+                .as_ref()
+                .unwrap()
+                .request
+                .commit_range
+                .is_none()
+        );
+        assert_eq!(app.read(cx).review.as_ref().unwrap().files.len(), 4);
+        assert_eq!(app.read(cx).workspace.projects[0].tabs.len(), 1);
+        window.click("agent-output", cx);
+        assert!(
+            app.read(cx)
+                .modal
+                .as_ref()
+                .unwrap()
+                .request
+                .commit_range
+                .is_some(),
+            "a running agent must keep its original comparison when the visible scope changes"
+        );
+        assert_ne!(
+            app.read(cx).modal.as_ref().unwrap().tab,
+            app.read(cx).review.as_ref().unwrap().scope_key
+        );
+        window.click("close-modal", cx);
+        app.update(cx, |app, _| {
+            app.runs.clear();
+            app.run_requests.clear();
+        });
+    })?;
+    service.close();
     println!(
-        "Native UI checks passed: tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }

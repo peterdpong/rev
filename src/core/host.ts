@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { inspect, filePatch, fetchRepo, cloneRepo, importPR } from './git';
+import { inspect, filePatch, fetchRepo, cloneRepo, importPR, listCommits } from './git';
 import { readState, addComment, mutateState } from './store';
 import { AgentRunner, preparePrompt, providers } from './agents';
 import { createDemo } from './demo';
@@ -22,6 +22,7 @@ export class HostService {
     switch (method) {
       case 'init': result = { initial: options.initial, providers: await providers(), workspace: await readWorkspace(dataDir) }; break;
       case 'workspaceAction': result = await updateWorkspace(dataDir, workspace => applyWorkspaceAction(workspace, p)); break;
+      case 'commits': result = await listCommits(p.review, p.offset); break;
       case 'review': { const review = await inspect(p); const workspace = p.remember ? await updateWorkspace(dataDir, workspace => { rememberReview(workspace, review); }) : undefined; result = { review, state: await readState(review), workspace }; break; }
       case 'patch': result = await filePatch(await inspect(p.review), p.path); break;
       case 'comment': result = await addComment(await inspect(p.review), p.selection, p.body, p.digest); break;

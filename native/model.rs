@@ -11,6 +11,30 @@ pub struct ReviewRequest {
     pub head: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    #[serde(
+        rename = "commitRange",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_range: Option<CommitRange>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CommitRange {
+    pub start: String,
+    pub end: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct Commit {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitPage {
+    pub commits: Vec<Commit>,
+    pub has_more: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct File {
@@ -28,6 +52,12 @@ pub struct Review {
     pub branches: Vec<String>,
     pub files: Vec<File>,
     pub dirty: bool,
+    #[serde(rename = "branchHeadSha")]
+    pub branch_head_sha: String,
+    #[serde(rename = "commitCount", default)]
+    pub commit_count: usize,
+    #[serde(rename = "scopeKey")]
+    pub scope_key: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Selection {
@@ -82,6 +112,8 @@ pub struct ReviewState {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReviewTab {
     pub id: String,
+    #[serde(rename = "scopeKey", default)]
+    pub scope_key: Option<String>,
     pub label: String,
     pub request: ReviewRequest,
     pub file: Option<String>,

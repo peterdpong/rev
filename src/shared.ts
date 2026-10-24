@@ -1,7 +1,11 @@
 export type Provider = 'codex' | 'claude';
-export type ReviewRequest = { repo: string; base?: string; head?: string; mode?: 'branch' | 'working' };
+export type CommitRange = { start: string; end: string };
+export type Commit = { sha: string; parents: string[]; subject: string; author: string; date: string };
+export type CommitPage = { commits: Commit[]; hasMore: boolean };
+export type ReviewRequest = { repo: string; base?: string; head?: string; mode?: 'branch' | 'working'; commitRange?: CommitRange };
 export type ChangedFile = { path: string; oldPath?: string; status: string; added: number; removed: number; binary: boolean };
-export type Review = Required<ReviewRequest> & {
+export type Review = Required<Omit<ReviewRequest, 'commitRange'>> & {
+  commitRange?: CommitRange; commitCount: number; branchHeadSha: string; scopeKey: string;
   name: string; branch: string; baseSha: string; headSha: string; mergeBase: string;
   branches: string[]; files: ChangedFile[]; dirty: boolean; key: string;
 };
@@ -12,7 +16,7 @@ export type ReviewState = { comments: Comment[]; viewed: Record<string, string> 
 export type AgentRequest = { review: ReviewRequest; provider: Provider; mode: 'ask' | 'apply'; question?: string; selection?: Selection; selectionDigest?: string; commentIds?: string[] };
 export type AgentEvent = { kind: 'message' | 'activity' | 'error'; text: string };
 export type AgentRun = { id: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; events: AgentEvent[]; startedAt: string; mode: 'ask' | 'apply' };
-export type ReviewTab = { id: string; label: string; kind: 'branch' | 'pr'; request: ReviewRequest; file?: string };
+export type ReviewTab = { id: string; scopeKey?: string; label: string; kind: 'branch' | 'pr'; request: ReviewRequest; file?: string };
 export type Project = { repo: string; name: string; collapsed: boolean; tabs: ReviewTab[] };
 export type Workspace = { projects: Project[]; activeTabId?: string };
 export type WorkspaceAction =

@@ -7,7 +7,7 @@ import { filePatch, git } from './git';
 async function statePath(review: Review) {
   const gitDir = (await git(review.repo, ['rev-parse', '--absolute-git-dir'])).trim();
   const dir = path.join(gitDir, 'revue'); await mkdir(dir, { recursive: true });
-  return path.join(dir, `${review.key}.json`);
+  return path.join(dir, `${review.scopeKey}.json`);
 }
 export async function readState(review: Review): Promise<ReviewState> {
   try {

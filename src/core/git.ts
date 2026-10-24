@@ -3,12 +3,16 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { realpath, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { ReviewRequest, Review, ChangedFile, FilePatch } from '../shared';
+import type { ReviewRequest, Review, ChangedFile, FilePatch, CommitPage } from '../shared';
 
 const exec = promisify(execFile);
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export async function command(executable: string, args: string[], cwd?: string, maxBuffer = 32 * 1024 * 1024) {
-  try { return (await exec(executable, args, { cwd, maxBuffer, timeout: 120_000, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } })).stdout; }
+  try {
+    const result = exec(executable, args, { cwd, maxBuffer, timeout: 120_000, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } });
+    result.child.stdin?.end();
+    return (await result).stdout;
+  }
   catch (error: any) { throw new Error(error.code === 'ENOENT' ? `${executable} is not installed or is not on PATH.` : (error.stderr || error.message).trim()); }
 }
 export const git = (repo: string, args: string[], maxBuffer?: number) => command('git', ['-c', 'core.quotePath=false', '--no-pager', '--literal-pathspecs', ...args], repo, maxBuffer);
@@ -48,22 +52,58 @@ function parseNumstat(raw: string) {
 export function diffArgs(review: Review) {
   return ['diff', '--no-ext-diff', '--no-textconv', '--find-renames', review.mergeBase, ...(review.mode === 'branch' ? [review.headSha] : [])];
 }
+export async function listCommits(input: ReviewRequest, offset = 0): Promise<CommitPage> {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid commit offset.');
+  const repo = await rootOf(input.repo);
+  const head = await resolveRef(repo, input.head || 'HEAD');
+  const parts = (await git(repo, ['log', '--first-parent', '-z', '--format=%H%x00%P%x00%s%x00%an%x00%aI', '--max-count=201', `--skip=${offset}`, head, '--'])).split('\0');
+  const commits = [];
+  for (let i = 0; i + 4 < parts.length; i += 5) {
+    commits.push({ sha: parts[i], parents: parts[i + 1].split(' ').filter(Boolean), subject: parts[i + 2], author: parts[i + 3], date: parts[i + 4] });
+  }
+  return { commits: commits.slice(0, 200), hasMore: commits.length > 200 };
+}
 export async function inspect(input: ReviewRequest): Promise<Review> {
   const repo = await rootOf(input.repo);
   const base = input.base || await defaultBase(repo);
   const head = input.head || 'HEAD';
   const mode = input.mode || 'branch';
   if (!['branch', 'working'].includes(mode)) throw new Error('Unknown comparison mode.');
-  const [baseSha, headSha, branch, refs, status] = await Promise.all([
+  if (input.commitRange && (mode === 'working' || typeof input.commitRange.start !== 'string' || typeof input.commitRange.end !== 'string')) throw new Error('Choose a valid commit range in committed mode.');
+  const [baseSha, branchHeadSha, branch, refs, status] = await Promise.all([
     resolveRef(repo, base), resolveRef(repo, mode === 'working' ? 'HEAD' : head),
     git(repo, ['branch', '--show-current']), git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/revue']),
     git(repo, ['status', '--porcelain=v1', '-z'])
   ]);
-  if (mode === 'working' && head !== 'HEAD' && await resolveRef(repo, head) !== headSha) {
+  if (mode === 'working' && head !== 'HEAD' && await resolveRef(repo, head) !== branchHeadSha) {
     throw new Error(`The working tree belongs to ${branch.trim() || 'a detached HEAD'}. Open that branch to review local changes.`);
   }
-  const mergeBase = (await git(repo, ['merge-base', baseSha, headSha])).trim();
-  const review: Review = { repo, name: path.basename(repo), base, head, mode, branch: branch.trim() || 'detached HEAD', baseSha, headSha, mergeBase, branches: refs.trim().split('\n').filter(Boolean), files: [], dirty: Boolean(status), key: hash(`${repo}\0${base}\0${head === 'HEAD' ? branch.trim() || headSha : head}`).slice(0, 24) };
+  let mergeBase = input.commitRange ? '' : (await git(repo, ['merge-base', baseSha, branchHeadSha])).trim();
+  let headSha = branchHeadSha;
+  let commitRange;
+  let commitCount = 0;
+  if (input.commitRange) {
+    const [start, end, history] = await Promise.all([
+      resolveRef(repo, input.commitRange.start), resolveRef(repo, input.commitRange.end),
+      git(repo, ['rev-list', '--first-parent', branchHeadSha, '--']),
+    ]);
+    const shas = history.trim().split('\n');
+    const first = shas.indexOf(start); const last = shas.indexOf(end);
+    if (first < 0 || last < 0) throw new Error('Selected commits are not in this branch’s first-parent history. Choose Full branch diff or select commits from the current branch.');
+    if (first < last) throw new Error('The start commit must be older than or equal to the end commit.');
+    // Read the stored header: rev-list hides parents at shallow boundaries,
+    // which must not be mistaken for a root commit and diffed from empty.
+    const header = (await git(repo, ['cat-file', 'commit', start])).split('\n\n', 1)[0];
+    const parent = header.split('\n').find(line => line.startsWith('parent '))?.slice(7);
+    if (parent) {
+      try { mergeBase = await resolveRef(repo, parent); }
+      catch { throw new Error('The parent commit is unavailable locally. Fetch more history before reviewing this commit.'); }
+    } else mergeBase = (await git(repo, ['hash-object', '-t', 'tree', '--stdin'])).trim();
+    headSha = end; commitRange = { start, end }; commitCount = first - last + 1;
+  }
+  const key = hash(`${repo}\0${base}\0${head === 'HEAD' ? branch.trim() || branchHeadSha : head}`).slice(0, 24);
+  const scopeKey = commitRange ? hash(`${key}\0${commitRange.start}\0${commitRange.end}`).slice(0, 24) : key;
+  const review: Review = { repo, name: path.basename(repo), base, head, mode, branch: branch.trim() || 'detached HEAD', baseSha, headSha, branchHeadSha, mergeBase, commitRange, commitCount, scopeKey, branches: refs.trim().split('\n').filter(Boolean), files: [], dirty: Boolean(status), key };
   const [names, nums, untracked] = await Promise.all([
     git(repo, [...diffArgs(review), '--name-status', '-z']),
     git(repo, [...diffArgs(review), '--numstat', '-z']),

@@ -18,9 +18,11 @@ use std::{
     time::Duration,
 };
 
+mod commits;
 #[cfg(feature = "ui-tests")]
 pub mod smoke;
 mod view;
+use commits::CommitPicker;
 gpui_kit::actions!(
     patch,
     [
@@ -72,6 +74,7 @@ enum ModalKind {
     Change,
     Changes,
     Run,
+    Commits,
 }
 #[derive(Clone)]
 struct Modal {
@@ -95,6 +98,7 @@ pub struct Patch {
     selecting: bool,
     selection_menu: Point<Pixels>,
     prompt_mode: ModalKind,
+    commit_picker: CommitPicker,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     prompt: Entity<TextareaState>,
@@ -107,6 +111,7 @@ pub struct Patch {
     providers: Vec<Provider>,
     provider: String,
     runs: HashMap<String, AgentRun>,
+    run_requests: HashMap<String, ReviewRequest>,
     comment_ids: HashSet<String>,
     loading: bool,
     patch_loading: bool,
@@ -196,6 +201,7 @@ impl Patch {
             selecting: false,
             selection_menu: Point::default(),
             prompt_mode: ModalKind::Ask,
+            commit_picker: CommitPicker::default(),
             filter,
             fields,
             prompt,
@@ -208,6 +214,7 @@ impl Patch {
             providers: vec![],
             provider: "codex".into(),
             runs: HashMap::new(),
+            run_requests: HashMap::new(),
             comment_ids: HashSet::new(),
             loading: false,
             patch_loading: false,
@@ -501,9 +508,10 @@ impl Patch {
 
     fn draft_key(modal: &Modal) -> String {
         format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             modal.tab,
             modal.kind as u8,
+            serde_json::to_string(&modal.request).unwrap_or_default(),
             modal
                 .selection
                 .as_ref()
@@ -570,7 +578,7 @@ impl Patch {
         if self.modal.as_ref().is_some_and(|m| {
             m.selection.as_ref() == Some(&selection)
                 && m.digest == self.patch.digest
-                && m.tab == review.key
+                && m.tab == review.scope_key
         }) {
             return;
         }
@@ -584,7 +592,7 @@ impl Patch {
         let modal = Modal {
             kind: self.prompt_mode,
             request: review.request.clone(),
-            tab: review.key.clone(),
+            tab: review.scope_key.clone(),
             selection: Some(selection),
             digest: self.patch.digest.clone(),
             serial: self.modal_serial,
@@ -667,7 +675,7 @@ impl Patch {
         let tab = self
             .review
             .as_ref()
-            .map(|r| r.key.clone())
+            .map(|r| r.scope_key.clone())
             .unwrap_or_default();
         let modal = Modal {
             kind,
@@ -793,6 +801,7 @@ impl Patch {
                     base: (!values[1].is_empty()).then(|| values[1].clone()),
                     head: (!values[2].is_empty()).then(|| values[2].clone()),
                     mode: Some("branch".into()),
+                    commit_range: None,
                 };
                 if values[2].starts_with("https://github.com/")
                     || values[2].starts_with('#')
@@ -863,7 +872,7 @@ impl Patch {
                 self.rpc("comment", json!({ "review": modal.request, "selection": modal.selection, "body": body, "digest": modal.digest }), window, cx, move |this, result, window, cx| {
                     this.submitting = false;
                     if let Some(value) = this.result(result) {
-                        match decode(value) { Ok(state) if this.review.as_ref().map(|r| &r.key) == Some(&modal.tab) => this.state = state, Ok(_) => {}, Err(e) => { this.error = Some(e); return } }
+                        match decode(value) { Ok(state) if this.review.as_ref().map(|r| &r.scope_key) == Some(&modal.tab) => this.state = state, Ok(_) => {}, Err(e) => { this.error = Some(e); return } }
                         this.drafts.remove(&Self::draft_key(&modal));
                         if this.modal_serial == modal.serial {
                             this.prompt.update(cx, |input, cx| input.set_value("", window, cx));
@@ -906,6 +915,8 @@ impl Patch {
                             match decode::<AgentRun>(value) {
                                 Ok(run) => {
                                     let id = run.id.clone();
+                                    this.run_requests
+                                        .insert(modal.tab.clone(), modal.request.clone());
                                     this.runs.insert(modal.tab.clone(), run);
                                     if this.modal_serial == modal.serial {
                                         this.modal = Some(Modal {
@@ -922,6 +933,7 @@ impl Patch {
                     },
                 );
             }
+            ModalKind::Commits => self.apply_commit_selection(window, cx),
             ModalKind::Run => {}
         }
         cx.notify();
@@ -949,6 +961,16 @@ impl Patch {
         });
     }
 
+    fn open_run(&mut self, scope: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_modal(ModalKind::Run, None, None, window, cx);
+        if let Some(modal) = &mut self.modal {
+            if let Some(request) = self.run_requests.get(&scope) {
+                modal.request = request.clone();
+            }
+            modal.tab = scope;
+        }
+    }
+
     fn poll_run(&mut self, tab: String, id: String, window: &Window, cx: &mut Context<Self>) {
         let Some(backend) = self.backend.clone() else {
             return;
@@ -968,7 +990,7 @@ impl Patch {
                         this.runs.insert(tab.clone(), run);
                         if running {
                             this.poll_run(tab, id, window, cx);
-                        } else if this.review.as_ref().is_some_and(|r| r.key == tab) {
+                        } else if this.review.as_ref().is_some_and(|r| r.scope_key == tab) {
                             this.refresh(window, cx);
                         }
                     }
@@ -1015,7 +1037,10 @@ impl Patch {
             move |this, result, _, _| {
                 this.submitting = false;
                 if let Some(value) = this.result(result)
-                    && this.review.as_ref().is_some_and(|r| r.key == modal.tab)
+                    && this
+                        .review
+                        .as_ref()
+                        .is_some_and(|r| r.scope_key == modal.tab)
                 {
                     match decode(value) {
                         Ok(state) => this.state = state,

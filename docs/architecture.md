@@ -67,3 +67,9 @@ The host service owns Git, files, worktrees, state, and agent subprocesses. An S
 ## Dependencies and packaging
 
 GPUI Kit is pinned to 0.8.0 and Cargo.lock pins its matching GPUI packages. The optional `ui-tests` feature enables the upstream offscreen test facilities; it is excluded from release builds. The macOS bundle uses the release Rust binary, two esbuild outputs, and a standalone Node executable (automatically downloaded with checksum verification when the local Node depends on external libraries). The bundle is locally signed, not notarized. Liquid Glass and an all-Rust host are separate future changes.
+
+## Commit scope
+
+`ReviewRequest.commitRange` holds inclusive oldest/newest commit IDs. Inspection validates both against the branch’s first-parent history and diffs the oldest commit’s first parent (or the empty tree for a root) against the newest commit. The symbolic branch remains the navigation identity; normalized commit IDs pin the comparison. `scopeKey` isolates feedback, viewed markers, drafts, and agent runs while `key` keeps one branch tab. The workspace persists the range on that tab.
+
+The `commits` RPC pages first-parent history in batches of 200. The native picker pins its history to the loaded branch head and renders visible rows with GPUI’s virtual list. Selecting a range does not check out, cherry-pick, or write Git objects. CLI `--commit`, `--from`, and `--to` use the same inspection and patch pipeline.
