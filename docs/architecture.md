@@ -1,92 +1,69 @@
-# Revue architecture
+# Patch GPUI architecture
 
-## Scope of the first version
+## Branch strategy
 
-Optimize for a reviewer moving quickly through a branch, asking precise questions, and giving an agent a coherent next pass. The unit of work is a comparison plus local feedback, not a chat thread. The diff remains the primary surface.
-
-This deliberately leaves PR discovery, hosted collaboration, GitHub review publishing, and remote execution for later. Fetching a PR is implemented; posting its comments is a separate product decision.
+`main` contains only the empty README init commit. `electron-mvp` preserves the original working application. `gpui-mvp` is derived from it and replaces the desktop and diff rendering layers while retaining the review core and its tests. Nothing is merged into main.
 
 ## Components
 
-| Layer | Implementation | Responsibility |
+| Layer | Location | Responsibility |
 | --- | --- | --- |
-| Desktop | Electron main + isolated preload | Window lifecycle, repository picker, local-service lifecycle |
-| UI | React, TypeScript, `@pierre/diffs` | File navigation, virtualized diff, line selections, inline selection actions, project/review tabs, agent dialogs |
-| Local API | Node HTTP, random port/token | Same-origin transport for UI; no public listener |
-| Git core | `execFile` with argument arrays | Resolve commits, merge base, file metadata, lazy patches, clone/fetch, PR refs |
-| Workspace store | Atomic JSON in `~/.revue/workspace.json` | Project folders, stable branch/PR tab identities, active tab, last file |
-| Review store | JSON in Git metadata | Anchored comments, sent/queued state, viewed patch hashes |
-| Agent adapters | Child processes + JSONL readers | Discover executable, choose tool/sandbox mode, send prompt, normalize events, stop |
-| CLI | Same core called directly | Terminal diff/pager, questions, comment queue, batch apply, desktop launcher |
+| Native launcher | `native/main.rs` | macOS window, keyboard shortcuts, desktop/CLI routing, lifecycle |
+| App state | `native/app.rs` | repositories, tabs, selected file, bounded requests, dialogs, drafts, agent jobs |
+| Native views | `native/app/view.rs` | project folders, files, GPUI Kit Diff, inline actions/comments, prompt and response dialogs |
+| Rust transport | `native/backend.rs` | private child-process pipes, request IDs, response correlation, timeouts, shutdown |
+| JSONL entrypoint | `src/host.ts` | parse requests, respond by ID, cancel agents on parent disconnect |
+| Shared host API | `src/core/host.ts` | dispatch Git, review storage, workspace and agent operations |
+| Git core | `src/core/git.ts` | merge-base diffs, lazy file patches, clone, fetch, PR import |
+| Review store | `src/core/store.ts` | comments, patch hashes, viewed status, lock + atomic rename |
+| Workspace store | `src/core/workspace.ts` | project folders, pinned branch/PR tabs, selected files |
+| Agent adapters | `src/core/agents.ts` | executable discovery, prompt construction, permissions, output events, cancellation |
+| CLI | `src/cli.ts` | terminal diff, questions, queued feedback, apply and native launcher |
 
-Relevant source: `src/core/git.ts`, `src/core/store.ts`, `src/core/workspace.ts`, `src/core/agents.ts`, `src/server.ts`, `src/cli.ts`, `src/desktop/`, `src/ui/`.
+The legacy authenticated HTTP adapter remains only for regression coverage and potential transport reuse. The native app does not start it or load HTML.
 
-## Data flow
+## Why retain the Node core?
 
-1. Normalize the repository path and resolve both refs to commit hashes. Resolve the merge base once for a comparison.
-2. Get changed-file status and line counts with NUL-delimited Git output. Working tree mode includes untracked paths.
-3. Fetch the selected file's patch. The diff library parses, highlights, and virtualizes it. Other file bodies stay out of the UI payload.
-4. A selection identifies a path, side, and line range. A comment also stores head SHA, merge-base SHA, and a hash of the exact patch.
-5. Queue feedback locally. A filesystem lock plus atomic rename keeps concurrent feedback mutations from losing data.
-6. Before dispatch, re-read Git and validate each selected comment against current code. Stale feedback remains available but cannot be applied until the reviewer replaces it.
-7. Send the batch through the selected provider adapter. Stream normalized messages/activity/errors into the UI through short polling. A provider's explicit completion event plus successful exit is required to mark the comments sent.
-8. Inspect the resulting working-tree changes. Committing and pushing remain normal Git operations outside this MVP.
+This MVP tests the GPUI interaction model without simultaneously rewriting Git, storage, and agent integration. One native drawing process plus one Node service avoids the Chromium runtime while preserving reviewed behavior. The `.app` bundles Node so it launches without a shell environment. It is not the smallest possible all-Rust architecture and no Electron-vs-GPUI memory claim has been benchmarked.
 
-## Navigation and agent interaction
+The JSON request boundary allows the host to be replaced with Rust later. The Rust UI never imports provider-specific protocol details. The CLI calls the same core directly.
 
-The left sidebar groups reviews under canonical repository paths. Each review tab is keyed by repository, base, and head ref. Opening `HEAD` pins the tab to its symbolic branch (or commit when detached), so switching the checkout cannot silently repoint that tab. Committed/working-tree mode and the selected file belong to the tab. Workspace changes use a lock and atomic rename, shared by desktop and browser launches without relying on a random-port browser origin. Closing a tab only removes navigation state; feedback stays in Git metadata.
+## Review and feedback flow
 
-A diff selection reveals **Ask agent** and **Agent change** directly beneath the selected lines. Either opens a compact dialog with a captured file/side/range; the top-level **Ask agent** always uses the entire review. Change requests remain a local queue accessed through **Changes**, with an optional full-prompt preview before dispatch. Agent jobs and in-memory drafts are associated with their originating review, so switching tabs cannot show another review's output as the current one. Agent output opens in a dialog rather than occupying a persistent sidebar.
+1. Inspect a repository, resolve base/head commits, and compute the merge base. The working checkout is not switched.
+2. Persist a project and tab. `HEAD` is stored as a symbolic branch or detached commit, so a tab cannot silently follow another checkout.
+3. Load one file patch. GPUI Kit parses it into retained `DiffState`, supplies unified/split layout, syntax highlighting, virtualized rows, folding, and source line selection.
+4. Selection actions capture the review, path, side, line range, and patch digest before opening the dialog. Cross-side ranges are rejected rather than converted to inaccurate source coordinates.
+5. A change request is saved in Git metadata. Inline comments are only attached when their digest matches the currently displayed patch; older feedback remains in Changes and is rejected on apply.
+6. A selected feedback batch is revalidated immediately before dispatch. The local agent receives the requests and code context. Comments become sent only after explicit successful provider completion.
+7. Review agent edits in Working tree mode. Committing and pushing remain separate user actions.
 
-## Correct code context
+The top-level Ask button explicitly supplies no line selection. Questions about selected code also validate its captured digest. General questions include bounded patch context and tell the agent when context was truncated.
 
-The reviewer can inspect a branch without switching the working checkout. A question against another commit—or a committed snapshot with local dirty files—runs in a temporary detached worktree at the reviewed SHA. Cleanup removes that worktree only if it is safe; a modified worktree is retained and its location reported.
+## Native state and responsiveness
 
-For working-tree reviews, the agent sees the actual checkout, including local edits. A pinned tab refuses working-tree mode when its head differs from the current checkout. Apply requires its HEAD to equal the reviewed head. This avoids sending feedback about one branch to an agent operating on another. It does not lock the checkout against manual Git operations or independent processes; that is a next-stage concurrency concern.
+Git, process I/O, and request waits run on GPUI's background executor. Requests are tagged and can complete independently. File generations prevent stale asynchronous responses from overwriting a newer selection. Review navigation is serialized while a review is loading; the previously loaded review is retained if the new comparison fails.
 
-## Rendering and performance
+Diff parsing is bounded by the 2 MB file limit. The diff entity survives ordinary renders. Project/file navigation uses standard scrolling; the expensive code surface is virtualized. This should be profiled with real large reviews before any performance guarantee.
 
-`@pierre/diffs` owns syntax highlighting, split/unified alignment, selection, and diff virtualization. Revue loads one file patch at a time, so opening a thousand-file review does not immediately request and render all thousand file bodies. Metadata is loaded in one comparison request. A 2 MB patch limit bounds pathological files.
+Dialog context is captured separately from current navigation. Modal focus is trapped, Escape returns focus, and selected/general prompts have different draft keys. Runs are associated with their originating review tab; output is only shown in that tab's response dialog. Closing the dialog does not cancel a run; Stop does. Closing the application closes its private pipes and terminates active provider process groups.
 
-This is a starting design rather than a measured performance guarantee. Before scaling up: benchmark real large PRs; cache comparisons by repo/head/base plus working-tree fingerprints; watch Git/index changes; virtualize the file tree; move heavier diff work to the library's worker pool; and profile large minified/generated files. Keep invalidation tied to content identity, not just branch names.
+## Local agents and code context
 
-## Agent integration choice
+Codex uses `exec --json` with read-only or workspace-write sandbox mode. Claude uses print/stream-json with a restricted tool list and no configured MCP servers for these runs. The installed tools keep their own authentication and configuration. An executable path override is available for each provider.
 
-For this prototype, one-shot CLI jobs keep provider adapters small and reproducible. The UI can ask about exact source ranges without implementing an agent harness. The installed provider handles its own login, model inference, tools, and policies.
+Questions about a committed snapshot run in a temporary detached worktree when the current checkout is dirty or points elsewhere. Cleanup only removes a clean temporary checkout. Apply requires the reviewed HEAD to match the current checkout, rejects dirty committed-mode reviews, and rejects stale comment anchors. Working-tree mode includes staged, unstaged, and untracked files.
 
-For the next version:
+Live model calls, login flows, and authenticated PR fetching require a signed-in installation and are not covered by fixture-based verification. The test suite does exercise the real child-process transport with fake agents, failure/completion handling, cancellation, worktree selection, and persistent state.
 
-- **Codex:** replace the `exec` adapter with app-server. Initialize once, start/resume threads, start turns, translate agent-message/tool events, surface approval requests, and interrupt turns.
-- **Claude:** use the Agent SDK with an explicit executable path and tool approval callbacks. Enable a controlled test-running capability after designing those approvals.
-- **Pi or ACP:** add separate adapters if they meet a specific need. Do not insert another harness simply to wrap the first two providers.
+## Persistence
 
-Keep the UI dependent on a small interface such as `start(request)`, `events(runId)`, `cancel(runId)`, and eventually `respondToApproval(...)`. Keep provider-specific protocol details outside React.
+To keep the two branches comparable, review files retain the existing `<git-dir>/revue/` format. Workspace tabs default to `~/.revue/workspace.json`. `PATCH_DATA_DIR` (or the older `REVUE_DATA_DIR`) can isolate workspace navigation. Closing a tab removes navigation only, not its feedback. Both stores use filesystem locks and atomic replacement.
 
-## Moving to SSH
+## Future SSH host
 
-The useful boundary is the **host service**, encompassing Git, files, worktrees, state, and agent processes. The model's working directory and the diff's repository must describe the same host filesystem.
+The host service owns Git, files, worktrees, state, and agent subprocesses. An SSH adapter can launch that same versioned service remotely and exchange JSONL through SSH stdio. Repository paths and agent working directories must refer to the same host. Add host IDs, protocol negotiation, reconnect behavior, and remote cancellation before enabling remote sessions. Provider credentials should remain on the remote host.
 
-```text
-Local UI
-  └─ HostTransport
-       ├─ LocalHost: current in-process/loopback service
-       └─ SshHost: authenticated SSH stdio or forwarded loopback connection
-            └─ small Revue host service on the remote machine
-                 ├─ remote Git checkout and worktrees
-                 ├─ remote review storage
-                 └─ remotely installed/authenticated Codex or Claude
-```
+## Dependencies and packaging
 
-Start with an existing SSH host alias and standard SSH authentication. Launch a versioned host service over SSH and exchange framed JSON, or forward an authenticated loopback endpoint. Keep provider credentials on that host. Stream patches/events; do not copy entire repositories through the UI. Add connection state, version negotiation, reconnect/resume, cancellation, and per-host workspace locks before relying on it for long tasks.
-
-Do not expose the current local HTTP service to a LAN/public interface. SSH is a transport extension, not a reason to weaken its authentication boundary. Remote support is not implemented in this version.
-
-## Suggested next experiments
-
-1. Review five real agent-generated branches. Measure navigation friction, whether questions need follow-up, and whether batched feedback produces better edits than one-off requests.
-2. Test project tabs with several simultaneous PRs; add discovery/search only if finding reviews becomes the bottleneck.
-3. Add persistent Codex threads if follow-up questions repeatedly need the same context.
-4. Add checkpoints and an agent-edit comparison to separate the agent's latest pass from the original branch diff.
-5. Add GitHub review publishing only after defining which local notes should remain private.
-
-Local review ownership and the agent's next-pass workflow should stay clear as these capabilities grow.
+GPUI Kit is pinned to 0.8.0 and Cargo.lock pins its matching GPUI packages. The optional `ui-tests` feature enables the upstream offscreen test facilities; it is excluded from release builds. The macOS bundle uses the release Rust binary, two esbuild outputs, and a standalone Node executable (automatically downloaded with checksum verification when the local Node depends on external libraries). The bundle is locally signed, not notarized. Liquid Glass and an all-Rust host are separate future changes.

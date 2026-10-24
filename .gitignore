@@ -4,3 +4,5 @@ dist/
 .test-artifacts/
 *.log
 .DS_Store
+target/
+.patch-demo/

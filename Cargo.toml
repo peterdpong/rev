@@ -1,0 +1,32 @@
+[package]
+name = "patch-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "patch"
+
+[[bin]]
+name = "patch"
+path = "native/main.rs"
+
+[[bin]]
+name = "patch-ui-check"
+path = "native/ui_check.rs"
+required-features = ["ui-tests"]
+
+[features]
+ui-tests = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = { version = "=0.8.0", features = ["tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-javascript", "tree-sitter-python", "tree-sitter-markdown"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 16

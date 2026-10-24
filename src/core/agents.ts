@@ -11,7 +11,7 @@ import { readState, mutateState } from './store';
 
 export async function executable(provider: Provider) {
   if (!['codex', 'claude'].includes(provider)) throw new Error('Choose Codex or Claude Code.');
-  const override = process.env[`REVUE_${provider.toUpperCase()}_PATH`];
+  const override = process.env[`PATCH_${provider.toUpperCase()}_PATH`] || process.env[`REVUE_${provider.toUpperCase()}_PATH`];
   const dirs = (process.env.PATH || '').split(path.delimiter).concat([path.join(homedir(), '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS']);
   for (const candidate of override ? [override] : dirs.map(dir => path.join(dir, provider))) {
     try { await access(candidate, constants.X_OK); return candidate; } catch { /* try next */ }
@@ -47,6 +47,7 @@ export async function preparePrompt(request: AgentRequest) {
     if (!request.question?.trim() || request.question.length > 20_000) throw new Error('Enter a question (up to 20,000 characters).');
     if (request.selection) {
       const s = request.selection; const patch = await filePatch(review, s.path);
+      if (request.selectionDigest && request.selectionDigest !== patch.digest) throw new Error('This file changed since you selected it. Refresh and select the lines again.');
       prompt += `\nSelected ${JSON.stringify(s.path)} (${s.side}, lines ${s.start}–${s.end}):\n<diff>\n${patch.patch.slice(0, 80_000)}\n</diff>`;
     } else {
       let remaining = 120_000; let supplied = 0;

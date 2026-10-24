@@ -1,149 +1,122 @@
-# Revue
+# Patch
 
-A small local desktop app and CLI for reviewing code written by humans and agents.
+A local PR and branch review desk for humans and coding agents. This branch runs a **native GPUI interface** and a CLI.
 
-**Review → understand → collect feedback → ask your local agent for another pass.**
+- [`main`](https://github.com/peterdpong/patch/tree/main): empty README initialization.
+- [`electron-mvp`](https://github.com/peterdpong/patch/tree/electron-mvp): original Electron / React / Pierre implementation.
+- [`gpui-mvp`](https://github.com/peterdpong/patch/tree/gpui-mvp): GPUI / Rust desktop, sharing the existing Git and agent core.
 
-## Try it
+![Patch native review](docs/gpui-preview.png)
 
-Requires Node.js 22+, Git, and an installed/authenticated Codex or Claude Code CLI for agent actions. GitHub PR import additionally requires `gh auth login`. Browsing diffs and queuing feedback work without an agent.
+## Run
+
+Tested on Apple Silicon macOS. Install stable Rust, Xcode command-line tools, Node.js 22+, and Git. GitHub PR import also needs an authenticated `gh` CLI. Agent questions and changes need an installed, signed-in Codex or Claude Code CLI.
 
 ```sh
-cd /Users/peter/dev/revue
-npm install
-npm run build
+git switch gpui-mvp
+npm ci
 npm start
 ```
 
-Dependencies are already installed and the app is built in this workspace. Open a local repository, clone an HTTPS/SSH Git URL, or choose **Try sample**. The sample is a real Git repository containing an intentionally imperfect retry implementation.
+Open a repository directly:
 
-Launch directly into the supplied sample:
+```sh
+npm start -- ~/dev/my-repo --base main --head feature/my-change
+```
+
+Or create the sample repository:
 
 ```sh
 npm run demo
-npm start -- --repo /Users/peter/dev/revue/.revue-demo --base main
+npm start -- .patch-demo --base main
 ```
 
-An unsigned development app runs through Electron; there is no installer or signed release yet. `npm run dev` rebuilds and launches (it does not hot reload).
+The first Cargo build downloads and compiles GPUI. Later development builds are incremental.
 
-## What works
+## Review workflow
 
-- Open and clone repositories; keep branch and PR tabs grouped under project folders in the left sidebar.
-- Restore open tabs and each review’s last selected file after restarting. Add a review with the project’s **+** button.
-- Fetch remotes without merging into or switching your checkout.
-- Fetch a GitHub PR by URL or number into private `refs/revue/…` refs.
-- Compare a branch against its **merge base**, the normal PR comparison semantics.
-- Include staged, unstaged, and untracked changes with **Working tree**.
-- Split/unified syntax-highlighted diffs using `@pierre/diffs`, virtualized rendering, and lazy per-file patch loading. Renames, deletion, and binary metadata are handled.
-- Select lines by clicking/dragging line numbers (Shift-click extends a range).
-- Select code to reveal **Ask agent** and **Agent change** inline. The top-level **Ask agent** opens a question about the entire review. Both providers reuse the CLI’s existing sign-in.
-- Queue private inline feedback with old/new side and line range. Open **Changes** to choose requests, optionally preview the prompt, and send one batch to an agent. Prompts and responses open in dialogs; there is no permanent agent panel.
-- Stop an agent, see execution activity/errors, and inspect its local edits through Working tree.
-- Mark files viewed; the mark expires when the patch changes. Search files and use `j`/`k`, `v`, `a`, `c`, `/`, and Cmd/Ctrl+Enter.
-- Persist feedback and viewed hashes in `<git-dir>/revue/`. Desktop and CLI share this state. Project/tab navigation is stored in `~/.revue/workspace.json` (override its directory with `REVUE_DATA_DIR`).
+1. **Open folder** or **Clone** a repository. Open branch/PR tabs with the **+** beside its project name. Enter a branch, PR number, or GitHub PR URL; blank means the current branch.
+2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Committed / Working tree** changes the comparison scope. **Fetch** updates remotes without changing the checkout.
+3. Select line numbers (drag or Shift-select). Inline **Ask agent** and **Agent change** actions appear beneath the selected range. Select one side of the diff for an exact source range.
+4. The top **Ask agent** button asks about the whole review. A dialog contains the prompt, provider choice, response, and Stop control.
+5. **Agent change** queues local feedback. Open **Changes**, select requests, optionally preview the prompt, and **Send to agent**. The agent edits the current checkout; Patch does not commit or push those edits. Inspect them in **Working tree**.
 
-## A good first test
+Project tabs and last-selected files persist across launches. Draft prompts and agent responses remain available for the current app session. There is no permanent agent sidebar.
 
-1. Open the sample; select `src/lib/retry.ts` from the file list (or the file selector in a narrow window).
-2. Select the added `signal` option, then choose **Agent change** beside the selection.
-3. Click **Queue change** after writing: “Make the backoff wait abortable, and avoid sleeping after the final failed attempt. Add tests for both cases.”
-4. Open **Changes** in the toolbar, optionally **Preview prompt**, then **Send to agent**.
-5. Click **Review local changes** to inspect the result. A sent comment is not automatically considered resolved.
-
-The app does not commit, push, or post GitHub review comments. For other people's PRs, questions can run in an isolated temporary checkout of the reviewed commit. To apply feedback, your current checkout must match the reviewed head. A committed-only review refuses to edit a dirty checkout; switch to Working tree and queue feedback on the current code instead.
+| Shortcut | Action |
+| --- | --- |
+| ⌘O | Open repository |
+| ⌘K | Ask about the whole review |
+| ⌘R | Refresh |
+| ⌥↓ / ⌥↑ | Next / previous file |
+| ⌘⇧V | Toggle viewed |
+| ⌘Enter | Submit the current dialog |
+| Escape | Close dialog |
 
 ## CLI
 
-No global installation is necessary:
+After `npm run build:host`, use `node bin/patch.mjs`, or use the native `target/release/patch` executable after `npm run build`.
 
 ```sh
-node /Users/peter/dev/revue/bin/revue.mjs --help
+node bin/patch.mjs diff ~/dev/my-repo --base main
+node bin/patch.mjs ask "What can fail here?" --repo ~/dev/my-repo --base main
+node bin/patch.mjs comment "Handle cancellation" --repo ~/dev/my-repo --base main --file src/client.ts --lines 12-18
+node bin/patch.mjs apply --repo ~/dev/my-repo --base main --dry-run
+node bin/patch.mjs apply --repo ~/dev/my-repo --base main --agent codex
+node bin/patch.mjs doctor
 ```
 
-During development, use `npm run cli -- <command>`. Optionally run `npm link` yourself to install the `revue` command on PATH.
+Use `node bin/patch.mjs help` for all commands. The name `patch` also belongs to a standard Unix utility; use the explicit path unless you deliberately add this app's launcher to PATH.
+
+## macOS app bundle
 
 ```sh
-revue open ~/dev/project --base main
-revue diff --repo ~/dev/project --base main --head feature/auth
-revue diff --working --no-pager
-revue ask "What can fail here?" --file src/auth.ts --lines 20-35
-revue comment "Handle expired tokens" --file src/auth.ts --lines 29-32
-revue comments
-revue apply --dry-run
-revue apply --agent codex
-revue remove <comment-id>
-revue fetch
-revue clone https://github.com/owner/repo.git ~/dev/repo
-revue pr 42
-revue doctor
+npm run bundle
+open dist/Patch.app
 ```
 
-`diff` uses a colored terminal pager on a TTY and plain output when piped. This is a minimal CLI, not a full-screen TUI with interactive comments. `--side deletions` anchors a comment to old lines. `--base`, `--head`, and `--working` must describe the same comparison when sharing comments between commands and the desktop UI.
+The bundle contains the release GPUI executable, the small bundled JavaScript host/CLI, and a standalone Node runtime. If the build machine uses a dynamically linked Node (such as Homebrew), the bundler downloads Node 24.19.0 from nodejs.org and verifies its published SHA-256 checksum. It has a local ad-hoc signature. Public distribution still needs Developer ID signing/notarization and dependency-license packaging. No Electron, Chromium, React, or webview is used at runtime. A standalone Node runtime is still present; this is **not an all-Rust rewrite**.
 
-For the same interface in a browser:
-
-```sh
-npm run preview -- /path/to/repo --base main
-```
-
-Open the URL printed by the command. The fragment contains a per-process capability token. The service binds only to `127.0.0.1` and rejects other origins/hosts. Restarting it creates a new token.
-
-## How desktop apps use installed agents
-
-They usually launch a provider's local executable and communicate over structured stdin/stdout. The executable owns authentication, model access, tools, sandboxing, and the agent loop. The desktop app owns the UI, review context, workspaces, and lifecycle. A local agent process normally still calls cloud-hosted models; “local” does not imply offline inference.
-
-Revue's first adapters are intentionally small:
-
-| Provider | Transport in this prototype | Questions | Change requests |
-| --- | --- | --- | --- |
-| Codex | `codex exec --json`, prompt on stdin | `read-only` sandbox | `workspace-write` sandbox |
-| Claude Code | `claude -p --output-format stream-json --verbose`, prompt on stdin | Read/Glob/Grep tools | Read/Glob/Grep/Edit/Write tools |
-
-Codex's approval policy is `never`: work requiring escalation fails instead of silently obtaining more access. Claude uses `dontAsk` with an explicit tool list and no MCP servers. Claude's adapter currently has no shell tool, so it can edit tests but cannot run them. These are provider policies, not a new OS sandbox implemented by Revue. Use repositories you trust; provider configuration and instruction files can affect agent behavior. Revue does not read or copy authentication tokens.
-
-CLI discovery checks PATH, common macOS installation locations, and `~/.local/bin`. Override with `REVUE_CODEX_PATH` or `REVUE_CLAUDE_PATH` if needed. A green availability dot means the executable was found; it does not prove authentication or model access.
-
-For a richer app, use **Codex app-server** (JSON-RPC over stdio) and the **Claude Agent SDK**. Those support persistent conversations, richer tool events, and approval interactions. Revue uses one fresh process per question/batch to keep the prototype small. The provider boundary is in `src/core/agents.ts`.
-
-**bb is not universally powered by Pi.** Its current source has separate providers: [Codex app-server transport](https://github.com/get-bb/bb/blob/main/plugins/provider-codex/src/bridge/app-server-connection.ts), [Claude Agent SDK integration](https://github.com/get-bb/bb/blob/main/plugins/provider-claude-code/src/bridge/session-options.ts), and an optional [Pi provider](https://github.com/get-bb/bb/blob/main/plugins/provider-pi/package.json). You do not need to add Pi just to talk to an installed Codex or Claude Code CLI.
+`PATCH_BUNDLE_NODE` can supply a standalone Node executable for bundling. `PATCH_NODE_BINARY` overrides Node for development; `PATCH_RESOURCES` overrides the folder containing `host.mjs` and `cli.mjs`. `PATCH_CODEX_PATH` and `PATCH_CLAUDE_PATH` can point to installed agent executables. Their previous `REVUE_*` equivalents also work.
 
 ## Architecture
 
-See [the architecture notes](docs/architecture.md) for boundaries, data flow, and the SSH evolution path.
-
 ```text
-Electron window ─┐
-                ├── React + @pierre/diffs ── loopback API ─┐
-Browser preview ┘                                         │
-CLI ───────────────────────────────────────────── shared TypeScript core
-                                                         ├── Git / gh subprocesses
-                                                         ├── Review JSON in Git metadata
-                                                         └── Codex / Claude subprocesses
+GPUI desktop (Rust)                  CLI (TypeScript / Node)
+  project / branch tabs                  terminal diff and review commands
+  native virtualized Diff                same Git and agent operations
+  selection actions + dialogs                      │
+             │ private JSONL stdin/stdout           │
+             └──────────────┬───────────────────────┘
+                    local host / shared core
+                    ├── Git + gh subprocesses
+                    ├── atomic review / workspace storage
+                    └── local Codex / Claude subprocesses
 ```
 
-There is no backend account, hosted database, provider key store, or custom agent harness. Electron keeps the desktop, CLI, and agent adapters in one language/runtime. Tauri would reduce distribution size, but introduces a Rust boundary or a bundled Node sidecar before we know whether the review workflow is right.
+GPUI Kit 0.8 provides the native diff, inputs, buttons, focus handling, and text rendering. Git operations run outside the drawing thread. File patches load on demand and stay capped at 2 MB. Request generations prevent older file responses from replacing the current file.
 
-## Current limits
+The existing tested core is reused so reviewing, stale-comment validation, worktree isolation, and agent permissions behave like the Electron branch. The host runs only on private pipes and exits when the desktop closes them. Detailed boundaries and migration tradeoffs are in [docs/architecture.md](docs/architecture.md).
 
-- No SSH hosts, persistent chat threads, GitHub comment publishing, PR inbox, CI/checks display, or hosted review inbox.
-- No signed/packaged installer; validated on this macOS environment. Windows process handling and paths need explicit work before claiming support.
-- Patches above 2 MB show a fallback. Whole-review agent prompts include at most 40 file patches/120k characters and disclose omissions. Selected-file prompts also have bounded context.
-- Large repository scale has not been benchmarked. The file list is not virtualized; the diff is. The prototype validates the workflow, not production-scale throughput.
-- Agent output is kept in memory (last 30 runs, bounded events), not persisted across app restarts. Review comments survive restarts.
-- Stop sends termination to the provider process group. Files already edited are retained for review; there is no automatic rollback.
-- One run per repository is enforced within an app process, not across independent CLI/app processes. Avoid concurrent editing runs against the same checkout.
-- GitHub PR import uses `gh` for metadata and Git for transport. Public or private access must work in both tools; set up `gh auth setup-git` or your normal Git credentials if needed.
-
-## Validation
+## Checks
 
 ```sh
-npm test
 npm run check
-npm run build
+npm test
+cargo fmt --check
+cargo test --locked --bin patch
+cargo clippy --locked --bin patch -- -D warnings
+npm run demo
+cargo run --locked --features ui-tests --bin patch-ui-check -- .patch-demo .test-artifacts
 ```
 
-The integration suite exercises actual temporary Git repositories, merge-base semantics, renames/binaries/deletions, literal pathspecs, working-tree and untracked content, feedback persistence, concurrent writes, stale-anchor protection, viewed invalidation, line validation, provider flags/events, real child-process transport with controlled fixtures, and loopback API access checks.
+The last command renders the production view offscreen through Metal on macOS and exercises line selection, scoped/general questions, modal keyboard handling, draft restoration, split view, wrapping, and file filtering. It saves native render images to `.test-artifacts`. It needs a working GPU context but does not capture or automate your desktop. Host integration tests use temporary Git repositories and fake agent executables; they do not spend model tokens.
 
-The sample UI was manually exercised through project/branch tabs, selected-file restoration, line selection, contextual and whole-review prompts, comment creation, batch preview, viewed tracking, and CLI reading the same feedback. The integration suite also verifies project grouping, branch pinning, PR tab identities, concurrent navigation writes, and persistence across service restarts. Electron was launched successfully; macOS computer-control permission was unavailable for native UI automation, so interaction verification used the shared browser UI. No live provider inference or authenticated GitHub fetch has been verified yet; executable detection and provider CLI flags were checked locally.
+## MVP boundaries
 
-References: [Hunk](https://www.hunk.dev/), [Pierre Diffs](https://diffs.com/), [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive/), [Codex app-server](https://developers.openai.com/codex/app-server/), [Claude Code programmatic usage](https://code.claude.com/docs/en/headless).
+- Local repositories and installed agents only; SSH hosts are a future transport extension.
+- PR import is supported; hosted review publishing, PR discovery, and automatic commit/push are not implemented.
+- Ask jobs are fresh CLI runs, not persistent conversations. Answers and activity stream into the dialog through polling.
+- The project and file lists are conventional scrolling lists; the diff itself is virtualized. Very large repository navigation needs profiling.
+- Native window chrome is used. Liquid Glass integration is not part of this MVP.
+- Windows and Linux packaging and live authenticated agent inference have not been verified in this build.
