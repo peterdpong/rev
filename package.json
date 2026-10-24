@@ -1,0 +1,37 @@
+{
+  "name": "revue-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first diff review desk for humans and agents.",
+  "type": "module",
+  "main": "dist/desktop/main.cjs",
+  "bin": { "revue": "bin/revue.mjs" },
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/build.mjs",
+    "start": "electron .",
+    "dev": "npm run build && electron .",
+    "cli": "node --import tsx src/cli.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "tsc --noEmit",
+    "preview": "node --import tsx src/cli.ts serve",
+    "demo": "node --import tsx scripts/demo.ts"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@pierre/diffs": "1.6.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "45.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}
