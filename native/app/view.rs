@@ -323,30 +323,148 @@ impl Patch {
             .into_any_element()
     }
 
-    fn selection_actions(&self, cx: &mut Context<Self>) -> AnyElement {
-        row()
-            .id("selection-actions")
-            .p_1()
-            .gap_1()
+    fn prompt_tabs(&self, kind: ModalKind, cx: &mut Context<Self>) -> AnyElement {
+        TabBar::new("prompt-mode-tabs")
+            .segmented()
+            .small()
+            .selected_index(usize::from(kind == ModalKind::Change))
+            .child(
+                Tab::new()
+                    .label("Ask agent")
+                    .aria_label("Ask agent, Command 1")
+                    .disabled(self.submitting),
+            )
+            .child(
+                Tab::new()
+                    .label("Agent change")
+                    .aria_label("Agent change, Command 2")
+                    .disabled(self.submitting),
+            )
+            .on_click(cx.listener(|this, index, window, cx| {
+                this.switch_prompt_mode(
+                    if *index == 0 {
+                        ModalKind::Ask
+                    } else {
+                        ModalKind::Change
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .into_any_element()
+    }
+
+    fn provider_controls(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut body = column().gap_2();
+        let mut providers = row().gap_2();
+        for provider in &self.providers {
+            let id = provider.id.clone();
+            let label = if id == "codex" {
+                "Codex"
+            } else {
+                "Claude Code"
+            };
+            providers = providers.child(
+                button(SharedString::from(format!("provider-{id}")), label)
+                    .selected(self.provider == id)
+                    .disabled(!provider.available || self.submitting)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.provider = id.clone();
+                        cx.notify();
+                    })),
+            );
+        }
+        body = body.child(providers);
+        if !self.providers.iter().any(|p| p.available) {
+            body = body.child(
+                div()
+                    .text_color(rgb(MUTED))
+                    .child("Install and sign in to Codex or Claude Code, then restart Patch."),
+            );
+        }
+        body.into_any_element()
+    }
+
+    fn selection_prompt(&self, modal: &Modal, cx: &mut Context<Self>) -> AnyElement {
+        let pane = column()
+            .id("selection-prompt")
+            .w(px(440.))
+            .gap_2()
+            .p_3()
             .bg(rgb(PANEL))
             .border_1()
             .border_color(rgb(BORDER))
-            .rounded_md()
+            .rounded_lg()
             .shadow_lg()
             .occlude()
-            .child(button("ask-selection", "Ask agent").on_click(cx.listener(
-                |this, _, window, cx| {
-                    this.open_modal(ModalKind::Ask, this.selection.clone(), None, window, cx)
-                },
-            )))
+            .track_focus(&self.modal_focus)
+            .key_context("PatchPrompt")
             .child(
-                button("change-selection", "Agent change").on_click(cx.listener(
-                    |this, _, window, cx| {
-                        this.open_modal(ModalKind::Change, this.selection.clone(), None, window, cx)
-                    },
-                )),
+                row()
+                    .child(self.prompt_tabs(modal.kind, cx))
+                    .child(div().flex_1())
+                    .child(
+                        button("close-modal", "×").on_click(
+                            cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                        ),
+                    ),
             )
-            .into_any_element()
+            .child(
+                Textarea::new(&self.prompt)
+                    .accessibility_id("agent-prompt")
+                    .aria_label("Agent prompt")
+                    .h(px(110.))
+                    .disabled(self.submitting),
+            )
+            .when(modal.kind == ModalKind::Ask, |pane| {
+                pane.child(self.provider_controls(cx))
+            })
+            .when_some(self.error.clone(), |pane, error| {
+                pane.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(0xe29595))
+                        .child(error),
+                )
+            })
+            .child(
+                row()
+                    .child(
+                        div()
+                            .flex_1()
+                            .truncate()
+                            .text_size(px(11.))
+                            .text_color(rgb(MUTED))
+                            .child(
+                                modal
+                                    .selection
+                                    .as_ref()
+                                    .map(Selection::label)
+                                    .unwrap_or_default(),
+                            ),
+                    )
+                    .child(
+                        Button::new("submit-modal")
+                            .primary()
+                            .small()
+                            .label(if self.submitting {
+                                "Working…"
+                            } else if modal.kind == ModalKind::Change {
+                                "Queue change"
+                            } else {
+                                "Ask agent"
+                            })
+                            .disabled(self.submitting)
+                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                    ),
+            );
+        deferred(
+            anchored()
+                .position(self.selection_menu)
+                .snap_to_window_with_margin(px(8.))
+                .child(pane),
+        )
+        .into_any_element()
     }
 
     fn annotation(&mut self, annotation: &DiffAnnotation, _: &mut Context<Self>) -> AnyElement {
@@ -473,8 +591,8 @@ impl Patch {
                 })
                 .on_add_annotation(move |range, window, cx| {
                     let _ = add_owner.update(cx, |this, cx| {
-                        this.selection = Selection::from_range(range);
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(range, window, cx);
                         this.diff.update(cx, |diff, cx| {
                             diff.set_selected_lines(Some(range.clone()), cx)
                         });
@@ -520,6 +638,13 @@ impl Patch {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
+        if Self::is_selection_prompt(&modal) {
+            return if self.selecting {
+                div().into_any_element()
+            } else {
+                self.selection_prompt(&modal, cx)
+            };
+        }
         let title = match modal.kind {
             ModalKind::Open => "Open repository",
             ModalKind::Clone => "Clone repository",
@@ -727,32 +852,7 @@ impl Patch {
             );
         }
         if matches!(modal.kind, ModalKind::Ask | ModalKind::Changes) {
-            let mut providers = row().gap_2();
-            for provider in &self.providers {
-                let id = provider.id.clone();
-                let label = if id == "codex" {
-                    "Codex"
-                } else {
-                    "Claude Code"
-                };
-                providers = providers.child(
-                    button(SharedString::from(format!("provider-{id}")), label)
-                        .selected(self.provider == id)
-                        .disabled(!provider.available || self.submitting)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.provider = id.clone();
-                            cx.notify();
-                        })),
-                );
-            }
-            body = body.child(providers);
-            if !self.providers.iter().any(|p| p.available) {
-                body = body.child(
-                    div()
-                        .text_color(rgb(MUTED))
-                        .child("Install and sign in to Codex or Claude Code, then restart Patch."),
-                );
-            }
+            body = body.child(self.provider_controls(cx));
         }
         if let Some(preview) = &self.preview {
             let text = preview.clone();
@@ -931,6 +1031,17 @@ impl Render for Patch {
                     this.open_modal(ModalKind::Ask, None, None, window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &PromptAsk, window, cx| {
+                this.switch_prompt_mode(ModalKind::Ask, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &PromptChange, window, cx| {
+                this.switch_prompt_mode(ModalKind::Change, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &TogglePromptMode, window, cx| {
+                this.toggle_prompt_mode(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
+            .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -973,14 +1084,3 @@ impl Render for Patch {
             .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
     }
 }
-            .when(
-                self.modal.is_none() && self.selection.is_some() && !self.selecting,
-                |d| {
-                    d.child(deferred(
-                        anchored()
-                            .position(self.selection_menu)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(self.selection_actions(cx)),
-                    ))
-                },
-            )

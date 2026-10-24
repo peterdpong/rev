@@ -7,6 +7,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     diff::*,
     input::{Input, InputState, Textarea, TextareaState},
+    tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -29,11 +30,38 @@ gpui_kit::actions!(
         Refresh,
         CloseModal,
         Submit,
+        PromptAsk,
+        PromptChange,
+        TogglePromptMode,
         NextFile,
         PreviousFile,
         MarkViewed
     ]
 );
+
+pub fn bind_shortcuts(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-o", OpenProject, Some("Patch")),
+        KeyBinding::new("cmd-r", Refresh, Some("Patch")),
+        KeyBinding::new("cmd-k", AskReview, Some("Patch")),
+        KeyBinding::new("alt-down", NextFile, Some("Patch")),
+        KeyBinding::new("alt-up", PreviousFile, Some("Patch")),
+        KeyBinding::new("cmd-shift-v", MarkViewed, Some("Patch")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("cmd-1", PromptAsk, Some("Patch")),
+        KeyBinding::new("cmd-2", PromptChange, Some("Patch")),
+        KeyBinding::new("ctrl-tab", TogglePromptMode, Some("PatchPrompt")),
+        KeyBinding::new("ctrl-shift-tab", TogglePromptMode, Some("PatchPrompt")),
+        KeyBinding::new("escape", CloseModal, Some("Patch")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchPrompt")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchPrompt > Input")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchPrompt > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+    ]);
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ModalKind {
@@ -66,6 +94,7 @@ pub struct Patch {
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
+    prompt_mode: ModalKind,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     prompt: Entity<TextareaState>,
@@ -132,11 +161,12 @@ impl Patch {
                     this.selecting = false;
                     if this.selection != Selection::from_range(&range) {
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(&range);
+                        this.accept_selection(&range, window, cx);
                     }
                 } else if this.selecting {
                     this.selecting = false;
                     this.selection = None;
+                    this.close_selection_prompt(window, cx);
                 }
                 cx.notify();
             }),
@@ -146,7 +176,7 @@ impl Patch {
                     DiffEvent::SelectionEnded(range) => {
                         this.selecting = false;
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(range);
+                        this.accept_selection(range, window, cx);
                     }
                     DiffEvent::SelectionChanged(None) if !this.selecting => this.selection = None,
                     _ => {}
@@ -163,9 +193,10 @@ impl Patch {
             patch: FilePatch::default(),
             diff,
             selection: None,
-            filter,
             selecting: false,
             selection_menu: Point::default(),
+            prompt_mode: ModalKind::Ask,
+            filter,
             fields,
             prompt,
             focus: cx.focus_handle(),
@@ -274,6 +305,7 @@ impl Patch {
         if self.loading || self.workspace_busy || self.patch_loading {
             return;
         }
+        self.close_selection_prompt(window, cx);
         self.loading = true;
         self.error = None;
         self.notice = None;
@@ -336,14 +368,15 @@ impl Patch {
         let Some(review) = self.review.clone() else {
             return;
         };
+        self.close_selection_prompt(window, cx);
         self.file_epoch += 1;
         let epoch = self.file_epoch;
         self.file = Some(path.clone());
         self.patch_loading = true;
         self.selection = None;
+        self.selecting = false;
         self.patch = FilePatch::default();
         self.error = None;
-        self.selecting = false;
         self.notice = None;
         self.diff.update(cx, |diff, cx| diff.set_files([], cx));
         self.rpc("patch", json!({ "review": review.request, "path": path }), window, cx, move |this, result, window, cx| {
@@ -490,17 +523,20 @@ impl Patch {
         self.preview = None;
         self.modal_serial += 1;
         self.selection = None;
-        self.diff
-            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.selecting = false;
         gpui_kit::base::TextSelection::clear(window, cx);
+        self.diff
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.focus.focus(window, cx);
         cx.notify();
     }
 
-    fn open_modal(
+    fn accept_selection(
         &mut self,
-    fn accept_selection(&mut self, range: &DiffLineRange) {
+        range: &DiffLineRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selection = Selection::from_range(range);
         const CROSS_SIDE: &str = "Select lines on one side of the diff.";
         if self.selection.is_none() {
@@ -508,8 +544,104 @@ impl Patch {
         } else if self.error.as_deref() == Some(CROSS_SIDE) {
             self.error = None;
         }
+        let Some(selection) = self.selection.clone() else {
+            if self.modal.as_ref().is_some_and(Self::is_selection_prompt)
+                && let Some(modal) = self.modal.take()
+            {
+                self.drafts.insert(
+                    Self::draft_key(&modal),
+                    self.prompt.read(cx).value().to_string(),
+                );
+                self.modal_serial += 1;
+            }
+            return;
+        };
+        let Some(review) = self.review.as_ref() else {
+            return;
+        };
+        if self.submitting
+            || self
+                .modal
+                .as_ref()
+                .is_some_and(|m| !Self::is_selection_prompt(m))
+        {
+            return;
+        }
+        if self.modal.as_ref().is_some_and(|m| {
+            m.selection.as_ref() == Some(&selection)
+                && m.digest == self.patch.digest
+                && m.tab == review.key
+        }) {
+            return;
+        }
+        if let Some(previous) = &self.modal {
+            self.drafts.insert(
+                Self::draft_key(previous),
+                self.prompt.read(cx).value().to_string(),
+            );
+        }
+        self.modal_serial += 1;
+        let modal = Modal {
+            kind: self.prompt_mode,
+            request: review.request.clone(),
+            tab: review.key.clone(),
+            selection: Some(selection),
+            digest: self.patch.digest.clone(),
+            serial: self.modal_serial,
+        };
+        let draft = self
+            .drafts
+            .get(&Self::draft_key(&modal))
+            .cloned()
+            .unwrap_or_default();
+        self.prompt
+            .update(cx, |input, cx| input.set_value(draft, window, cx));
+        self.modal = Some(modal);
+        self.preview = None;
+        // Preserve diff focus so Shift-selection and copying keep working.
+        cx.notify();
     }
 
+    fn is_selection_prompt(modal: &Modal) -> bool {
+        matches!(modal.kind, ModalKind::Ask | ModalKind::Change) && modal.selection.is_some()
+    }
+
+    fn close_selection_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.as_ref().is_some_and(Self::is_selection_prompt) {
+            self.close_modal(window, cx);
+        }
+    }
+
+    fn switch_prompt_mode(&mut self, kind: ModalKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(modal) = &mut self.modal else {
+            return;
+        };
+        if self.submitting || self.selecting || !Self::is_selection_prompt(modal) {
+            return;
+        }
+        modal.kind = kind;
+        self.prompt_mode = kind;
+        self.error = None;
+        self.preview = None;
+        self.prompt.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    fn toggle_prompt_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Ask)
+        {
+            ModalKind::Change
+        } else {
+            ModalKind::Ask
+        };
+        self.switch_prompt_mode(kind, window, cx);
+    }
+
+    fn open_modal(
+        &mut self,
         kind: ModalKind,
         selection: Option<Selection>,
         repo: Option<String>,
@@ -636,6 +768,7 @@ impl Patch {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.notify();
         if self.submitting {
             return;
         }

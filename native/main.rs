@@ -65,17 +65,7 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-            cx.bind_keys([
-                KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new("cmd-o", OpenProject, Some("Patch")),
-                KeyBinding::new("cmd-r", Refresh, Some("Patch")),
-                KeyBinding::new("cmd-k", AskReview, Some("Patch")),
-                KeyBinding::new("alt-down", NextFile, Some("Patch")),
-                KeyBinding::new("alt-up", PreviousFile, Some("Patch")),
-                KeyBinding::new("cmd-shift-v", MarkViewed, Some("Patch")),
-                KeyBinding::new("escape", CloseModal, Some("PatchModal")),
-                KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
-            ]);
+            app::bind_shortcuts(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             if let Ok(service) = &backend {
                 let service = service.clone();

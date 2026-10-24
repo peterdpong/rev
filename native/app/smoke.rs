@@ -107,7 +107,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-        cx.bind_keys([KeyBinding::new("escape", CloseModal, Some("PatchModal"))]);
+        bind_shortcuts(cx);
     });
     let (handle, app) = cx.update(|cx| {
         gpui_kit::open_window(
@@ -194,7 +194,7 @@ pub fn run() -> anyhow::Result<()> {
                         assert_eq!((selection.start, selection.end, selection.side.as_str()), expected, "split={split}, old={old}, gutter={gutter}, {start}–{end}");
                         assert_eq!(app.read(cx).diff.read(cx).selected_text(cx), copied, "the action menu must preserve native copy text");
                         window.render_frame(cx);
-                        window.click(if gutter { "change-selection" } else { "ask-selection" }, cx);
+                        window.within("prompt-mode-tabs").click(if gutter { 1usize } else { 0usize }, cx);
                         let modal = app.read(cx).modal.as_ref().unwrap().clone();
                         let selection = modal.selection.as_ref().unwrap();
                         assert_eq!((selection.start, selection.end, selection.side.as_str()), expected, "split={split}, old={old}, gutter={gutter}, {start}–{end}");
@@ -229,13 +229,64 @@ pub fn run() -> anyhow::Result<()> {
         .save(format!("{output}/gpui-review.png"))?;
 
     cx.update_window(handle, |_, window, cx| {
-        window.click("ask-selection", cx);
+        window.within("prompt-mode-tabs").click(0usize, cx);
         app.update(cx, |app, _| {
             assert_eq!(app.modal.as_ref().unwrap().kind as u8, ModalKind::Ask as u8);
             let selection = app.modal.as_ref().unwrap().selection.as_ref().unwrap();
             assert_eq!((selection.start, selection.end), (4, 6));
         });
     })?;
+    // Switch modes from inside the input using production key bindings.
+    cx.update_window(handle, |_, window, cx| {
+        let bound = app.read(cx).modal.as_ref().unwrap().clone();
+        window.press("cmd-2", cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Change);
+        window.input("Handle cancellation", cx);
+        window.press("cmd-1", cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Ask);
+        window.press("ctrl-tab", cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Change);
+        window.press("ctrl-shift-tab", cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Ask);
+        assert_eq!(
+            app.read(cx).prompt.read(cx).value().as_ref(),
+            "Handle cancellation"
+        );
+        let modal = app.read(cx).modal.as_ref().unwrap();
+        assert_eq!(modal.selection, bound.selection);
+        assert_eq!(modal.digest, bound.digest);
+        assert_eq!(modal.serial, bound.serial);
+        assert!(
+            window
+                .within("prompt-mode-tabs")
+                .find(0usize)
+                .bounds()
+                .bottom()
+                <= window
+                    .find(("input", app.read(cx).prompt.entity_id()))
+                    .bounds()
+                    .top(),
+            "prompt input belongs below the tabs"
+        );
+        window.press("cmd-2", cx);
+        app.update(cx, |app, cx| {
+            app.prompt
+                .update(cx, |input, cx| input.set_value("", window, cx))
+        });
+        window.press("cmd-enter", cx);
+        assert_eq!(
+            app.read(cx).error.as_deref(),
+            Some("Write a change request.")
+        );
+        app.update(cx, |app, _| app.submitting = true);
+        window.press("cmd-1", cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Change);
+        app.update(cx, |app, _| app.submitting = false);
+        window.press("cmd-1", cx);
+        window.input("Explain the retry behavior", cx);
+    })?;
+    cx.advance_clock(Duration::from_millis(300));
+    cx.run_until_parked();
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-ask.png"))?;
     cx.update_window(handle, |_, window, cx| {
@@ -253,6 +304,11 @@ pub fn run() -> anyhow::Result<()> {
             app.read(cx).modal.as_ref().unwrap().selection.is_none(),
             "top-level ask must ignore the highlighted range"
         );
+        window.press("cmd-2", cx);
+        assert!(
+            app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Ask,
+            "general questions must not become changes without selected code"
+        );
         window.click("close-modal", cx);
         window
             .within(("new", 3usize))
@@ -260,7 +316,7 @@ pub fn run() -> anyhow::Result<()> {
             .click(("line", 3usize), cx);
     })?;
     cx.update_window(handle, |_, window, cx| {
-        window.click("change-selection", cx);
+        window.within("prompt-mode-tabs").click(1usize, cx);
         assert!(app.read(cx).modal.as_ref().unwrap().selection.is_some());
         let bound = app.read(cx).modal.as_ref().unwrap().clone();
         app.update(cx, |app, cx| {
@@ -296,7 +352,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-split.png"))?;
     println!(
-        "Native UI checks passed: forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }

@@ -37,7 +37,7 @@ The first Cargo build downloads and compiles GPUI. Later development builds are 
 
 1. **Open folder** or **Clone** a repository. Open branch/PR tabs with the **+** beside its project name. Enter a branch, PR number, or GitHub PR URL; blank means the current branch.
 2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Committed / Working tree** changes the comparison scope. **Fetch** updates remotes without changing the checkout.
-3. Click and drag across code or line numbers—no Shift needed. On release, a floating **Ask agent / Agent change** menu appears beside the selection. Shift-select also works. Select one side of the diff for an exact source range.
+3. Click and drag across code or line numbers—no Shift needed. On release, a floating prompt opens with **Ask agent / Agent change** tabs above its input. Switching tabs keeps your text and selected code. Shift-select also works. Select one side of the diff for an exact source range.
 4. The top **Ask agent** button asks about the whole review. A dialog contains the prompt, provider choice, response, and Stop control.
 5. **Agent change** queues local feedback. Open **Changes**, select requests, optionally preview the prompt, and **Send to agent**. The agent edits the current checkout; Patch does not commit or push those edits. Inspect them in **Working tree**.
 
@@ -47,11 +47,13 @@ Project tabs and last-selected files persist across launches. Draft prompts and 
 | --- | --- |
 | ⌘O | Open repository |
 | ⌘K | Ask about the whole review |
+| ⌘1 / ⌘2 | Select Ask agent / Agent change in the selection prompt |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch prompt tabs while editing |
 | ⌘R | Refresh |
 | ⌥↓ / ⌥↑ | Next / previous file |
 | ⌘⇧V | Toggle viewed |
-| ⌘Enter | Submit the current dialog |
-| Escape | Close dialog |
+| ⌘Enter | Submit the prompt or dialog |
+| Escape | Close the prompt or dialog |
 
 ## CLI
 
