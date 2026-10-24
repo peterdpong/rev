@@ -14,7 +14,7 @@
 | Rust transport | `native/backend.rs` | private child-process pipes, request IDs, response correlation, timeouts, shutdown |
 | JSONL entrypoint | `src/host.ts` | parse requests, respond by ID, cancel agents on parent disconnect |
 | Shared host API | `src/core/host.ts` | dispatch Git, review storage, workspace and agent operations |
-| Git core | `src/core/git.ts` | merge-base diffs, lazy file patches, clone, fetch, PR import |
+| Git core | `src/core/git.ts` | merge-base diffs, lazy file patches, fetch, PR import |
 | Review store | `src/core/store.ts` | comments, patch hashes, viewed status, lock + atomic rename |
 | Workspace store | `src/core/workspace.ts` | project folders, pinned branch/PR tabs, selected files |
 | Agent adapters | `src/core/agents.ts` | executable discovery, prompt construction, permissions, output events, cancellation |

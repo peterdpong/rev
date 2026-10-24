@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { inspect, git, diffArgs, cloneRepo, fetchRepo, importPR, filePatch, listCommits } from './core/git';
+import { inspect, git, diffArgs, fetchRepo, importPR, filePatch, listCommits } from './core/git';
 import { addComment, readState, mutateState } from './core/store';
 import { AgentRunner, preparePrompt, providers } from './core/agents';
 import { createDemo } from './core/demo';
@@ -21,7 +21,6 @@ const help = `Patch · a local review desk for humans and agents
   patch remove <comment-id>                 Remove a comment
   patch apply [--dry-run]                    Send queued feedback to a local agent
   patch fetch [repo]                        Fetch remotes without changing checkout
-  patch clone <url> <directory>              Clone a repository
   patch pr <number-or-url>                   Fetch PR refs; print review command
   patch doctor                             Check local agent executables
   patch demo                               Create a small sample repository
@@ -72,7 +71,6 @@ async function main() {
   };
   if (action === 'doctor') { console.table(await providers()); return; }
   if (action === 'demo') return console.log(await createDemo(path.resolve('.patch-demo')));
-  if (action === 'clone') { if (args.length !== 2) throw new Error('Use: patch clone <url> <directory>'); return console.log(await cloneRepo(args[0], args[1])); }
   if (action === 'fetch') { await fetchRepo(request.repo); return console.log('Remotes fetched. Your checkout is unchanged.'); }
   if (action === 'pr') { const r = await importPR(request.repo, args[0] || ''); return console.log(`PR fetched.\npatch open ${JSON.stringify(r.repo)} --base ${r.base} --head ${r.head}`); }
   if (action === 'commits') {

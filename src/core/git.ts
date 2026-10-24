@@ -139,12 +139,6 @@ export async function fetchRepo(repo: string) {
   const root = await rootOf(repo);
   await git(root, ['fetch', '--all', '--prune']);
 }
-export async function cloneRepo(url: string, destination: string) {
-  if (!/^(https:\/\/|ssh:\/\/|git@)/.test(url) || /[\r\n\0]/.test(url)) throw new Error('Use an HTTPS or SSH Git URL.');
-  const target = path.resolve(destination.replace(/^~(?=\/|$)/, process.env.HOME || '~'));
-  await command('git', ['clone', '--', url, target]);
-  return rootOf(target);
-}
 export async function importPR(repo: string, value: string): Promise<ReviewRequest> {
   const root = await rootOf(repo);
   if (!/^(\d+|https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\/?(?:\?.*)?)$/.test(value)) throw new Error('Enter a PR number or a github.com pull request URL.');

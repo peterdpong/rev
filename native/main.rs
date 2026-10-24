@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
             "--working" => request.mode = Some("working".into()),
             "--help" | "-h" => {
                 println!(
-                    "Patch\n\n  patch open [repo] [--base main] [--head feature] [--working]\n  patch open [repo] --commit <ref> | --from <oldest> --to <newest>\n  patch diff | commits | ask | comment | comments | apply | fetch | clone | pr | doctor | demo\n\nRun patch help for CLI options."
+                    "Patch\n\n  patch open [repo] [--base main] [--head feature] [--working]\n  patch open [repo] --commit <ref> | --from <oldest> --to <newest>\n  patch diff | commits | ask | comment | comments | apply | fetch | pr | doctor | demo\n\nRun patch help for CLI options."
                 );
                 return Ok(());
             }

@@ -232,22 +232,11 @@ impl Patch {
                     .py_2()
                     .child(projects),
             )
-            .child(
-                row()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(button("open-project", "Open folder").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(ModalKind::Open, None, None, window, cx)
-                        },
-                    )))
-                    .child(button("clone-project", "Clone").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(ModalKind::Clone, None, None, window, cx)
-                        },
-                    ))),
-            )
+            .child(row().p_3().border_t_1().border_color(rgb(BORDER)).child(
+                button("open-project", "Open folder").on_click(cx.listener(
+                    |this, _, window, cx| this.open_modal(ModalKind::Open, None, None, window, cx),
+                )),
+            ))
             .into_any_element()
     }
 
@@ -917,7 +906,6 @@ impl Patch {
         }
         let title = match modal.kind {
             ModalKind::Open => "Open repository",
-            ModalKind::Clone => "Clone repository",
             ModalKind::Review => "Open branch or PR",
             ModalKind::Ask => "Ask agent",
             ModalKind::Change => "Agent change",
@@ -982,10 +970,6 @@ impl Patch {
                         .child(choices),
                 );
             }
-        } else if modal.kind == ModalKind::Clone {
-            body = body
-                .child(self.form_field(0, "Git URL", "HTTPS or SSH repository URL"))
-                .child(self.form_field(1, "Destination", "New local folder"));
         } else if matches!(modal.kind, ModalKind::Ask | ModalKind::Change) {
             body = body
                 .child(
@@ -1168,7 +1152,6 @@ impl Patch {
                     ModalKind::Ask => "Ask agent",
                     ModalKind::Change => "Queue change",
                     ModalKind::Changes => "Send to agent",
-                    ModalKind::Clone => "Clone",
                     ModalKind::Commits => "View diff",
                     _ => "Open",
                 }

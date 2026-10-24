@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { inspect, filePatch, fetchRepo, cloneRepo, importPR, listCommits } from './git';
+import { inspect, filePatch, fetchRepo, importPR, listCommits } from './git';
 import { readState, addComment, mutateState } from './store';
 import { AgentRunner, preparePrompt, providers } from './agents';
 import { createDemo } from './demo';
@@ -29,7 +29,6 @@ export class HostService {
       case 'deleteComment': result = await mutateState(await inspect(p.review), s => { s.comments = s.comments.filter(c => c.id !== p.id); }); break;
       case 'viewed': { const review = await inspect(p.review); const patch = await filePatch(review, p.path); if (p.digest && patch.digest !== p.digest) throw new Error('This file changed while you were reviewing it. Refresh before marking it viewed.'); result = await mutateState(review, s => { if (p.viewed) s.viewed[p.path] = patch.digest; else delete s.viewed[p.path]; }); break; }
       case 'fetch': await fetchRepo(p.repo); result = true; break;
-      case 'clone': result = { repo: await cloneRepo(p.url, p.destination) }; break;
       case 'pr': result = await importPR(p.repo, p.value); break;
       case 'demo': this.sample ||= await createDemo(); result = { repo: this.sample, base: 'main', head: 'HEAD' }; break;
       case 'prompt': result = { prompt: (await preparePrompt(p)).prompt }; break;

@@ -70,7 +70,6 @@ pub fn bind_shortcuts(cx: &mut App) {
 #[derive(Clone, Copy, PartialEq)]
 enum ModalKind {
     Open,
-    Clone,
     Review,
     Ask,
     Change,
@@ -728,7 +727,7 @@ impl Patch {
         self.modal_focus.focus(window, cx);
         if matches!(kind, ModalKind::Ask | ModalKind::Change) {
             self.prompt.update(cx, |input, cx| input.focus(window, cx));
-        } else if matches!(kind, ModalKind::Open | ModalKind::Clone | ModalKind::Review) {
+        } else if matches!(kind, ModalKind::Open | ModalKind::Review) {
             self.fields[0].update(cx, |input, cx| input.focus(window, cx));
         }
         cx.notify();
@@ -846,36 +845,6 @@ impl Patch {
                     self.close_modal(window, cx);
                     self.load_review(request, None, window, cx);
                 }
-            }
-            ModalKind::Clone => {
-                if values[0].is_empty() || values[1].is_empty() {
-                    self.error = Some("Enter a Git URL and destination folder.".into());
-                    return;
-                }
-                self.submitting = true;
-                self.rpc(
-                    "clone",
-                    json!({ "url": values[0], "destination": values[1] }),
-                    window,
-                    cx,
-                    move |this, result, window, cx| {
-                        this.submitting = false;
-                        if let Some(value) = this.result(result) {
-                            if this.modal_serial == modal.serial {
-                                this.close_modal(window, cx);
-                            }
-                            this.load_review(
-                                ReviewRequest {
-                                    repo: value["repo"].as_str().unwrap_or_default().into(),
-                                    ..Default::default()
-                                },
-                                None,
-                                window,
-                                cx,
-                            );
-                        }
-                    },
-                );
             }
             ModalKind::Change => {
                 if body.is_empty() {
