@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::text::TextView;
+use gpui_kit::component::{Icon, IconName, text::TextView};
 
 const BG: u32 = 0x17181b;
 const PANEL: u32 = 0x111215;
@@ -18,19 +18,101 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
     Button::new(id).label(label).small().ghost()
 }
 
+fn navigation_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: impl IntoElement,
+) -> Button {
+    let label = label.into();
+    Button::new(id)
+        .small()
+        .ghost()
+        .flex_1()
+        .min_w_0()
+        .h(px(28.))
+        .px_2()
+        .accessibility_label(label.clone())
+        .tooltip(label.clone())
+        // Button's built-in label is centered. A full-width content row keeps
+        // short and truncated names on the same leading edge.
+        .child(
+            row()
+                .id("navigation-content")
+                .w_full()
+                .min_w_0()
+                .text_size(px(13.))
+                .child(
+                    div()
+                        .size(px(14.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(MUTED))
+                        .child(icon),
+                )
+                .child(
+                    div()
+                        .id("navigation-label")
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(label),
+                ),
+        )
+}
+
+fn navigation_action(id: impl Into<ElementId>, icon: IconName, label: &'static str) -> Button {
+    Button::new(id)
+        .small()
+        .ghost()
+        .icon(icon)
+        .w(px(24.))
+        .h(px(28.))
+        .flex_shrink_0()
+        .accessibility_label(label)
+        .tooltip(label)
+}
+
 impl Patch {
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
-        let mut projects = column().gap_3();
+        let mut projects = column().gap_3().min_w_0();
         for project in self.workspace.projects.clone() {
             let repo = project.repo.clone();
             let collapse_repo = repo.clone();
             let collapsed = project.collapsed;
-            let mut group = column().gap_1().child(
-                row().px_2()
-                    .child(button(SharedString::from(format!("project-{repo}")), format!("{}  {}", if collapsed { "›" } else { "⌄" }, project.name)).flex_1().justify_start().disabled(blocked)
-                        .on_click(cx.listener(move |this, _, window, cx| this.workspace_action(json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }), false, window, cx))))
-                    .child(button(SharedString::from(format!("add-{repo}")), "+").disabled(blocked).on_click(cx.listener(move |this, _, window, cx| this.open_modal(ModalKind::Review, None, Some(repo.clone()), window, cx))))
+            let project_button = navigation_button(
+                SharedString::from(format!("project-{repo}")),
+                project.name,
+                Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+                    .size(px(14.)),
+            )
+            .disabled(blocked)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace_action(
+                    json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }),
+                    false,
+                    window,
+                    cx,
+                )
+            }));
+            let add_review = navigation_action(
+                SharedString::from(format!("add-{repo}")),
+                IconName::Plus,
+                "Open branch or PR",
+            )
+            .disabled(blocked)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_modal(ModalKind::Review, None, Some(repo.clone()), window, cx)
+            }));
+            let mut group = column().gap_1().min_w_0().child(
+                row()
+                    .mx_2()
+                    .gap_0()
+                    .min_w_0()
+                    .child(project_button)
+                    .child(add_review),
             );
             if !collapsed {
                 for tab in project.tabs {
@@ -43,17 +125,23 @@ impl Patch {
                     group = group.child(
                         row()
                             .mx_2()
-                            .pl_3()
+                            .pl(px(20.))
+                            .gap_0()
+                            .min_w_0()
                             .rounded_md()
                             .when(active, |d| d.bg(rgb(SELECTED)))
                             .child(
-                                button(
+                                navigation_button(
                                     SharedString::from(format!("tab-{id}")),
-                                    format!("{}{}", if running { "◌  " } else { "⑂  " }, tab.label),
+                                    tab.label,
+                                    if running {
+                                        Icon::new(IconName::LoaderCircle)
+                                            .size(px(14.))
+                                            .into_any_element()
+                                    } else {
+                                        div().child("⑂").into_any_element()
+                                    },
                                 )
-                                .flex_1()
-                                .min_w_0()
-                                .justify_start()
                                 .disabled(blocked)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
@@ -62,16 +150,22 @@ impl Patch {
                                 )),
                             )
                             .child(
-                                button(SharedString::from(format!("close-{id}")), "×")
-                                    .disabled(blocked || running)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                navigation_action(
+                                    SharedString::from(format!("close-{id}")),
+                                    IconName::Close,
+                                    "Close review",
+                                )
+                                .disabled(blocked || running)
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.workspace_action(
                                             json!({ "type": "closeTab", "id": close }),
                                             active,
                                             window,
                                             cx,
                                         )
-                                    })),
+                                    },
+                                )),
                             ),
                     );
                 }
@@ -82,25 +176,28 @@ impl Patch {
             .w(px(225.))
             .h_full()
             .flex_shrink_0()
+            .overflow_hidden()
             .bg(rgb(PANEL))
             .border_r_1()
             .border_color(rgb(BORDER))
             .child(
                 row()
                     .h(px(52.))
-                    .px_4()
+                    .px_2()
                     .justify_between()
                     .child(
                         div()
+                            .pl_2()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(16.))
                             .child("Patch"),
                     )
-                    .child(button("add-project", "+").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(ModalKind::Open, None, None, window, cx)
-                        },
-                    ))),
+                    .child(
+                        navigation_action("add-project", IconName::Plus, "Open repository")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_modal(ModalKind::Open, None, None, window, cx)
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -260,7 +357,7 @@ impl Patch {
 
     fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let files = self.visible_files(cx);
-        let mut list = column().gap_1().p_2();
+        let mut list = column().gap_1().p_2().min_w_0();
         for (index, file) in files.iter().enumerate() {
             let path = file.path.clone();
             let selected = self.file.as_ref() == Some(&path);
@@ -271,10 +368,11 @@ impl Patch {
                     .cursor_pointer()
                     .rounded_md()
                     .px_2()
-                    .py_2()
+                    .h(px(32.))
+                    .min_w_0()
                     .flex()
                     .gap_2()
-                    .items_start()
+                    .items_center()
                     .when(selected, |d| d.bg(rgb(SELECTED)))
                     .hover(|d| d.bg(rgb(0x25272d)))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -284,7 +382,10 @@ impl Patch {
                     }))
                     .child(
                         div()
-                            .w(px(13.))
+                            .w(px(16.))
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_center()
                             .text_color(if viewed { rgb(0x88c99b) } else { rgb(MUTED) })
                             .child(if viewed {
                                 "✓".into()
@@ -297,6 +398,7 @@ impl Patch {
                             .flex_1()
                             .min_w_0()
                             .text_size(px(12.))
+                            .truncate()
                             .child(file.path.clone()),
                     ),
             );
