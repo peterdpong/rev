@@ -58,6 +58,35 @@ pub struct Review {
     pub commit_count: usize,
     #[serde(rename = "scopeKey")]
     pub scope_key: String,
+    #[serde(rename = "headSha", default)]
+    pub head_sha: String,
+    #[serde(rename = "mergeBase", default)]
+    pub merge_base: String,
+    #[serde(rename = "headCommit", default)]
+    pub head_commit: Option<CommitDetails>,
+    #[serde(rename = "pullRequest", default)]
+    pub pull_request: Option<PullRequest>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct CommitDetails {
+    pub sha: String,
+    pub subject: String,
+    pub body: String,
+    pub author: String,
+    pub date: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    pub number: usize,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    pub state: String,
+    pub is_draft: bool,
+    pub head_ref_name: String,
+    pub base_ref_name: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Selection {
@@ -106,6 +135,8 @@ pub struct Comment {
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ReviewState {
+    #[serde(default)]
+    pub threads: Vec<ReviewThread>,
     pub comments: Vec<Comment>,
     pub viewed: HashMap<String, String>,
 }
@@ -162,6 +193,31 @@ pub struct AgentRun {
     pub status: String,
     pub events: Vec<AgentEvent>,
     pub mode: String,
+    #[serde(default)]
+    pub thread: Option<ReviewThread>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    pub id: String,
+    pub kind: String,
+    pub body: String,
+    pub selection: Option<Selection>,
+    pub digest: Option<String>,
+    pub head_sha: String,
+    pub merge_base: String,
+    pub updated_at: String,
+    pub comment_ids: Vec<String>,
+    pub turns: Vec<ThreadTurn>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct ThreadTurn {
+    pub id: String,
+    pub question: String,
+    pub provider: String,
+    pub status: String,
+    pub events: Vec<AgentEvent>,
 }
 
 #[cfg(test)]

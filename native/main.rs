@@ -109,8 +109,9 @@ fn main() -> anyhow::Result<()> {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Patch".into()),
                     appears_transparent: true,
-                    ..Default::default()
+                    traffic_light_position: Some(point(px(16.), px(15.))),
                 }),
+                app_owns_titlebar_drag: true,
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(px(1320.), px(860.)),

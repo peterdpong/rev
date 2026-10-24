@@ -1,3 +1,4 @@
+import { flushRunHistory } from '../src/core/threads';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm, mkdir, chmod, symlink } from 'node:fs/promises';
@@ -124,6 +125,11 @@ test('real child-process transport sends all feedback and marks sent only on exp
   const runner = new AgentRunner(); const run = await runner.start({ review: r, provider: 'codex', mode: 'apply' }); await finish(run);
   assert.equal(run.status, 'completed'); assert.ok(run.events.some(e => e.text === 'Changed.'));
   assert.equal((await readState(review)).comments[0].status, 'sent');
+  await flushRunHistory(run.id);
+  const discussion = (await readState(review)).threads![0];
+  assert.equal(discussion.kind, 'change');
+  assert.equal(discussion.turns[0].status, 'completed');
+  assert.ok(discussion.turns[0].events.some(event => event.text === 'Changed.'));
   await mutateState(review, s => { s.comments[0].status = 'queued'; });
   await writeFile(binary, `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => { console.log(JSON.stringify({type:'turn.failed',error:{message:'provider failed'}})); process.exit(1); });\n`);
   const failed = await runner.start({ review: r, provider: 'codex', mode: 'apply' }); await finish(failed);

@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { realpath, readFile, stat } from 'node:fs/promises';
+import { realpath, readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
-import type { ReviewRequest, Review, ChangedFile, FilePatch, CommitPage } from '../shared';
+import type { ReviewRequest, Review, ChangedFile, FilePatch, CommitPage, PullRequest } from '../shared';
 
 const exec = promisify(execFile);
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -104,6 +104,14 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
   const key = hash(`${repo}\0${base}\0${head === 'HEAD' ? branch.trim() || branchHeadSha : head}`).slice(0, 24);
   const scopeKey = commitRange ? hash(`${key}\0${commitRange.start}\0${commitRange.end}`).slice(0, 24) : key;
   const review: Review = { repo, name: path.basename(repo), base, head, mode, branch: branch.trim() || 'detached HEAD', baseSha, headSha, branchHeadSha, mergeBase, commitRange, commitCount, scopeKey, branches: refs.trim().split('\n').filter(Boolean), files: [], dirty: Boolean(status), key };
+  const [commit, pullRequest] = await Promise.all([
+    git(repo, ['log', '-1', '--format=%H%x00%P%x00%s%x00%b%x00%an%x00%aI', headSha, '--']),
+    readPullRequest(repo, head),
+  ]);
+  const [sha, parents, subject, body, author, date] = commit.trimEnd().split('\0');
+  review.headCommit = { sha, parents: parents.split(' ').filter(Boolean), subject, body: body.trim(), author, date };
+  review.pullRequest = pullRequest;
+  if (!commitRange) review.commitCount = Number((await git(repo, ['rev-list', '--count', `${mergeBase}..${headSha}`, '--'])).trim());
   const [names, nums, untracked] = await Promise.all([
     git(repo, [...diffArgs(review), '--name-status', '-z']),
     git(repo, [...diffArgs(review), '--numstat', '-z']),
@@ -139,15 +147,30 @@ export async function fetchRepo(repo: string) {
   const root = await rootOf(repo);
   await git(root, ['fetch', '--all', '--prune']);
 }
+async function pullRequestPath(repo: string, head: string) {
+  const dir = (await git(repo, ['rev-parse', '--absolute-git-dir'])).trim();
+  return path.join(dir, 'revue', `pr-${hash(head).slice(0, 24)}.json`);
+}
+async function readPullRequest(repo: string, head: string): Promise<PullRequest | undefined> {
+  if (!head.startsWith('refs/revue/')) return;
+  try { return JSON.parse(await readFile(await pullRequestPath(repo, head), 'utf8')); }
+  catch (error: any) { if (error.code !== 'ENOENT') throw error; }
+}
 export async function importPR(repo: string, value: string): Promise<ReviewRequest> {
   const root = await rootOf(repo);
   if (!/^(\d+|https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\/?(?:\?.*)?)$/.test(value)) throw new Error('Enter a PR number or a github.com pull request URL.');
-  const details = JSON.parse(await command('gh', ['pr', 'view', value, '--json', 'number,baseRefName,baseRefOid,headRefOid,url'], root));
+  const details = JSON.parse(await command('gh', ['pr', 'view', value, '--json', 'number,title,body,author,state,isDraft,headRefName,baseRefName,updatedAt,url'], root));
   const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(details.url);
   if (!match) throw new Error('Only github.com PRs are supported in this prototype.');
   const remote = `https://github.com/${match[1]}.git`;
   const namespace = `refs/revue/${match[1]}/${details.number}`;
   // Fetch exact PR refs into a private namespace; never switch the user's branch.
   await git(root, ['fetch', remote, `+refs/pull/${details.number}/head:${namespace}/head`, `+refs/heads/${details.baseRefName}:${namespace}/base`]);
+  const metadata: PullRequest = { ...details, author: details.author?.login || 'Unknown author' };
+  const file = await pullRequestPath(root, `${namespace}/head`);
+  await mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${Date.now()}`;
+  await writeFile(temporary, JSON.stringify(metadata), { mode: 0o600 });
+  await rename(temporary, file);
   return { repo: root, base: `${namespace}/base`, head: `${namespace}/head`, mode: 'branch' };
 }

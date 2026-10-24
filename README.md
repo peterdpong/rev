@@ -8,6 +8,8 @@ A local PR and branch review desk for humans and coding agents. This branch runs
 
 ![Patch native review](docs/gpui-preview.png)
 
+[Sample discussion view](docs/gpui-threads.png). Offscreen previews omit the system-drawn macOS window controls.
+
 ## Run
 
 Tested on Apple Silicon macOS. Install stable Rust, Xcode command-line tools, Node.js 22+, and Git. GitHub PR import also needs an authenticated `gh` CLI. Agent questions and changes need an installed, signed-in Codex or Claude Code CLI.
@@ -36,12 +38,12 @@ The first Cargo build downloads and compiles GPUI. Later development builds are 
 ## Review workflow
 
 1. **Open folder** to choose an existing local repository. Open branch/PR tabs with the **+** beside its project name. Enter a branch, PR number, or GitHub PR URL; blank means the current branch.
-2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Committed / Working tree** changes the comparison scope. **Fetch** updates remotes without changing the checkout.
+2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Working tree** toggles local changes in the comparison. **Fetch** updates remotes and imported PR details without changing the checkout.
 3. Click and drag across code or line numbers—no Shift needed. On release, a floating prompt opens with **Ask agent / Agent change** tabs above its input. Switching tabs keeps your text and selected code. Shift-select also works. Select one side of the diff for an exact source range.
 4. The top **Ask agent** button asks about the whole review. An anchored popover contains the prompt, provider choice, response, and Stop control.
-5. **Agent change** queues local feedback. Open **Changes**, select requests, optionally preview the prompt, and **Send to agent**. The agent edits the current checkout; Patch does not commit or push those edits. Inspect them in **Working tree**.
+5. **Agent change** queues local feedback. Open **Send changes**, select requests, optionally preview the prompt, and **Send to agent**. The agent edits the current checkout; Patch does not commit or push those edits. Inspect them in **Working tree**.
 
-Project tabs and last-selected files persist across launches. Draft prompts and agent responses remain available for the current app session. Review controls open compact popovers beside their buttons; click outside or press Escape to dismiss them. There is no permanent agent sidebar.
+Project tabs, last-selected files, and local conversations persist across launches. **Threads** collects questions, agent answers, and queued or completed change requests. File badges and inline thread links open the relevant discussion; **View code** returns to its source. Question threads support follow-ups with ⌘Enter. Draft prompts remain available for the current app session. Review controls open compact popovers beside their buttons; click outside or press Escape to dismiss them. There is no permanent agent sidebar.
 
 | Shortcut | Action |
 | --- | --- |
@@ -56,9 +58,11 @@ Project tabs and last-selected files persist across launches. Draft prompts and 
 | ⌘Enter | Submit the prompt or popover |
 | Escape | Close the prompt or popover |
 
+The shared title bar reserves space for native macOS window controls. Review headers show the PR title, author, status, description excerpt, and latest commit when available. **Details** opens the full description and commit message. Local branches use their latest commit message. PR metadata is cached on import and refreshed with Fetch.
+
 ## Commit comparisons
 
-Use **All commits** in the review toolbar. Click one commit, or click one end and **Shift-click** the other to select an inclusive range, then **View diff**. **Full branch diff** returns to the normal branch/PR comparison. The selection stays with its branch tab; feedback, viewed files, and agent conversations are scoped to that comparison.
+Use the **commit selector** in the review toolbar. Click one commit, or click one end and **Shift-click** the other to select an inclusive range, then **View diff**. **Full branch diff** returns to the normal branch/PR comparison. The selection stays with its branch tab; feedback, viewed files, and agent conversations are scoped to that comparison.
 
 [Commit picker preview](docs/gpui-commits.png)
 
@@ -130,13 +134,13 @@ npm run demo
 cargo run --locked --features ui-tests --bin patch-ui-check -- .patch-demo .test-artifacts
 ```
 
-The last command renders the production view offscreen through Metal on macOS and exercises line selection, scoped/general questions, popover dismissal and keyboard handling, draft restoration, split view, wrapping, and file filtering. It saves native render images to `.test-artifacts`. It needs a working GPU context but does not capture or automate your desktop. Host integration tests use temporary Git repositories and fake agent executables; they do not spend model tokens.
+The last command renders the production view offscreen through Metal on macOS and exercises line selection, scoped/general questions, PR details, saved thread navigation, compact/collapsed layouts, popover dismissal and keyboard handling, draft restoration, split view, wrapping, and file filtering. It saves native render images to `.test-artifacts`. It needs a working GPU context but does not capture or automate your desktop. Host integration tests use temporary Git repositories and fake agent executables; they do not spend model tokens.
 
 ## MVP boundaries
 
 - Local repositories and installed agents only; SSH hosts are a future transport extension.
 - PR import is supported; hosted review publishing, PR discovery, and automatic commit/push are not implemented.
-- Ask jobs are fresh CLI runs, not persistent conversations. Answers and activity stream into the dialog through polling.
+- Agent turns use installed CLIs. Saved local threads retain questions, requested changes and responses; follow-ups include the previous discussion.
 - The project and file lists are conventional scrolling lists; the diff itself is virtualized. Very large repository navigation needs profiling.
 - Native window chrome is used. Liquid Glass integration is not part of this MVP.
 - Windows and Linux packaging and live authenticated agent inference have not been verified in this build.

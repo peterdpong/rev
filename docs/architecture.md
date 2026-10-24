@@ -11,6 +11,8 @@
 | Native launcher | `native/main.rs` | macOS window, keyboard shortcuts, desktop/CLI routing, lifecycle |
 | App state | `native/app.rs` | repositories, tabs, selected file, bounded requests, popovers, drafts, agent jobs |
 | Native views | `native/app/view.rs` | project folders, files, GPUI Kit Diff, inline actions/comments, anchored prompt and response popovers |
+| Review context | `native/app/review.rs` | shared title bar, commit/PR summary, Files / Threads navigation |
+| Conversations | `native/app/threads.rs`, `src/core/threads.ts` | persisted question/change threads, responses, follow-ups and source links |
 | Rust transport | `native/backend.rs` | private child-process pipes, request IDs, response correlation, timeouts, shutdown |
 | JSONL entrypoint | `src/host.ts` | parse requests, respond by ID, cancel agents on parent disconnect |
 | Shared host API | `src/core/host.ts` | dispatch Git, review storage, workspace and agent operations |
@@ -73,3 +75,13 @@ GPUI Kit is pinned to 0.8.0 and Cargo.lock pins its matching GPUI packages. The 
 `ReviewRequest.commitRange` holds inclusive oldest/newest commit IDs. Inspection validates both against the branch’s first-parent history and diffs the oldest commit’s first parent (or the empty tree for a root) against the newest commit. The symbolic branch remains the navigation identity; normalized commit IDs pin the comparison. `scopeKey` isolates feedback, viewed markers, drafts, and agent runs while `key` keeps one branch tab. The workspace persists the range on that tab.
 
 The `commits` RPC pages first-parent history in batches of 200. The native picker pins its history to the loaded branch head and renders visible rows with GPUI’s virtual list. Selecting a range does not check out, cherry-pick, or write Git objects. CLI `--commit`, `--from`, and `--to` use the same inspection and patch pipeline.
+
+## Review context and conversations
+
+Inspection reads the selected endpoint's commit subject, body, author and date. Importing a PR caches its GitHub title, description, author, state and branch names next to the review store; Fetch updates that metadata and the private PR refs. Ordinary review inspection stays local and works offline.
+
+The desktop shares a 44px draggable title bar across project navigation and the review area, with a reserved inset for native macOS traffic lights. A compact summary and Files / Threads controls stay visible above either the diff or the discussion list. Full descriptions open in an anchored popover. The threads view occupies the main area; it does not add a right sidebar.
+
+Each agent run journals its question or requested changes, original revision and line anchor, provider, response events and completion status into the existing review state. Updates use the store's lock and atomic replacement. Polling flushes pending events; shutdown waits for final history writes. History writes skip expensive viewed-file revalidation. Queued comments appear alongside saved runs and are represented by their conversation once sent.
+
+Follow-up questions carry the thread ID and bounded previous turns. The host rejects follow-ups to another revision or a change-run thread. File/line links retain the original patch digest; changed anchors open the file without scrolling to stale line numbers. Historical messages remain readable. CLI runs use the same journal, so their conversations appear in the desktop after refreshing the review.

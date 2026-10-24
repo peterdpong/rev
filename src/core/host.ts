@@ -6,6 +6,7 @@ import { AgentRunner, preparePrompt, providers } from './agents';
 import { createDemo } from './demo';
 import { readWorkspace, rememberReview, updateWorkspace, applyWorkspaceAction } from './workspace';
 import type { ReviewRequest } from '../shared';
+import { flushRunHistory } from './threads';
 
 export class HostService {
   readonly runner = new AgentRunner();
@@ -28,7 +29,15 @@ export class HostService {
       case 'comment': result = await addComment(await inspect(p.review), p.selection, p.body, p.digest); break;
       case 'deleteComment': result = await mutateState(await inspect(p.review), s => { s.comments = s.comments.filter(c => c.id !== p.id); }); break;
       case 'viewed': { const review = await inspect(p.review); const patch = await filePatch(review, p.path); if (p.digest && patch.digest !== p.digest) throw new Error('This file changed while you were reviewing it. Refresh before marking it viewed.'); result = await mutateState(review, s => { if (p.viewed) s.viewed[p.path] = patch.digest; else delete s.viewed[p.path]; }); break; }
-      case 'fetch': await fetchRepo(p.repo); result = true; break;
+      case 'fetch': {
+        if (p.review) {
+          const review = await inspect(p.review);
+          const imported = /^refs\/revue\/([^/]+\/[^/]+)\/(\d+)\/head$/.exec(review.head);
+          const url = review.pullRequest?.url || (imported ? `https://github.com/${imported[1]}/pull/${imported[2]}` : undefined);
+          if (url) { result = { request: { ...await importPR(review.repo, url), mode: p.review.mode || "branch", commitRange: p.review.commitRange } }; break; }
+        }
+        await fetchRepo(p.repo); result = true; break;
+      }
       case 'pr': result = await importPR(p.repo, p.value); break;
       case 'demo': this.sample ||= await createDemo(); result = { repo: this.sample, base: 'main', head: 'HEAD' }; break;
       case 'prompt': result = { prompt: (await preparePrompt(p)).prompt }; break;
@@ -37,7 +46,7 @@ export class HostService {
         if (this.closed) runner.cancel(run.id);
         result = run; break;
       }
-      case 'runStatus': result = runner.runs.get(p.id); if (!result) throw new Error('This run is no longer available.'); break;
+      case 'runStatus': await flushRunHistory(p.id); result = runner.runs.get(p.id); if (!result) throw new Error('This run is no longer available.'); break;
       case 'cancel': runner.cancel(p.id); result = true; break;
       default: throw new Error('Unknown action.');
     }

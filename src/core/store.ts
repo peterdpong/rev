@@ -9,10 +9,10 @@ async function statePath(review: Review) {
   const dir = path.join(gitDir, 'revue'); await mkdir(dir, { recursive: true });
   return path.join(dir, `${review.scopeKey}.json`);
 }
-export async function readState(review: Review): Promise<ReviewState> {
+export async function readState(review: Review, validateViewed = true): Promise<ReviewState> {
   try {
     const state: ReviewState = JSON.parse(await readFile(await statePath(review), 'utf8'));
-    const names = Object.keys(state.viewed);
+    const names = validateViewed ? Object.keys(state.viewed) : [];
     for (let i = 0; i < names.length; i += 8) await Promise.all(names.slice(i, i + 8).map(async name => {
       try { if ((await filePatch(review, name)).digest !== state.viewed[name]) delete state.viewed[name]; }
       catch { delete state.viewed[name]; }
@@ -21,7 +21,7 @@ export async function readState(review: Review): Promise<ReviewState> {
   }
   catch (e: any) { if (e.code === 'ENOENT') return { comments: [], viewed: {} }; throw e; }
 }
-export async function mutateState(review: Review, change: (state: ReviewState) => void) {
+export async function mutateState(review: Review, change: (state: ReviewState) => void, validateViewed = true) {
   const file = await statePath(review); const lockPath = file + '.lock';
   let lock;
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -31,7 +31,7 @@ export async function mutateState(review: Review, change: (state: ReviewState) =
   if (!lock) throw new Error(`Review data is busy. If no other Revue is running, remove ${lockPath}.`);
   const temp = file + '.' + randomUUID();
   try {
-    const state = await readState(review); change(state);
+    const state = await readState(review, validateViewed); change(state);
     await writeFile(temp, JSON.stringify(state, null, 2), { mode: 0o600 }); await rename(temp, file); return state;
   } finally { await lock.close(); await unlink(lockPath); await unlink(temp).catch(() => {}); }
 }

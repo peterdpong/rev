@@ -21,8 +21,10 @@ use std::{
 };
 
 mod commits;
+mod review;
 #[cfg(feature = "ui-tests")]
 pub mod smoke;
+mod threads;
 mod view;
 use commits::CommitPicker;
 gpui_kit::actions!(
@@ -38,6 +40,7 @@ gpui_kit::actions!(
         PromptChange,
         TogglePromptMode,
         ToggleSidebar,
+        ReplyThread,
         NextFile,
         PreviousFile,
         MarkViewed
@@ -51,6 +54,8 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-r", Refresh, Some("Patch")),
         KeyBinding::new("cmd-k", AskReview, Some("Patch")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Patch")),
+        KeyBinding::new("cmd-enter", ReplyThread, Some("PatchThread > Input")),
+        KeyBinding::new("cmd-enter", ReplyThread, Some("PatchThread")),
         KeyBinding::new("alt-down", NextFile, Some("Patch")),
         KeyBinding::new("alt-up", PreviousFile, Some("Patch")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Patch")),
@@ -78,6 +83,7 @@ enum ModalKind {
     Changes,
     Run,
     Commits,
+    Details,
 }
 #[derive(Clone)]
 struct Modal {
@@ -98,6 +104,13 @@ pub struct Patch {
     sidebar_focus: FocusHandle,
     review: Option<Review>,
     state: ReviewState,
+    threads_visible: bool,
+    thread_filter: Option<String>,
+    active_thread: Option<String>,
+    thread_reply: Entity<TextareaState>,
+    thread_target: Option<(Selection, String)>,
+    thread_scroll: ScrollHandle,
+    thread_scroll_target: Option<String>,
     file: Option<String>,
     patch: FilePatch,
     diff: Entity<DiffState>,
@@ -158,6 +171,11 @@ impl Patch {
                 .placeholder("Write a question or change request…")
         });
         let diff = cx.new(|cx| DiffState::new([], cx));
+        let thread_reply = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(2)
+                .placeholder("Ask a follow-up…")
+        });
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
             cx.observe_in(&diff, window, |this, diff, window, cx| {
@@ -203,6 +221,13 @@ impl Patch {
             sidebar_focus: cx.focus_handle(),
             review: None,
             state: ReviewState::default(),
+            threads_visible: false,
+            thread_filter: None,
+            active_thread: None,
+            thread_reply,
+            thread_target: None,
+            thread_scroll: ScrollHandle::new(),
+            thread_scroll_target: None,
             file: None,
             patch: FilePatch::default(),
             diff,
@@ -360,10 +385,20 @@ impl Patch {
                             .or_else(|| workspace.active().and_then(|t| t.file.clone()))
                             .filter(|file| review.files.iter().any(|f| &f.path == file))
                             .or_else(|| review.files.first().map(|f| f.path.clone()));
+                        if this
+                            .review
+                            .as_ref()
+                            .is_some_and(|old| old.scope_key != review.scope_key)
+                        {
+                            this.threads_visible = false;
+                            this.thread_filter = None;
+                            this.active_thread = None;
+                        }
                         this.workspace = workspace;
                         this.state = state;
                         this.review = Some(review);
                         this.file = None;
+                        this.thread_target = None;
                         this.patch = FilePatch::default();
                         this.selection = None;
                         this.diff.update(cx, |diff, cx| diff.set_files([], cx));
@@ -385,6 +420,10 @@ impl Patch {
             return;
         };
         self.close_selection_prompt(window, cx);
+        self.thread_target = self
+            .thread_target
+            .take()
+            .filter(|(selection, _)| selection.path == path);
         self.file_epoch += 1;
         let epoch = self.file_epoch;
         self.file = Some(path.clone());
@@ -410,6 +449,11 @@ impl Patch {
                         }
                     }
                     this.patch = patch;
+                    if let Some((selection, digest)) = this.thread_target.take() {
+                        if digest == this.patch.digest {
+                            this.diff.update(cx, |diff, cx| diff.scroll_to_line(DiffLinePosition::new(selection.path.clone(), selection.diff_side(), selection.start), cx));
+                        } else { this.error = Some("This conversation refers to an earlier version of the file.".into()); }
+                    }
                     this.rpc("workspaceAction", json!({ "type": "setFile", "id": review.key, "file": path }), window, cx, |this, result, _, _| { this.result(result); });
                 }
                 Err(e) => this.error = Some(e),
@@ -817,13 +861,22 @@ impl Patch {
         self.submitting = true;
         self.rpc(
             "fetch",
-            json!({ "repo": request.repo }),
+            json!({ "repo": request.repo, "review": request }),
             window,
             cx,
             move |this, result, window, cx| {
                 this.submitting = false;
-                if this.result(result).is_some() && this.review_epoch == epoch {
-                    this.refresh(window, cx);
+                if let Some(value) = this.result(result)
+                    && this.review_epoch == epoch
+                {
+                    if value.get("request").is_some() {
+                        match decode(value["request"].clone()) {
+                            Ok(request) => this.load_review(request, this.file.clone(), window, cx),
+                            Err(error) => this.error = Some(error),
+                        }
+                    } else {
+                        this.refresh(window, cx);
+                    }
                 }
             },
         );
@@ -939,6 +992,7 @@ impl Patch {
                             match decode::<AgentRun>(value) {
                                 Ok(run) => {
                                     let id = run.id.clone();
+                                    this.remember_thread(&modal.tab, &run, cx);
                                     this.run_requests
                                         .insert(modal.tab.clone(), modal.request.clone());
                                     this.runs.insert(modal.tab.clone(), run);
@@ -958,7 +1012,7 @@ impl Patch {
                 );
             }
             ModalKind::Commits => self.apply_commit_selection(window, cx),
-            ModalKind::Run => {}
+            ModalKind::Run | ModalKind::Details => {}
         }
         cx.notify();
     }
@@ -1011,6 +1065,7 @@ impl Patch {
                     Ok(run) => {
                         let running = run.status == "running";
                         let id = run.id.clone();
+                        this.remember_thread(&tab, &run, cx);
                         this.runs.insert(tab.clone(), run);
                         if running {
                             this.poll_run(tab, id, window, cx);

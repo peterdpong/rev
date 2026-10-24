@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentRequest, AgentRun, Provider, Review } from '../shared';
 import { inspect, filePatch, git, resolveRef } from './git';
 import { readState, mutateState } from './store';
+import { createRunHistory, threadContext } from './threads';
 
 export async function executable(provider: Provider) {
   if (!['codex', 'claude'].includes(provider)) throw new Error('Choose Codex or Claude Code.');
@@ -59,6 +60,7 @@ export async function preparePrompt(request: AgentRequest) {
       }
       if (supplied < review.files.length) prompt += `\nOnly ${supplied} of ${review.files.length} file patches fit in this request. State this limit; ask the human to select a file for precise follow-up. Do not claim full-diff coverage.`;
     }
+    prompt += await threadContext(review, request.threadId);
     prompt += `\nAnswer only. Do not change any files. Cite relevant file paths and line numbers.\nHuman question: ${request.question}`;
   } else {
     if (await resolveRef(review.repo, 'HEAD') !== review.headSha) throw new Error(review.commitRange ? 'Your checkout does not match the selected end commit. Review a range ending at the checked-out commit, or use a checkout at the selected end commit to apply feedback.' : 'To apply feedback, open a checkout of the reviewed branch. Revue never switches your current branch.');
@@ -89,6 +91,9 @@ export class AgentRunner {
     if (this.activeRepos.has(review.repo)) throw new Error('An agent is already running in this repository. Stop it or wait for it to finish.');
     this.activeRepos.add(review.repo);
     const run: AgentRun = { id: randomUUID(), status: 'running', events: [], startedAt: new Date().toISOString(), mode: request.mode };
+    let history;
+    try { history = await createRunHistory(review, request, run, ids); }
+    catch (error) { this.activeRepos.delete(review.repo); throw error; }
     this.runs.set(run.id, run);
     // Bound in-memory history while retaining recent completed runs.
     for (const [id, old] of this.runs) if (this.runs.size > 30 && old.status !== 'running') this.runs.delete(id);
@@ -149,6 +154,7 @@ export class AgentRunner {
           try { await git(review.repo, ['worktree', 'remove', path.join(temporary, 'checkout')]); await rmdir(temporary); }
           catch { emit({ kind: 'activity', text: `Temporary agent checkout retained at ${temporary} because cleanup could not safely remove it.` }); }
         }
+        await history.finish();
       }
     })();
     return run;

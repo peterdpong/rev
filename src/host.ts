@@ -1,6 +1,7 @@
 // Private stdio transport. Only the parent desktop process owns these pipes.
 import { createInterface } from 'node:readline';
 import { HostService } from './core/host';
+import { hasPendingHistories } from './core/threads';
 
 const host = new HostService();
 let closing = false;
@@ -30,7 +31,7 @@ function shutdown() {
   // Give provider process groups time to terminate and remove clean worktrees.
   const deadline = Date.now() + 8000;
   const timer = setInterval(() => {
-    if ((!pending && ![...host.runner.runs.values()].some(run => run.status === 'running')) || Date.now() > deadline) {
+    if ((!pending && !hasPendingHistories() && ![...host.runner.runs.values()].some(run => run.status === 'running')) || Date.now() > deadline) {
       clearInterval(timer); process.exit(0);
     }
   }, 100);

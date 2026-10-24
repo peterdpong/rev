@@ -65,6 +65,72 @@ fn line_point_on_side(window: &mut Window, line: usize, gutter: bool, old: bool)
     )
 }
 
+// New viewports get a fresh offscreen renderer: retained GPU paint caches from
+// a resized test window are not representative of a presented macOS frame.
+fn compact_preview(
+    cx: &mut HeadlessAppContext,
+    source: &Entity<Patch>,
+    collapsed: bool,
+    threads: bool,
+    output: &str,
+) -> anyhow::Result<()> {
+    let (review, workspace, state, file, patch, providers) = cx.update(|cx| {
+        let app = source.read(cx);
+        (
+            app.review.clone(),
+            app.workspace.clone(),
+            app.state.clone(),
+            app.file.clone(),
+            app.patch.clone(),
+            app.providers.clone(),
+        )
+    });
+    let (handle, _) = cx.update(|cx| {
+        gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Default::default(),
+                    size: size(px(940.), px(600.)),
+                })),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Patch".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(16.), px(15.))),
+                }),
+                app_owns_titlebar_drag: true,
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            cx,
+            |window, cx| {
+                cx.new(|cx| {
+                    let mut app = Patch::new(Err("presentation fixture".into()), None, window, cx);
+                    app.error = None;
+                    app.review = review;
+                    app.workspace = workspace;
+                    app.state = state;
+                    app.file = file;
+                    app.patch = patch;
+                    app.providers = providers;
+                    app.sidebar_collapsed = collapsed;
+                    app.threads_visible = threads;
+                    app.active_thread = threads.then(|| "question-preview".into());
+                    app.wrap = true;
+                    app.diff.update(cx, |diff, cx| {
+                        diff.set_files(DiffFile::parse(&app.patch.patch).unwrap(), cx)
+                    });
+                    app
+                })
+            },
+        )
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+    cx.capture_screenshot(handle)?.save(output)?;
+    Ok(())
+}
+
 pub fn run() -> anyhow::Result<()> {
     let repo = std::env::args()
         .nth(1)
@@ -116,6 +182,12 @@ pub fn run() -> anyhow::Result<()> {
                     origin: Default::default(),
                     size: size(px(1320.), px(860.)),
                 })),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Patch".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(16.), px(15.))),
+                }),
+                app_owns_titlebar_drag: true,
                 focus: false,
                 show: false,
                 ..Default::default()
@@ -184,7 +256,7 @@ pub fn run() -> anyhow::Result<()> {
                 .update(cx, |filter, cx| filter.set_value("", window, cx))
         });
         window.click("ask-review", cx);
-        window.click("changes", cx);
+        window.click("choose-commits", cx);
         assert!(
             app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Ask,
             "a popover must block controls it covers"
@@ -289,7 +361,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("ask-review").visible());
-        assert!(window.find("changes").visible());
+        assert!(window.find("threads-tab").visible());
         assert!(window.find("filter-files").bounds().size.width > px(150.));
         window
             .within(("new", 3usize))
@@ -413,14 +485,10 @@ pub fn run() -> anyhow::Result<()> {
         assert_eq!(app.read(cx).diff.read(cx).mode(), DiffMode::Split);
         window.click("wrap", cx);
         assert!(app.read(cx).wrap);
-        window.click("changes", cx);
-        assert!(
-            app.read(cx)
-                .modal
-                .as_ref()
-                .is_some_and(|m| m.kind == ModalKind::Changes)
-        );
-        window.click("close-modal", cx);
+        window.click("threads-tab", cx);
+        assert!(app.read(cx).threads_visible);
+        window.click("files-tab", cx);
+        assert!(!app.read(cx).threads_visible);
         window.click("filter-files", cx);
         window.input("retry", cx);
         assert!(
@@ -550,9 +618,152 @@ pub fn run() -> anyhow::Result<()> {
             app.run_requests.clear();
         });
     })?;
+
+    // Presentation fixtures stay in memory; no sample conversations are saved to the repo.
+    cx.update_window(handle, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.load_file(path.clone(), window, cx);
+            app.filter
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            app.split = false;
+            app.diff
+                .update(cx, |diff, cx| diff.set_mode(DiffMode::Unified, cx));
+        });
+    })?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-branch.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let review = app.review.as_mut().unwrap();
+            review.pull_request = Some(PullRequest {
+                number: 42, title: "Make request retries resilient to transient failures and cancellation".into(),
+                body: "Adds exponential backoff, a delay cap, and per-request cancellation.\n\n## Review notes\nCheck cancellation during the delay and the maximum number of attempts.".into(),
+                url: "https://github.com/example/patch/pull/42".into(), author: "reviewer".into(), state: "OPEN".into(), is_draft: false,
+                head_ref_name: "feat/resilient-requests".into(), base_ref_name: "main".into(),
+            });
+            let source = Selection { path: path.clone(), side: "additions".into(), start: 4, end: 6 };
+            app.state.threads = vec![
+                decode(json!({ "id": "question-preview", "kind": "question", "body": "Does cancellation interrupt the delay between retries?",
+                    "selection": source, "digest": app.patch.digest, "headSha": review.head_sha, "mergeBase": review.merge_base,
+                    "updatedAt": "2026-10-24T12:00:00Z", "commentIds": [], "turns": [{ "id": "turn-preview", "question": "Does cancellation interrupt the delay between retries?", "provider": "codex", "status": "completed",
+                        "events": [{ "kind": "message", "text": "Cancellation is checked before each attempt, but the delay does not observe the signal. Cancelling during backoff waits for the timer to finish.\n\nPass the `AbortSignal` to the delay and reject when it aborts. Add a test for cancellation while waiting." }] }] })).unwrap(),
+                decode(json!({ "id": "general-preview", "kind": "question", "body": "What should I check before merging?", "headSha": review.head_sha, "mergeBase": review.merge_base,
+                    "updatedAt": "2026-10-24T11:00:00Z", "commentIds": [], "turns": [{ "id": "general-turn", "question": "What should I check before merging?", "provider": "codex", "status": "completed",
+                        "events": [{ "kind": "message", "text": "Check cancellation while waiting, the maximum retry delay, and the final failed attempt." }] }] })).unwrap(),
+            ];
+            app.state.comments = vec![Comment { selection: source, id: "change-preview".into(), body: "Add a regression test for cancelling a request during backoff.".into(), status: "queued".into(), digest: app.patch.digest.clone() }];
+            app.threads_visible = false;
+            app.active_thread = None;
+            window.focus(&app.focus, cx);
+            cx.notify();
+        });
+    })?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-pr-review.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        let index = app
+            .read(cx)
+            .visible_files(cx)
+            .iter()
+            .position(|file| file.path == path)
+            .unwrap();
+        window.click(SharedString::from(format!("file-threads-{index}")), cx);
+        assert!(
+            app.read(cx).threads_visible,
+            "file discussion badges must not activate the underlying file row"
+        );
+        assert_eq!(app.read(cx).thread_filter.as_ref(), Some(&path));
+        window.click("thread-question-preview", cx);
+        assert_eq!(
+            app.read(cx).active_thread.as_deref(),
+            Some("question-preview")
+        );
+    })?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-threads.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("code-question-preview", cx);
+        assert!(!app.read(cx).threads_visible);
+        assert_eq!(app.read(cx).file.as_ref(), Some(&path));
+        window.click("review-details", cx);
+        assert!(
+            app.read(cx)
+                .modal
+                .as_ref()
+                .is_some_and(|m| m.kind == ModalKind::Details)
+        );
+    })?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-details.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.press("escape", cx);
+        window.resize(size(px(940.), px(600.)));
+        window.bounds_changed(cx);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.viewport_size(), size(px(940.), px(600.)));
+        assert!(
+            window.find("choose-commits").bounds().left()
+                > window.find("threads-tab").bounds().right()
+        );
+        assert!(window.find("refresh").bounds().right() <= window.viewport_size().width);
+        assert!(window.find("ask-review").bounds().right() <= window.viewport_size().width);
+        assert!(window.find("toggle-sidebar").bounds().left() >= px(80.));
+    })?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-narrow.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.press("cmd-b", cx);
+        assert!(app.read(cx).sidebar_collapsed);
+    })?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("ask-review").bounds().right() <= window.viewport_size().width);
+        assert!(window.find("review-details").bounds().right() <= window.viewport_size().width);
+        assert!(window.find("choose-commits").bounds().right() <= window.viewport_size().width);
+    })?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-collapsed.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("threads-tab", cx);
+        if app.read(cx).active_thread.as_deref() != Some("question-preview") {
+            window.click("thread-question-preview", cx);
+        }
+    })?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-threads-narrow.png"))?;
+    compact_preview(
+        &mut cx,
+        &app,
+        false,
+        false,
+        &format!("{output}/gpui-narrow.png"),
+    )?;
+    compact_preview(
+        &mut cx,
+        &app,
+        true,
+        false,
+        &format!("{output}/gpui-collapsed.png"),
+    )?;
+    compact_preview(
+        &mut cx,
+        &app,
+        true,
+        true,
+        &format!("{output}/gpui-threads-narrow.png"),
+    )?;
     service.close();
     println!(
-        "Native UI checks passed: anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: PR/commit details, saved threads and source links, file badges, compact/collapsed layouts, anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }
