@@ -323,32 +323,33 @@ impl Patch {
             .into_any_element()
     }
 
-    fn annotation(&mut self, annotation: &DiffAnnotation, cx: &mut Context<Self>) -> AnyElement {
-        if annotation.id() == &ElementId::Name("selection-actions".into()) {
-            return row()
-                .p_2()
-                .gap_2()
-                .bg(rgb(SELECTED))
-                .child(button("ask-selection", "Ask agent").on_click(cx.listener(
+    fn selection_actions(&self, cx: &mut Context<Self>) -> AnyElement {
+        row()
+            .id("selection-actions")
+            .p_1()
+            .gap_1()
+            .bg(rgb(PANEL))
+            .border_1()
+            .border_color(rgb(BORDER))
+            .rounded_md()
+            .shadow_lg()
+            .occlude()
+            .child(button("ask-selection", "Ask agent").on_click(cx.listener(
+                |this, _, window, cx| {
+                    this.open_modal(ModalKind::Ask, this.selection.clone(), None, window, cx)
+                },
+            )))
+            .child(
+                button("change-selection", "Agent change").on_click(cx.listener(
                     |this, _, window, cx| {
-                        this.open_modal(ModalKind::Ask, this.selection.clone(), None, window, cx)
+                        this.open_modal(ModalKind::Change, this.selection.clone(), None, window, cx)
                     },
-                )))
-                .child(
-                    button("change-selection", "Agent change").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(
-                                ModalKind::Change,
-                                this.selection.clone(),
-                                None,
-                                window,
-                                cx,
-                            )
-                        },
-                    )),
-                )
-                .into_any_element();
-        }
+                )),
+            )
+            .into_any_element()
+    }
+
+    fn annotation(&mut self, annotation: &DiffAnnotation, _: &mut Context<Self>) -> AnyElement {
         let comment = self
             .state
             .comments
@@ -377,7 +378,7 @@ impl Patch {
     }
 
     fn diff_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let mut annotations: Vec<_> = self
+        let annotations: Vec<_> = self
             .state
             .comments
             .iter()
@@ -395,12 +396,6 @@ impl Patch {
                 )
             })
             .collect();
-        if let Some(selection) = &self.selection {
-            annotations.push(DiffAnnotation::line(
-                "selection-actions",
-                DiffLinePosition::new(selection.path.clone(), selection.diff_side(), selection.end),
-            ));
-        }
         let owner = cx.weak_entity();
         let add_owner = owner.clone();
         let viewed = self
@@ -476,9 +471,10 @@ impl Patch {
                         .update(cx, |this, cx| this.annotation(annotation, cx))
                         .unwrap_or_else(|_| div().into_any_element())
                 })
-                .on_add_annotation(move |range, _, cx| {
+                .on_add_annotation(move |range, window, cx| {
                     let _ = add_owner.update(cx, |this, cx| {
                         this.selection = Selection::from_range(range);
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
                         this.diff.update(cx, |diff, cx| {
                             diff.set_selected_lines(Some(range.clone()), cx)
                         });
@@ -492,7 +488,14 @@ impl Patch {
             .min_w_0()
             .h_full()
             .child(header)
-            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
+            .child(
+                div()
+                    .id("diff-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(content),
+            )
             .into_any_element()
     }
 
@@ -970,3 +973,14 @@ impl Render for Patch {
             .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
     }
 }
+            .when(
+                self.modal.is_none() && self.selection.is_some() && !self.selecting,
+                |d| {
+                    d.child(deferred(
+                        anchored()
+                            .position(self.selection_menu)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(self.selection_actions(cx)),
+                    ))
+                },
+            )

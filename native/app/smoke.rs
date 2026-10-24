@@ -4,6 +4,67 @@ use super::*;
 use gpui_kit::{HeadlessAppContext, test::TestWindowExt};
 use std::sync::Arc;
 
+fn pointer_down(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
+    window.simulate_mouse_move(position, cx);
+    window.render_frame(cx);
+    window.dispatch_event(
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }),
+        cx,
+    );
+}
+
+fn pointer_move(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
+    window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button: Some(MouseButton::Left),
+            ..Default::default()
+        }),
+        cx,
+    );
+    window.render_frame(cx);
+}
+
+fn pointer_up(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
+    window.dispatch_event(
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            click_count: 1,
+            ..Default::default()
+        }),
+        cx,
+    );
+}
+
+fn line_point_on_side(window: &mut Window, line: usize, gutter: bool, old: bool) -> Point<Pixels> {
+    let side = if old { "old" } else { "new" };
+    let gutter_id = if old { "old-gutter" } else { "new-gutter" };
+    let bounds = if gutter {
+        window
+            .within((side, line - 1))
+            .within(gutter_id)
+            .find(("line", line - 1))
+            .bounds()
+    } else {
+        window.within((side, line - 1)).find("source").bounds()
+    };
+    point(
+        bounds.left()
+            + if gutter {
+                bounds.size.width / 2.
+            } else {
+                px(40.)
+            },
+        bounds.center().y,
+    )
+}
+
 pub fn run() -> anyhow::Result<()> {
     let repo = std::env::args()
         .nth(1)
@@ -89,6 +150,68 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    // Drive real pointer gestures through production handlers, without Shift.
+    for split in [false, true] {
+        if split {
+            cx.update_window(handle, |_, window, cx| window.click("diff-mode", cx))?;
+        }
+        for old in [false, true] {
+            if old && !split {
+                continue;
+            }
+            for gutter in [false, true] {
+                for (start, end) in if old {
+                    [(1, 3), (3, 1)]
+                } else {
+                    [(4, 6), (6, 4)]
+                } {
+                    // Leave a previous range in place: replacing it must not
+                    // insert/remove an action row under the moving pointer.
+                    cx.update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        let start = line_point_on_side(window, start, gutter, old);
+                        pointer_down(window, start, cx);
+                    })?;
+                    let target = cx.update_window(handle, |_, window, cx| {
+                        let origin = line_point_on_side(window, start, gutter, old);
+                        let target = line_point_on_side(window, end, gutter, old);
+                        pointer_move(window, target, cx);
+                        assert_eq!(
+                            line_point_on_side(window, start, gutter, old),
+                            origin,
+                            "dragging must not move source rows"
+                        );
+                        target
+                    })?;
+                    let copied = cx.update_window(handle, |_, window, cx| {
+                        let copied = app.read(cx).diff.read(cx).selected_text(cx);
+                        pointer_up(window, target, cx);
+                        copied
+                    })?;
+                    cx.update_window(handle, |_, window, cx| {
+                        let expected = (start.min(end), start.max(end), if old { "deletions" } else { "additions" });
+                        let selection = app.read(cx).selection.as_ref().unwrap_or_else(|| panic!("missing drag selection: split={split}, old={old}, gutter={gutter}, {start}–{end}"));
+                        assert_eq!((selection.start, selection.end, selection.side.as_str()), expected, "split={split}, old={old}, gutter={gutter}, {start}–{end}");
+                        assert_eq!(app.read(cx).diff.read(cx).selected_text(cx), copied, "the action menu must preserve native copy text");
+                        window.render_frame(cx);
+                        window.click(if gutter { "change-selection" } else { "ask-selection" }, cx);
+                        let modal = app.read(cx).modal.as_ref().unwrap().clone();
+                        let selection = modal.selection.as_ref().unwrap();
+                        assert_eq!((selection.start, selection.end, selection.side.as_str()), expected, "split={split}, old={old}, gutter={gutter}, {start}–{end}");
+                        window.click("close-modal", cx);
+                        // Restore the previous range through the real gutter.
+                        let previous = line_point_on_side(window, end, true, old);
+                        pointer_down(window, previous, cx);
+                        pointer_up(window, previous, cx);
+                    })?;
+                }
+            }
+        }
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| app.close_modal(window, cx));
+        })?;
+    }
+    cx.update_window(handle, |_, window, cx| window.click("diff-mode", cx))?;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("ask-review").visible());
@@ -173,7 +296,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-split.png"))?;
     println!(
-        "Native UI checks passed: selection, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }

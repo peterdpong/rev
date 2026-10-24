@@ -30,3 +30,6 @@ debug = 0
 strip = true
 lto = "thin"
 codegen-units = 16
+
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }

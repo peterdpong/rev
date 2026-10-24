@@ -64,6 +64,8 @@ pub struct Patch {
     patch: FilePatch,
     diff: Entity<DiffState>,
     selection: Option<Selection>,
+    selecting: bool,
+    selection_menu: Point<Pixels>,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     prompt: Entity<TextareaState>,
@@ -117,15 +119,36 @@ impl Patch {
         let diff = cx.new(|cx| DiffState::new([], cx));
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
-            cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, _, cx| {
-                match event {
-                    DiffEvent::SelectionEnded(range) | DiffEvent::SelectionChanged(Some(range)) => {
-                        this.selection = Selection::from_range(range);
-                        if this.selection.is_none() {
-                            this.error = Some("Select lines on one side of the diff.".into());
-                        }
+            cx.observe_in(&diff, window, |this, diff, window, cx| {
+                let state = diff.read(cx);
+                if state.selected_lines().is_some() {
+                    return;
+                } // Gutter/keyboard events own this range.
+                let selecting = state.is_selecting_text(cx);
+                let range = state.selected_text_lines(cx);
+                if selecting {
+                    this.selecting = true;
+                } else if let Some(range) = range {
+                    this.selecting = false;
+                    if this.selection != Selection::from_range(&range) {
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(&range);
                     }
-                    DiffEvent::SelectionChanged(None) => this.selection = None,
+                } else if this.selecting {
+                    this.selecting = false;
+                    this.selection = None;
+                }
+                cx.notify();
+            }),
+            cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, window, cx| {
+                match event {
+                    DiffEvent::SelectionStarted(_) => this.selecting = true,
+                    DiffEvent::SelectionEnded(range) => {
+                        this.selecting = false;
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(range);
+                    }
+                    DiffEvent::SelectionChanged(None) if !this.selecting => this.selection = None,
                     _ => {}
                 }
                 cx.notify();
@@ -141,6 +164,8 @@ impl Patch {
             diff,
             selection: None,
             filter,
+            selecting: false,
+            selection_menu: Point::default(),
             fields,
             prompt,
             focus: cx.focus_handle(),
@@ -318,6 +343,7 @@ impl Patch {
         self.selection = None;
         self.patch = FilePatch::default();
         self.error = None;
+        self.selecting = false;
         self.notice = None;
         self.diff.update(cx, |diff, cx| diff.set_files([], cx));
         self.rpc("patch", json!({ "review": review.request, "path": path }), window, cx, move |this, result, window, cx| {
@@ -466,12 +492,24 @@ impl Patch {
         self.selection = None;
         self.diff
             .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
+        self.selecting = false;
+        gpui_kit::base::TextSelection::clear(window, cx);
         self.focus.focus(window, cx);
         cx.notify();
     }
 
     fn open_modal(
         &mut self,
+    fn accept_selection(&mut self, range: &DiffLineRange) {
+        self.selection = Selection::from_range(range);
+        const CROSS_SIDE: &str = "Select lines on one side of the diff.";
+        if self.selection.is_none() {
+            self.error = Some(CROSS_SIDE.into());
+        } else if self.error.as_deref() == Some(CROSS_SIDE) {
+            self.error = None;
+        }
+    }
+
         kind: ModalKind,
         selection: Option<Selection>,
         repo: Option<String>,
