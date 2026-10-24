@@ -75,6 +75,25 @@ fn navigation_action(id: impl Into<ElementId>, icon: IconName, label: &'static s
 }
 
 impl Patch {
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> Button {
+        let label = if self.sidebar_collapsed {
+            "Show sidebar"
+        } else {
+            "Hide sidebar"
+        };
+        navigation_action(
+            "toggle-sidebar",
+            if self.sidebar_collapsed {
+                IconName::PanelLeftOpen
+            } else {
+                IconName::PanelLeftClose
+            },
+            label,
+        )
+        .tooltip(format!("{label} (⌘B)"))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
+    }
+
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_3().min_w_0();
@@ -176,6 +195,8 @@ impl Patch {
             projects = projects.child(group);
         }
         column()
+            .id("project-sidebar")
+            .track_focus(&self.sidebar_focus)
             .w(px(225.))
             .h_full()
             .flex_shrink_0()
@@ -271,6 +292,7 @@ impl Patch {
                     .px_4()
                     .border_b_1()
                     .border_color(rgb(BORDER))
+                    .child(self.sidebar_toggle(cx))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(review.name))
                     .child(
                         div()
@@ -1248,11 +1270,19 @@ impl Render for Patch {
                 .into_any_element()
         } else {
             column()
+                .relative()
                 .flex_1()
                 .h_full()
                 .items_center()
                 .justify_center()
                 .gap_4()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(12.))
+                        .left(px(16.))
+                        .child(self.sidebar_toggle(cx)),
+                )
                 .child(
                     div()
                         .text_size(px(24.))
@@ -1306,6 +1336,9 @@ impl Render for Patch {
             .on_action(cx.listener(|this, _: &TogglePromptMode, window, cx| {
                 this.toggle_prompt_mode(window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
             .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
@@ -1328,7 +1361,7 @@ impl Render for Patch {
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .child(self.sidebar(cx))
+                    .when(!self.sidebar_collapsed, |row| row.child(self.sidebar(cx)))
                     .child(content),
             )
             .when_some(status, |d, error| {

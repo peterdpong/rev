@@ -47,6 +47,7 @@ Project tabs and last-selected files persist across launches. Draft prompts and 
 | --- | --- |
 | ⌘O | Open repository |
 | ⌘K | Ask about the whole review |
+| ⌘B | Show / hide the project sidebar |
 | ⌘1 / ⌘2 | Select Ask agent / Agent change in the selection prompt |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch prompt tabs while editing |
 | ⌘R | Refresh |

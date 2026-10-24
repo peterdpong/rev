@@ -35,6 +35,7 @@ gpui_kit::actions!(
         PromptAsk,
         PromptChange,
         TogglePromptMode,
+        ToggleSidebar,
         NextFile,
         PreviousFile,
         MarkViewed
@@ -47,6 +48,7 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, Some("Patch")),
         KeyBinding::new("cmd-r", Refresh, Some("Patch")),
         KeyBinding::new("cmd-k", AskReview, Some("Patch")),
+        KeyBinding::new("cmd-b", ToggleSidebar, Some("Patch")),
         KeyBinding::new("alt-down", NextFile, Some("Patch")),
         KeyBinding::new("alt-up", PreviousFile, Some("Patch")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Patch")),
@@ -89,6 +91,8 @@ struct Modal {
 pub struct Patch {
     backend: Option<Backend>,
     workspace: Workspace,
+    sidebar_collapsed: bool,
+    sidebar_focus: FocusHandle,
     review: Option<Review>,
     state: ReviewState,
     file: Option<String>,
@@ -192,6 +196,8 @@ impl Patch {
         let mut app = Self {
             backend,
             workspace: Workspace::default(),
+            sidebar_collapsed: false,
+            sidebar_focus: cx.focus_handle(),
             review: None,
             state: ReviewState::default(),
             file: None,
@@ -406,6 +412,14 @@ impl Patch {
                 Err(e) => this.error = Some(e),
             }
         });
+        cx.notify();
+    }
+
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        if self.sidebar_collapsed && self.sidebar_focus.contains_focused(window, cx) {
+            self.focus.focus(window, cx);
+        }
         cx.notify();
     }
 
