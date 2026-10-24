@@ -52,7 +52,14 @@ impl Patch {
         let Some(review) = self.review.clone() else {
             return;
         };
-        self.open_modal(ModalKind::Commits, None, None, window, cx);
+        self.open_modal(ModalKind::Commits, None, None, "choose-commits", window, cx);
+        if !self
+            .modal
+            .as_ref()
+            .is_some_and(|modal| modal.kind == ModalKind::Commits)
+        {
+            return;
+        }
         self.commit_picker = CommitPicker {
             range: review.request.commit_range.clone(),
             count: review.commit_count,

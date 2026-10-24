@@ -9,8 +9,8 @@
 | Layer | Location | Responsibility |
 | --- | --- | --- |
 | Native launcher | `native/main.rs` | macOS window, keyboard shortcuts, desktop/CLI routing, lifecycle |
-| App state | `native/app.rs` | repositories, tabs, selected file, bounded requests, dialogs, drafts, agent jobs |
-| Native views | `native/app/view.rs` | project folders, files, GPUI Kit Diff, inline actions/comments, prompt and response dialogs |
+| App state | `native/app.rs` | repositories, tabs, selected file, bounded requests, popovers, drafts, agent jobs |
+| Native views | `native/app/view.rs` | project folders, files, GPUI Kit Diff, inline actions/comments, anchored prompt and response popovers |
 | Rust transport | `native/backend.rs` | private child-process pipes, request IDs, response correlation, timeouts, shutdown |
 | JSONL entrypoint | `src/host.ts` | parse requests, respond by ID, cancel agents on parent disconnect |
 | Shared host API | `src/core/host.ts` | dispatch Git, review storage, workspace and agent operations |
@@ -33,7 +33,7 @@ The JSON request boundary allows the host to be replaced with Rust later. The Ru
 1. Inspect a repository, resolve base/head commits, and compute the merge base. The working checkout is not switched.
 2. Persist a project and tab. `HEAD` is stored as a symbolic branch or detached commit, so a tab cannot silently follow another checkout.
 3. Load one file patch. GPUI Kit parses it into retained `DiffState`, supplies unified/split layout, syntax highlighting, virtualized rows, folding, and source line selection.
-4. Selection actions capture the review, path, side, line range, and patch digest before opening the dialog. Cross-side ranges are rejected rather than converted to inaccurate source coordinates.
+4. Selection actions capture the review, path, side, line range, and patch digest before opening the popover. Cross-side ranges are rejected rather than converted to inaccurate source coordinates.
 5. A change request is saved in Git metadata. Inline comments are only attached when their digest matches the currently displayed patch; older feedback remains in Changes and is rejected on apply.
 6. A selected feedback batch is revalidated immediately before dispatch. The local agent receives the requests and code context. Comments become sent only after explicit successful provider completion.
 7. Review agent edits in Working tree mode. Committing and pushing remain separate user actions.
@@ -46,7 +46,7 @@ Git, process I/O, and request waits run on GPUI's background executor. Requests 
 
 Diff parsing is bounded by the 2 MB file limit. The diff entity survives ordinary renders. Project/file navigation uses standard scrolling; the expensive code surface is virtualized. This should be profiled with real large reviews before any performance guarantee.
 
-Dialog context is captured separately from current navigation. Modal focus is trapped, Escape returns focus, and selected/general prompts have different draft keys. Runs are associated with their originating review tab; output is only shown in that tab's response dialog. Closing the dialog does not cancel a run; Stop does. Closing the application closes its private pipes and terminates active provider process groups.
+Popover context is captured separately from current navigation. GPUI Kit’s popup host anchors each surface to its trigger and keeps it inside the window. There is no modal backdrop or focus trap. Outside clicks and Escape dismiss the surface; selected/general prompts have different draft keys. Runs are associated with their originating review tab; closing the response popover does not cancel a run; Stop does. Closing the application closes its private pipes and terminates active provider process groups.
 
 ## Local agents and code context
 

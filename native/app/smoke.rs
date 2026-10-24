@@ -150,6 +150,80 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    // Popovers use their trigger's geometry and leave the rest of the review interactive.
+    cx.update_window(handle, |_, window, cx| window.click("ask-review", cx))?;
+    cx.run_until_parked();
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-general-ask.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let trigger = window.find("ask-review").bounds();
+        let panel = window.find("review-popover").bounds();
+        assert_eq!(panel.top(), trigger.bottom() + px(6.));
+        assert_eq!(panel.right(), trigger.right());
+        window.input("Keep this question", cx);
+        window.click("ask-review", cx);
+        assert!(
+            app.read(cx).modal.is_none(),
+            "clicking the trigger again closes its popover"
+        );
+        window.click("ask-review", cx);
+        assert_eq!(
+            app.read(cx).prompt.read(cx).value().as_ref(),
+            "Keep this question"
+        );
+        window.click("filter-files", cx);
+        assert!(
+            app.read(cx).modal.is_none(),
+            "outside clicks dismiss without a blocking backdrop"
+        );
+        window.input("retry", cx);
+        assert_eq!(app.read(cx).filter.read(cx).value().as_ref(), "retry");
+        app.update(cx, |app, cx| {
+            app.filter
+                .update(cx, |filter, cx| filter.set_value("", window, cx))
+        });
+        window.click("ask-review", cx);
+        window.click("changes", cx);
+        assert!(
+            app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Ask,
+            "a popover must block controls it covers"
+        );
+        window.click("add-project", cx);
+        assert!(
+            app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Open,
+            "an exposed trigger switches popovers with one click"
+        );
+        window.press("escape", cx);
+        assert!(app.read(cx).modal.is_none());
+        window.click("open-project", cx);
+        window.render_frame(cx);
+        let trigger = window.find("open-project").bounds();
+        let panel = window.find("review-popover").bounds();
+        assert!(
+            panel.bottom() >= trigger.top() - px(7.) && panel.bottom() <= trigger.top() - px(5.)
+        );
+        assert!(
+            panel.size.width > px(225.),
+            "the sidebar must not clip its dropdown"
+        );
+    })?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-open.png"))?;
+    cx.update_window(handle, |_, window, cx| {
+        window.press("escape", cx);
+        window.press("cmd-b", cx);
+        window.press("cmd-o", cx);
+        window.render_frame(cx);
+        assert!(app.read(cx).modal.as_ref().unwrap().kind == ModalKind::Open);
+        assert_eq!(
+            window.find("review-popover").bounds().left(),
+            window.find("toggle-sidebar").bounds().left()
+        );
+        window.press("escape", cx);
+        window.press("cmd-b", cx);
+        app.update(cx, |app, _| app.drafts.clear());
+    })?;
     // Drive real pointer gestures through production handlers, without Shift.
     for split in [false, true] {
         if split {
@@ -324,7 +398,14 @@ pub fn run() -> anyhow::Result<()> {
                 input.set_value("Handle cancellation", window, cx)
             });
             app.close_modal(window, cx);
-            app.open_modal(ModalKind::Change, bound.selection.clone(), None, window, cx);
+            app.open_modal(
+                ModalKind::Change,
+                bound.selection.clone(),
+                None,
+                "ask-review",
+                window,
+                cx,
+            );
             assert_eq!(app.prompt.read(cx).value().as_ref(), "Handle cancellation");
         });
         window.click("close-modal", cx);
@@ -471,7 +552,7 @@ pub fn run() -> anyhow::Result<()> {
     })?;
     service.close();
     println!(
-        "Native UI checks passed: single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }

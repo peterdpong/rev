@@ -38,10 +38,10 @@ The first Cargo build downloads and compiles GPUI. Later development builds are 
 1. **Open folder** to choose an existing local repository. Open branch/PR tabs with the **+** beside its project name. Enter a branch, PR number, or GitHub PR URL; blank means the current branch.
 2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Committed / Working tree** changes the comparison scope. **Fetch** updates remotes without changing the checkout.
 3. Click and drag across code or line numbers—no Shift needed. On release, a floating prompt opens with **Ask agent / Agent change** tabs above its input. Switching tabs keeps your text and selected code. Shift-select also works. Select one side of the diff for an exact source range.
-4. The top **Ask agent** button asks about the whole review. A dialog contains the prompt, provider choice, response, and Stop control.
+4. The top **Ask agent** button asks about the whole review. An anchored popover contains the prompt, provider choice, response, and Stop control.
 5. **Agent change** queues local feedback. Open **Changes**, select requests, optionally preview the prompt, and **Send to agent**. The agent edits the current checkout; Patch does not commit or push those edits. Inspect them in **Working tree**.
 
-Project tabs and last-selected files persist across launches. Draft prompts and agent responses remain available for the current app session. There is no permanent agent sidebar.
+Project tabs and last-selected files persist across launches. Draft prompts and agent responses remain available for the current app session. Review controls open compact popovers beside their buttons; click outside or press Escape to dismiss them. There is no permanent agent sidebar.
 
 | Shortcut | Action |
 | --- | --- |
@@ -53,8 +53,8 @@ Project tabs and last-selected files persist across launches. Draft prompts and 
 | ⌘R | Refresh |
 | ⌥↓ / ⌥↑ | Next / previous file |
 | ⌘⇧V | Toggle viewed |
-| ⌘Enter | Submit the prompt or dialog |
-| Escape | Close the prompt or dialog |
+| ⌘Enter | Submit the prompt or popover |
+| Escape | Close the prompt or popover |
 
 ## Commit comparisons
 
@@ -105,7 +105,7 @@ The bundle contains the release GPUI executable, the small bundled JavaScript ho
 GPUI desktop (Rust)                  CLI (TypeScript / Node)
   project / branch tabs                  terminal diff and review commands
   native virtualized Diff                same Git and agent operations
-  selection actions + dialogs                      │
+  selection actions + popovers                     │
              │ private JSONL stdin/stdout           │
              └──────────────┬───────────────────────┘
                     local host / shared core
@@ -130,7 +130,7 @@ npm run demo
 cargo run --locked --features ui-tests --bin patch-ui-check -- .patch-demo .test-artifacts
 ```
 
-The last command renders the production view offscreen through Metal on macOS and exercises line selection, scoped/general questions, modal keyboard handling, draft restoration, split view, wrapping, and file filtering. It saves native render images to `.test-artifacts`. It needs a working GPU context but does not capture or automate your desktop. Host integration tests use temporary Git repositories and fake agent executables; they do not spend model tokens.
+The last command renders the production view offscreen through Metal on macOS and exercises line selection, scoped/general questions, popover dismissal and keyboard handling, draft restoration, split view, wrapping, and file filtering. It saves native render images to `.test-artifacts`. It needs a working GPU context but does not capture or automate your desktop. Host integration tests use temporary Git repositories and fake agent executables; they do not spend model tokens.
 
 ## MVP boundaries
 
