@@ -1,0 +1,8 @@
+target/
+/docs/
+node_modules/
+dist/
+.test-artifacts/
+.patch-demo/
+.DS_Store
+*.log

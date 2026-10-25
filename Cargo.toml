@@ -1,0 +1,21 @@
+[package]
+name = "patch-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "patch"
+
+[[bin]]
+name = "patch"
+path = "native/main.rs"
+
+[dependencies]
+gpui-kit = { version = "=0.8.0", features = ["tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-javascript", "tree-sitter-python", "tree-sitter-markdown"] }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 16
