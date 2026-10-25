@@ -5,6 +5,7 @@ use gpui_kit::{HeadlessAppContext, test::TestWindowExt};
 use std::sync::Arc;
 mod all_files;
 mod file_sheet;
+mod navigation;
 mod projects;
 mod thread_panel;
 
@@ -400,6 +401,13 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    if std::env::args().any(|arg| arg == "--navigation-only") {
+        let service = Backend::start().map_err(anyhow::Error::msg)?;
+        cx.update(|cx| app.update(cx, |app, _| app.backend = Some(service.clone())));
+        projects::check_projects(&mut cx, handle, &app, &output)?;
+        service.close();
+        return Ok(());
+    }
     thread_panel::check(&mut cx, handle, &app, &output)?;
     if std::env::args().any(|arg| arg == "--threads-only") {
         return Ok(());

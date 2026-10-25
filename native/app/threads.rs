@@ -253,7 +253,8 @@ impl Patch {
         cx: &mut Context<Self>,
     ) {
         self.close_modal(window, cx);
-        self.jump_file(selection.path.clone(), window, cx);
+        let previous = self.navigation_location(cx);
+        self.reveal_file(selection.path.clone(), window, cx);
         if self
             .patches
             .get(&selection.path)
@@ -282,6 +283,7 @@ impl Patch {
         } else {
             self.error = Some("This conversation refers to an earlier version of the file.".into());
         }
+        self.record_file_navigation(previous, cx);
         cx.notify();
     }
 

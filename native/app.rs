@@ -24,6 +24,7 @@ mod commits;
 mod continuous;
 mod file_sheet;
 mod motion;
+mod navigation;
 mod projects;
 mod review;
 #[cfg(feature = "ui-tests")]
@@ -48,6 +49,8 @@ gpui_kit::actions!(
         ToggleThreads,
         NextTab,
         PreviousTab,
+        GoBack,
+        GoForward,
         ReplyThread,
         NextFile,
         PreviousFile,
@@ -67,6 +70,8 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-shift-b", ToggleThreads, Some("Patch")),
         KeyBinding::new("alt-tab", NextTab, Some("Patch")),
         KeyBinding::new("alt-shift-tab", PreviousTab, Some("Patch")),
+        KeyBinding::new("cmd-[", GoBack, Some("Patch")),
+        KeyBinding::new("cmd-]", GoForward, Some("Patch")),
         KeyBinding::new("cmd-p", BrowseFiles, Some("Patch")),
         KeyBinding::new("enter", ChooseFile, Some("PatchFiles > Input")),
         KeyBinding::new("escape", CloseModal, Some("PatchFiles > Input")),
@@ -116,6 +121,7 @@ struct Modal {
 pub struct Patch {
     backend: Option<Backend>,
     workspace: Workspace,
+    navigation: navigation::Navigation,
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
@@ -249,6 +255,7 @@ impl Patch {
         let mut app = Self {
             backend,
             workspace: Workspace::default(),
+            navigation: navigation::Navigation::default(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,
@@ -383,6 +390,8 @@ impl Patch {
         if self.loading || self.workspace_busy {
             return;
         }
+        let previous = self.navigation_location(cx);
+        let travel = self.navigation.travel.take();
         self.close_selection_prompt(window, cx);
         self.hide_file_sheet(window, cx);
         self.loading = true;
@@ -449,6 +458,15 @@ impl Patch {
                                 .update(cx, |input, cx| input.set_value("", window, cx));
                         }
                         this.workspace = workspace;
+                        this.navigation.loaded(
+                            previous,
+                            this.workspace
+                                .active()
+                                .map(|tab| tab.request.clone())
+                                .unwrap_or_else(|| review.request.clone()),
+                            &review.scope_key,
+                            travel,
+                        );
                         this.state = state;
                         this.review = Some(review);
                         this.file = selected;

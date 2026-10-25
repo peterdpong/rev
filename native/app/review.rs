@@ -1,7 +1,7 @@
 use super::view::{BG, BLUE, BORDER, MUTED, PANEL, SELECTED, button, column, row};
 use super::*;
 use gpui_kit::base::TestSupportExt;
-use gpui_kit::component::{TitleBar, text::TextView};
+use gpui_kit::component::{IconName, TitleBar, text::TextView};
 
 impl Patch {
     pub(super) fn top_nav(
@@ -42,7 +42,37 @@ impl Patch {
             .min_w_0()
             .px_3()
             .gap_2()
-            .text_size(px(12.));
+            .text_size(px(12.))
+            .child(
+                row()
+                    .gap_0()
+                    .child(
+                        Button::new("navigate-back")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ChevronLeft)
+                            .w(px(24.))
+                            .tooltip("Back (⌘[)")
+                            .accessibility_label("Back")
+                            .disabled(!self.can_navigate(NavigationDirection::Back))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.navigate_history(NavigationDirection::Back, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("navigate-forward")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ChevronRight)
+                            .w(px(24.))
+                            .tooltip("Forward (⌘])")
+                            .accessibility_label("Forward")
+                            .disabled(!self.can_navigate(NavigationDirection::Forward))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.navigate_history(NavigationDirection::Forward, window, cx)
+                            })),
+                    ),
+            );
         if let Some(review) = self.review.clone() {
             let label = review
                 .pull_request

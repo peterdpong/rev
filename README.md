@@ -52,6 +52,7 @@ Project tabs, last-selected files, and local conversations persist across launch
 | ⌘B | Show / hide the project sidebar |
 | ⌘⇧B | Show / hide the thread sidebar |
 | ⌥Tab / ⌥⇧Tab | Next / previous review tab across projects (wraps around) |
+| ⌘[ / ⌘] | Back / forward through review and file navigation |
 | ⌘1 / ⌘2 | Select Ask agent / Agent change in the selection prompt |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch prompt tabs while editing |
 | ⌘R | Refresh |
@@ -59,6 +60,8 @@ Project tabs, last-selected files, and local conversations persist across launch
 | ⌘⇧V | Toggle viewed |
 | ⌘Enter | Submit the prompt or popover |
 | Escape | Close the prompt or popover |
+
+Back and forward buttons in the title bar revisit reviews, commit comparisons, and file/source jumps, restoring the diff position. A deliberate two-finger swipe right goes back; swipe left goes forward. Horizontal code scrolling takes priority until its boundary, and a fresh swipe is required there. History is kept for the current window (up to 100 locations); scrolling and refreshing do not add entries.
 
 The shared title bar reserves space for native macOS window controls. Review headers show the PR title, author, status, description excerpt, and latest commit when available. **Details** opens the full description and commit message. Local branches use their latest commit message. PR metadata is cached on import and refreshed with Fetch.
 

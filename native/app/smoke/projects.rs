@@ -228,6 +228,7 @@ pub(super) fn check_projects(
         );
         window.press("escape", cx);
     })?;
+    super::navigation::check(cx, handle, app, output)?;
     println!(
         "Project checks passed: folder-only add, project branch picker, pinned tabs, automatic checkout following, detached/attached HEAD, prompt preservation, keyboard tab cycling in both directions across projects with wraparound and a hidden sidebar."
     );
