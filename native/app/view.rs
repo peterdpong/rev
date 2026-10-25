@@ -305,28 +305,6 @@ impl Patch {
                     .py_2()
                     .child(projects),
             )
-            .child(
-                row().p_3().border_t_1().border_color(rgb(BORDER)).child(
-                    self.popover_button(
-                        "open-project",
-                        button("open-project", "Open folder")
-                            .disabled(self.sidebar_collapsed)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_modal(
-                                    ModalKind::Open,
-                                    None,
-                                    None,
-                                    "open-project",
-                                    window,
-                                    cx,
-                                )
-                            })),
-                        Anchor::BottomLeft,
-                        window,
-                        cx,
-                    ),
-                ),
-            )
             .into_any_element()
     }
 

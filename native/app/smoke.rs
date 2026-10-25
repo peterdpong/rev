@@ -542,13 +542,11 @@ pub fn run() -> anyhow::Result<()> {
         );
         window.press("escape", cx);
         assert!(app.read(cx).modal.is_none());
-        window.click("open-project", cx);
+        window.click("add-project", cx);
         window.render_frame(cx);
-        let trigger = window.find("open-project").bounds();
+        let trigger = window.find("add-project").bounds();
         let panel = window.find("review-popover").bounds();
-        assert!(
-            panel.bottom() >= trigger.top() - px(7.) && panel.bottom() <= trigger.top() - px(5.)
-        );
+        assert_eq!(panel.top(), trigger.bottom() + px(6.));
         assert!(
             panel.size.width > px(225.),
             "the sidebar must not clip its dropdown"
