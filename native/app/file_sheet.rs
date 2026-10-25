@@ -12,13 +12,12 @@ impl Patch {
         self.review.is_some()
             && !self.loading
             && !self.submitting
-            && !self.threads_visible
             && !self.selecting
             && self.modal.is_none()
     }
 
     pub(super) fn show_file_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.review.is_none() || self.loading || self.threads_visible || self.submitting {
+        if self.review.is_none() || self.loading || self.submitting {
             return;
         }
         if self.modal.is_some() {

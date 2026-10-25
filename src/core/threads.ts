@@ -27,7 +27,7 @@ export async function createRunHistory(review: Review, request: AgentRequest, ru
     id, kind: request.mode === 'ask' ? 'question' : 'change', body: question,
     selection, digest: request.selectionDigest || selected?.digest,
     headSha: review.headSha, mergeBase: review.mergeBase, createdAt: run.startedAt, updatedAt: run.startedAt,
-    commentIds, turns: [],
+    commentIds, changes: structuredClone(comments), turns: [],
   };
   let last = '';
   let writes = Promise.resolve();

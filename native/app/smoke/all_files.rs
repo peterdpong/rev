@@ -190,6 +190,7 @@ pub(super) fn check(
                 .update(cx, |input, cx| input.set_value("", window, cx));
             app.backend = old_backend;
             app.prompt_mode = ModalKind::Ask;
+            app.hide_threads(window, cx);
         })
     })?;
     service.close();

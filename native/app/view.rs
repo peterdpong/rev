@@ -1513,28 +1513,37 @@ impl Render for Patch {
         // Sample once so the titlebar, sidebar and review controls move together.
         let sidebar = motion::reveal("sidebar-reveal", !self.sidebar_collapsed, window, cx);
         let content = if self.review.is_some() {
-            let body_progress = motion::enter(
-                ("review-body-enter", self.threads_visible as usize),
-                window,
-                cx,
-            );
-            let body = if self.threads_visible {
-                self.threads_view(window, cx)
-            } else {
-                self.diff_view(window, cx)
-            };
+            let thread_progress =
+                motion::reveal("thread-sidebar-reveal", self.threads_visible, window, cx);
+            let available =
+                f32::from(window.viewport_size().width) - motion::SIDEBAR_WIDTH * sidebar;
+            let thread_width = (available * 0.34).clamp(280., 360.);
+            let body = row()
+                .gap_0()
+                .items_start()
+                .flex_1()
+                .min_h_0()
+                .child(self.diff_view(window, cx))
+                .child(
+                    div()
+                        .id("thread-sidebar-clip")
+                        .test_support()
+                        .w(px(thread_width * thread_progress))
+                        .h_full()
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .opacity(thread_progress)
+                        .when(self.threads_visible || thread_progress > 0., |d| {
+                            d.child(self.threads_view(px(thread_width), window, cx))
+                        }),
+                )
+                .into_any_element();
             column()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .child(self.toolbar(sidebar, window, cx))
-                .child(
-                    column()
-                        .flex_1()
-                        .min_h_0()
-                        .opacity(body_progress)
-                        .child(body),
-                )
+                .child(column().flex_1().min_h_0().child(body))
                 .into_any_element()
         } else {
             column()

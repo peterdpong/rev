@@ -94,7 +94,23 @@ impl Patch {
                 main = main.child(self.popover_button(
                     "agent-output",
                     button("agent-output", label).on_click(cx.listener(
-                        move |this, _, window, cx| this.open_run(scope.clone(), window, cx),
+                        move |this, _, window, cx| {
+                            let thread = this
+                                .runs
+                                .get(&scope)
+                                .and_then(|run| run.thread.as_ref())
+                                .map(|thread| thread.id.clone());
+                            if this
+                                .review
+                                .as_ref()
+                                .is_some_and(|review| review.scope_key == scope)
+                                && thread.is_some()
+                            {
+                                this.show_threads(None, thread, window, cx);
+                            } else {
+                                this.open_run(scope.clone(), window, cx);
+                            }
+                        },
                     )),
                     Anchor::TopRight,
                     window,
@@ -295,12 +311,6 @@ impl Patch {
             .unwrap_or_else(|| review.request.clone());
         request.mode = Some(if working { "branch" } else { "working" }.into());
         request.commit_range = None;
-        let queued = self
-            .state
-            .comments
-            .iter()
-            .filter(|c| c.status == "queued")
-            .count();
         let count = self.thread_count(None);
         let busy = self.loading || self.submitting;
         let commits = if review.request.commit_range.is_some() {
@@ -325,22 +335,21 @@ impl Patch {
             .border_color(rgb(BORDER))
             .flex_shrink_0()
             .child(
-                button("files-tab", format!("Files  {}", review.files.len()))
-                    .when(!self.threads_visible, |b| b.bg(rgb(SELECTED)))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.close_modal(window, cx);
-                        this.threads_visible = false;
-                        cx.notify();
-                    })),
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child(format!("{} files", review.files.len())),
             )
             .child(
-                button("threads-tab", format!("Threads  {count}"))
-                    .when(self.threads_visible, |b| b.bg(rgb(SELECTED)))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.show_threads(None, None, window, cx)
-                        }),
-                    ),
+                button("toggle-threads", format!("Threads  {count}"))
+                    .selected(self.threads_visible)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.threads_visible {
+                            this.hide_threads(window, cx);
+                        } else {
+                            this.show_threads(None, None, window, cx);
+                        }
+                    })),
             )
             .child(div().flex_1())
             .child(self.popover_button(
@@ -367,19 +376,6 @@ impl Patch {
                     this.load_review(request.clone(), this.file.clone(), window, cx)
                 })),
             )
-            .when(queued > 0, |d| {
-                d.child(self.popover_button(
-                    "changes",
-                    button("changes", format!("Send changes · {queued}")).on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(ModalKind::Changes, None, None, "changes", window, cx)
-                        },
-                    )),
-                    Anchor::TopRight,
-                    window,
-                    cx,
-                ))
-            })
             .child(
                 button("fetch", "↓")
                     .tooltip("Fetch updates")

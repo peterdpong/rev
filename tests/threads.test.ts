@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git, inspect, filePatch, importPR, hash } from '../src/core/git';
 import { HostService } from '../src/core/host';
-import { addComment, readState } from '../src/core/store';
+import { addComment, readState, mutateState } from '../src/core/store';
 import { createRunHistory, flushRunHistory, threadContext, hasPendingHistories } from '../src/core/threads';
 import type { AgentRequest, AgentRun } from '../src/shared';
 
@@ -110,5 +110,11 @@ test('change runs retain the requested feedback alongside the agent response', a
   assert.equal(saved.selection?.path, 'app.ts');
   assert.match(saved.body, /Make this configurable/);
   assert.equal(saved.turns[0].events[0].text, 'Added a retries option.');
+  assert.deepEqual(saved.changes, [comment]);
+  await mutateState(review, state => { state.comments = []; });
+  const retained = (await readState(review)).threads![0];
+  assert.equal(retained.changes?.[0].body, 'Make this configurable.');
+  assert.equal(retained.changes?.[0].digest, patch.digest);
+  assert.equal(retained.changes?.[0].start, 1);
   await assert.rejects(threadContext(review, saved.id), /unavailable/);
 });

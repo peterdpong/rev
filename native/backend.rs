@@ -75,7 +75,15 @@ pub struct Backend(Arc<Inner>);
 
 impl Backend {
     pub fn start() -> Result<Self, String> {
-        let script = resource_dir().join("host.mjs");
+        Self::start_script(resource_dir().join("host.mjs"))
+    }
+
+    #[cfg(feature = "ui-tests")]
+    pub fn fixture(script: PathBuf) -> Result<Self, String> {
+        Self::start_script(script)
+    }
+
+    fn start_script(script: PathBuf) -> Result<Self, String> {
         if !script.is_file() {
             return Err("Build the local service first with npm run build:host.".into());
         }

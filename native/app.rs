@@ -28,6 +28,7 @@ mod projects;
 mod review;
 #[cfg(feature = "ui-tests")]
 pub mod smoke;
+mod thread_panel;
 mod threads;
 mod view;
 use commits::CommitPicker;
@@ -115,6 +116,7 @@ pub struct Patch {
     state: ReviewState,
     threads_visible: bool,
     thread_filter: Option<String>,
+    changes_only: bool,
     active_thread: Option<String>,
     thread_reply: Entity<TextareaState>,
     thread_scroll: ScrollHandle,
@@ -247,6 +249,7 @@ impl Patch {
             state: ReviewState::default(),
             threads_visible: false,
             thread_filter: None,
+            changes_only: false,
             active_thread: None,
             thread_reply,
             thread_scroll: ScrollHandle::new(),
@@ -424,9 +427,11 @@ impl Patch {
                         if this
                             .review
                             .as_ref()
-                            .is_some_and(|old| old.scope_key != review.scope_key)
+                            .is_none_or(|old| old.scope_key != review.scope_key)
                         {
-                            this.threads_visible = false;
+                            this.threads_visible =
+                                !state.threads.is_empty() || !state.comments.is_empty();
+                            this.changes_only = false;
                             this.thread_filter = None;
                             this.active_thread = None;
                         }
@@ -953,7 +958,16 @@ impl Patch {
                 self.rpc("comment", json!({ "review": modal.request, "selection": modal.selection, "body": body, "digest": modal.digest }), window, cx, move |this, result, window, cx| {
                     this.submitting = false;
                     if let Some(value) = this.result(result) {
-                        match decode(value) { Ok(state) if this.review.as_ref().map(|r| &r.scope_key) == Some(&modal.tab) => this.state = state, Ok(_) => {}, Err(e) => { this.error = Some(e); return } }
+                        match decode::<ReviewState>(value) {
+                            Ok(state) if this.review.as_ref().map(|r| &r.scope_key) == Some(&modal.tab) => {
+                                let id = state.comments.last().map(|comment| comment.id.clone());
+                                this.state = state;
+                                this.threads_visible = true;
+                                this.thread_filter = None;
+                                this.thread_scroll_target = id;
+                            },
+                            Ok(_) => {}, Err(e) => { this.error = Some(e); return }
+                        }
                         this.drafts.remove(&Self::draft_key(&modal));
                         if this.modal_serial == modal.serial {
                             this.prompt.update(cx, |input, cx| input.set_value("", window, cx));
@@ -995,19 +1009,20 @@ impl Patch {
                         if let Some(value) = this.result(result) {
                             match decode::<AgentRun>(value) {
                                 Ok(run) => {
-                                    let id = run.id.clone();
-                                    this.remember_thread(&modal.tab, &run, cx);
-                                    this.run_requests
-                                        .insert(modal.tab.clone(), modal.request.clone());
-                                    this.runs.insert(modal.tab.clone(), run);
                                     if this.modal_serial == modal.serial {
-                                        this.modal = Some(Modal {
-                                            kind: ModalKind::Run,
-                                            ..modal.clone()
+                                        this.close_modal(window, cx);
+                                        this.drafts.remove(&Self::draft_key(&modal));
+                                        this.prompt.update(cx, |input, cx| {
+                                            input.set_value("", window, cx)
                                         });
-                                        this.preview = None;
                                     }
-                                    this.poll_run(modal.tab, id, window, cx);
+                                    this.track_thread_run(
+                                        modal.tab,
+                                        modal.request,
+                                        run,
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 Err(e) => this.error = Some(e),
                             }
@@ -1022,8 +1037,13 @@ impl Patch {
     }
 
     fn agent_request(&self, modal: &Modal, body: &str) -> Value {
+        let comment_ids: Vec<_> = if modal.kind == ModalKind::Changes {
+            self.comment_ids.iter().collect()
+        } else {
+            Vec::new()
+        };
         json!({ "review": modal.request, "provider": self.provider, "mode": if modal.kind == ModalKind::Changes { "apply" } else { "ask" },
-            "question": body, "selection": modal.selection, "selectionDigest": modal.digest, "commentIds": self.comment_ids.iter().collect::<Vec<_>>() })
+            "question": body, "selection": modal.selection, "selectionDigest": modal.digest, "commentIds": comment_ids })
     }
 
     fn preview_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1057,6 +1077,7 @@ impl Patch {
         let Some(backend) = self.backend.clone() else {
             return;
         };
+        let polled_id = id.clone();
         let delay = cx.background_executor().timer(Duration::from_millis(500));
         let task = cx.background_executor().spawn(async move {
             delay.await;
@@ -1068,17 +1089,28 @@ impl Patch {
                 match result {
                     Ok(run) => {
                         let running = run.status == "running";
+                        let changed_files = run.mode == "apply";
                         let id = run.id.clone();
                         this.remember_thread(&tab, &run, cx);
+                        if this
+                            .runs
+                            .get(&tab)
+                            .is_some_and(|current| current.id != run.id)
+                        {
+                            return;
+                        }
                         this.runs.insert(tab.clone(), run);
                         if running {
                             this.poll_run(tab, id, window, cx);
-                        } else if this.review.as_ref().is_some_and(|r| r.scope_key == tab) {
+                        } else if changed_files
+                            && this.review.as_ref().is_some_and(|r| r.scope_key == tab)
+                        {
                             this.refresh(window, cx);
                         }
                     }
                     Err(e) => {
-                        if let Some(run) = this.runs.get_mut(&tab) {
+                        if let Some(run) = this.runs.get_mut(&tab).filter(|run| run.id == polled_id)
+                        {
                             run.status = "failed".into();
                             run.events.push(AgentEvent {
                                 kind: "error".into(),

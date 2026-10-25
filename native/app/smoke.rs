@@ -6,6 +6,7 @@ use std::sync::Arc;
 mod all_files;
 mod file_sheet;
 mod projects;
+mod thread_panel;
 
 fn pointer_down(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
     window.simulate_mouse_move(position, cx);
@@ -399,6 +400,10 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    thread_panel::check(&mut cx, handle, &app, &output)?;
+    if std::env::args().any(|arg| arg == "--threads-only") {
+        return Ok(());
+    }
     file_sheet::check(&mut cx, handle, &app, &output)?;
     if std::env::args().any(|arg| arg == "--sheet-only") {
         return Ok(());
@@ -669,7 +674,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("ask-review").visible());
-        assert!(window.find("threads-tab").visible());
+        assert!(window.find("toggle-threads").visible());
         assert!(window.find("browse-files").visible());
         window
             .within(("diff-file", 2usize))
@@ -796,9 +801,9 @@ pub fn run() -> anyhow::Result<()> {
         assert_eq!(app.read(cx).diff.read(cx).mode(), DiffMode::Split);
         window.click("wrap", cx);
         assert!(app.read(cx).wrap);
-        window.click("threads-tab", cx);
+        window.click("toggle-threads", cx);
         assert!(app.read(cx).threads_visible);
-        window.click("files-tab", cx);
+        window.click("close-threads", cx);
         assert!(!app.read(cx).threads_visible);
         window.click("browse-files", cx);
         window.click("filter-files", cx);
@@ -999,8 +1004,12 @@ pub fn run() -> anyhow::Result<()> {
         .save(format!("{output}/gpui-threads.png"))?;
     cx.update_window(handle, |_, window, cx| {
         window.click("code-question-preview", cx);
-        assert!(!app.read(cx).threads_visible);
+        assert!(
+            app.read(cx).threads_visible,
+            "source links keep the conversation alongside the diff"
+        );
         assert_eq!(app.read(cx).file.as_ref(), Some(&path));
+        assert!(window.find("diff-surface").visible());
         window.click("review-details", cx);
         assert!(
             app.read(cx)
@@ -1023,7 +1032,7 @@ pub fn run() -> anyhow::Result<()> {
         assert_eq!(window.viewport_size(), size(px(940.), px(600.)));
         assert!(
             window.find("choose-commits").bounds().left()
-                > window.find("threads-tab").bounds().right()
+                > window.find("toggle-threads").bounds().right()
         );
         assert!(window.find("refresh").bounds().right() <= window.viewport_size().width);
         assert!(window.find("ask-review").bounds().right() <= window.viewport_size().width);
@@ -1045,7 +1054,9 @@ pub fn run() -> anyhow::Result<()> {
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-collapsed.png"))?;
     cx.update_window(handle, |_, window, cx| {
-        window.click("threads-tab", cx);
+        if !app.read(cx).threads_visible {
+            window.click("toggle-threads", cx);
+        }
         if app.read(cx).active_thread.as_deref() != Some("question-preview") {
             window.click("thread-question-preview", cx);
         }

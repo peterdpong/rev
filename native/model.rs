@@ -242,6 +242,8 @@ pub struct ReviewThread {
     pub merge_base: String,
     pub updated_at: String,
     pub comment_ids: Vec<String>,
+    #[serde(default)]
+    pub changes: Vec<Comment>,
     pub turns: Vec<ThreadTurn>,
 }
 #[derive(Clone, Debug, Deserialize)]
