@@ -203,6 +203,13 @@ pub struct FilePatch {
     pub digest: String,
     pub too_large: bool,
 }
+#[derive(Deserialize)]
+pub struct ReviewPatch {
+    pub path: String,
+    #[serde(flatten)]
+    pub patch: FilePatch,
+    pub error: Option<String>,
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct Provider {
     pub id: String,

@@ -14,6 +14,7 @@ export type Review = Required<Omit<ReviewRequest, 'commitRange'>> & {
 };
 export type Selection = { path: string; side: 'additions' | 'deletions'; start: number; end: number };
 export type FilePatch = { patch: string; digest: string; tooLarge: boolean };
+export type ReviewPatch = FilePatch & { path: string; error?: string };
 export type Comment = Selection & { id: string; body: string; headSha: string; mergeBase: string; digest: string; createdAt: string; status: 'queued' | 'sent' };
 export type ReviewState = { comments: Comment[]; viewed: Record<string, string>; threads?: ReviewThread[] };
 export type AgentRequest = { review: ReviewRequest; provider: Provider; mode: 'ask' | 'apply'; question?: string; selection?: Selection; selectionDigest?: string; commentIds?: string[]; threadId?: string };

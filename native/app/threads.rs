@@ -92,18 +92,24 @@ impl Patch {
     ) {
         self.close_modal(window, cx);
         self.threads_visible = false;
-        if self.file.as_ref() == Some(&selection.path) && self.patch.digest == digest {
-            let side = selection.diff_side();
+        self.jump_file(selection.path.clone(), window, cx);
+        if self
+            .patches
+            .get(&selection.path)
+            .is_some_and(|patch| patch.digest == digest)
+        {
             self.diff.update(cx, |diff, cx| {
                 diff.scroll_to_line(
-                    DiffLinePosition::new(selection.path, side, selection.start),
+                    DiffLinePosition::new(
+                        selection.path.clone(),
+                        selection.diff_side(),
+                        selection.start,
+                    ),
                     cx,
                 )
             });
         } else {
-            let path = selection.path.clone();
-            self.thread_target = Some((selection, digest));
-            self.load_file(path, window, cx);
+            self.error = Some("This conversation refers to an earlier version of the file.".into());
         }
         cx.notify();
     }

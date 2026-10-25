@@ -3,6 +3,7 @@
 use super::*;
 use gpui_kit::{HeadlessAppContext, test::TestWindowExt};
 use std::sync::Arc;
+mod all_files;
 mod projects;
 
 fn pointer_down(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
@@ -44,16 +45,31 @@ fn pointer_up(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
 }
 
 fn line_point_on_side(window: &mut Window, line: usize, gutter: bool, old: bool) -> Point<Pixels> {
+    line_point_in_file(window, 2, line, gutter, old)
+}
+
+fn line_point_in_file(
+    window: &mut Window,
+    file: usize,
+    line: usize,
+    gutter: bool,
+    old: bool,
+) -> Point<Pixels> {
     let side = if old { "old" } else { "new" };
     let gutter_id = if old { "old-gutter" } else { "new-gutter" };
     let bounds = if gutter {
         window
+            .within(("diff-file", file))
             .within((side, line - 1))
             .within(gutter_id)
             .find(("line", line - 1))
             .bounds()
     } else {
-        window.within((side, line - 1)).find("source").bounds()
+        window
+            .within(("diff-file", file))
+            .within((side, line - 1))
+            .find("source")
+            .bounds()
     };
     point(
         bounds.left()
@@ -101,6 +117,7 @@ fn check_drag_targets(
                     window.render_frame(cx);
                     let origin = if start_target == "comment" {
                         window
+                            .within(("diff-file", 2usize))
                             .within((if old { "old" } else { "new" }, start - 1))
                             .find(("add-annotation", start - 1))
                             .bounds()
@@ -161,6 +178,7 @@ fn check_drag_targets(
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let position = window
+                .within(("diff-file", 2usize))
                 .within((if old { "old" } else { "new" }, first - 1))
                 .find(("add-annotation", first - 1))
                 .bounds()
@@ -215,14 +233,15 @@ fn compact_preview(
     threads: bool,
     output: &str,
 ) -> anyhow::Result<()> {
-    let (review, workspace, state, file, patch, providers) = cx.update(|cx| {
+    let (review, workspace, state, file, patches, documents, providers) = cx.update(|cx| {
         let app = source.read(cx);
         (
             app.review.clone(),
             app.workspace.clone(),
             app.state.clone(),
             app.file.clone(),
-            app.patch.clone(),
+            app.patches.clone(),
+            app.diff.read(cx).files().to_vec(),
             app.providers.clone(),
         )
     });
@@ -252,14 +271,23 @@ fn compact_preview(
                     app.workspace = workspace;
                     app.state = state;
                     app.file = file;
-                    app.patch = patch;
+                    app.patch = app
+                        .file
+                        .as_ref()
+                        .and_then(|path| patches.get(path))
+                        .cloned()
+                        .unwrap_or_default();
+                    app.patches = patches;
                     app.providers = providers;
                     app.sidebar_collapsed = collapsed;
                     app.threads_visible = threads;
                     app.active_thread = threads.then(|| "question-preview".into());
                     app.wrap = true;
                     app.diff.update(cx, |diff, cx| {
-                        diff.set_files(DiffFile::parse(&app.patch.patch).unwrap(), cx)
+                        diff.set_files(documents, cx);
+                        if let Some(path) = &app.file {
+                            diff.scroll_to_file(path, cx);
+                        }
                     });
                     app
                 })
@@ -307,12 +335,8 @@ pub fn run() -> anyhow::Result<()> {
         .unwrap()
         .path
         .clone();
-    let patch: FilePatch = decode(
-        backend
-            .call("patch", json!({"review": review.request, "path": path}))
-            .map_err(anyhow::Error::msg)?,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let entries: Vec<ReviewPatch> = decode(backend.call("patches", json!({ "review": review.request, "headSha": review.head_sha, "mergeBase": review.merge_base })).map_err(anyhow::Error::msg)?).map_err(anyhow::Error::msg)?;
+    let (patches, documents) = continuous::prepare_patches(entries);
     backend.close();
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -351,9 +375,11 @@ pub fn run() -> anyhow::Result<()> {
                     app.workspace = workspace;
                     app.state = state;
                     app.file = Some(path.clone());
-                    app.patch = patch;
+                    app.patch = patches.get(&path).cloned().unwrap_or_default();
+                    app.patches = patches;
                     app.diff.update(cx, |diff, cx| {
-                        diff.set_files(DiffFile::parse(&app.patch.patch).unwrap(), cx)
+                        diff.set_files(documents, cx);
+                        diff.scroll_to_file(&path, cx);
                     });
                     app.providers = vec![
                         Provider {
@@ -372,6 +398,10 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    all_files::check(&mut cx, handle, &app, &output)?;
+    if std::env::args().any(|arg| arg == "--continuous-only") {
+        return Ok(());
+    }
     check_drag_targets(&mut cx, handle, &app, &output)?;
     if std::env::args().any(|arg| arg == "--drag-only") {
         println!(
@@ -636,6 +666,7 @@ pub fn run() -> anyhow::Result<()> {
         assert!(window.find("threads-tab").visible());
         assert!(window.find("filter-files").bounds().size.width > px(150.));
         window
+            .within(("diff-file", 2usize))
             .within(("new", 3usize))
             .within("new-gutter")
             .click(("line", 3usize), cx);
@@ -711,6 +742,7 @@ pub fn run() -> anyhow::Result<()> {
         window.press("escape", cx);
         assert!(app.read(cx).modal.is_none());
         window
+            .within(("diff-file", 2usize))
             .within(("new", 3usize))
             .within("new-gutter")
             .click(("line", 3usize), cx);
@@ -729,6 +761,7 @@ pub fn run() -> anyhow::Result<()> {
         );
         window.click("close-modal", cx);
         window
+            .within(("diff-file", 2usize))
             .within(("new", 3usize))
             .within("new-gutter")
             .click(("line", 3usize), cx);
@@ -894,7 +927,7 @@ pub fn run() -> anyhow::Result<()> {
     // Presentation fixtures stay in memory; no sample conversations are saved to the repo.
     cx.update_window(handle, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.load_file(path.clone(), window, cx);
+            app.jump_file(path.clone(), window, cx);
             app.filter
                 .update(cx, |input, cx| input.set_value("", window, cx));
             app.split = false;

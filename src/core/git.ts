@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { realpath, readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
-import type { ReviewRequest, Review, ChangedFile, FilePatch, CommitPage, PullRequest } from '../shared';
+import type { ReviewRequest, Review, ChangedFile, FilePatch, ReviewPatch, CommitPage, PullRequest } from '../shared';
 
 const exec = promisify(execFile);
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -128,6 +128,10 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
   for (const name of untracked.split('\0').filter(Boolean)) review.files.push({ path: name, status: '?', added: 0, removed: 0, binary: false });
   return review;
 }
+function patchPath(name: string) {
+  if (!/[\x00-\x20\x7f"\\]/.test(name)) return name;
+  return '"' + name.replace(/[\x00-\x1f\x7f"\\]/g, char => char === '"' || char === '\\' ? '\\' + char : '\\' + char.charCodeAt(0).toString(8).padStart(3, '0')) + '"';
+}
 export async function filePatch(review: Review, name: string): Promise<FilePatch> {
   const file = review.files.find(f => f.path === name);
   if (!file) throw new Error('That file is not in this comparison. Refresh the review.');
@@ -140,7 +144,7 @@ export async function filePatch(review: Review, name: string): Promise<FilePatch
       const content = await readFile(full, 'utf8');
       if (content.includes('\0')) return { patch: 'Binary file (untracked)', digest: hash(content), tooLarge: false };
       const lines = content ? content.replace(/\n$/, '').split('\n') : [];
-      patch = `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(l => '+' + l).join('\n')}\n`;
+      patch = `diff --git ${patchPath(`a/${name}`)} ${patchPath(`b/${name}`)}\nnew file mode 100644\n--- /dev/null\n+++ ${patchPath(`b/${name}`)}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(l => '+' + l).join('\n')}\n`;
       if (content && !content.endsWith('\n')) patch += '\\ No newline at end of file\n';
     } else patch = await git(review.repo, [...diffArgs(review), '--patch', '--unified=5', '--', ...(file.oldPath ? [file.oldPath] : []), file.path], 3_000_000);
   } catch (error: any) {
@@ -149,6 +153,24 @@ export async function filePatch(review: Review, name: string): Promise<FilePatch
   }
   return { patch, digest: hash(patch), tooLarge: patch.length > 2_000_000 };
 }
+/** Load a continuous review against one resolved comparison, with bounded Git concurrency. */
+export async function reviewPatches(review: Review): Promise<ReviewPatch[]> {
+  const patches: ReviewPatch[] = new Array(review.files.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, review.files.length) }, async () => {
+    while (next < review.files.length) {
+      const index = next++; const path = review.files[index].path;
+      try {
+        const patch = await filePatch(review, path);
+        patches[index] = { ...patch, path, patch: patch.tooLarge ? '' : patch.patch };
+      } catch (error) {
+        patches[index] = { path, patch: '', digest: '', tooLarge: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  }));
+  return patches;
+}
+
 export async function fetchRepo(repo: string) {
   const root = await rootOf(repo);
   await git(root, ['fetch', '--all', '--prune']);

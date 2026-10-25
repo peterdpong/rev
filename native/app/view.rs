@@ -346,6 +346,7 @@ impl Patch {
             let thread_path = path.clone();
             let mut item = row()
                 .id(("file", index))
+                .test_support()
                 .cursor_pointer()
                 .rounded_md()
                 .px_2()
@@ -393,7 +394,7 @@ impl Patch {
             }
             list = list.child(item.on_click(cx.listener(move |this, _, window, cx| {
                 if !this.loading {
-                    this.load_file(path.clone(), window, cx);
+                    this.jump_file(path.clone(), window, cx);
                 }
             })));
         }
@@ -751,7 +752,9 @@ impl Patch {
                     .comments
                     .iter()
                     .filter(|c| {
-                        c.digest == self.patch.digest
+                        self.patches
+                            .get(&s.path)
+                            .is_some_and(|patch| c.digest == patch.digest)
                             && c.selection.path == s.path
                             && c.selection.side == s.side
                             && c.selection.end == s.end
@@ -763,7 +766,10 @@ impl Patch {
                         .iter()
                         .filter(|t| {
                             t.kind == "question"
-                                && t.digest.as_deref() == Some(&self.patch.digest)
+                                && self
+                                    .patches
+                                    .get(&s.path)
+                                    .is_some_and(|patch| t.digest.as_deref() == Some(&patch.digest))
                                 && t.selection.as_ref().is_some_and(|a| {
                                     a.path == s.path && a.side == s.side && a.end == s.end
                                 })
@@ -811,6 +817,61 @@ impl Patch {
             .into_any_element()
     }
 
+    fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
+        let path = file.path().to_string();
+        let patch = self.patches.get(&path);
+        let viewed = patch.is_some_and(|patch| self.state.viewed.get(&path) == Some(&patch.digest));
+        let counts = self
+            .review
+            .as_ref()
+            .and_then(|review| review.files.iter().find(|file| file.path == path));
+        let added = counts.map_or(file.additions(), |file| file.added);
+        let removed = counts.map_or(file.deletions(), |file| file.removed);
+        row()
+            .id(SharedString::from(format!("diff-heading-{path}")))
+            .test_support()
+            .min_w_0()
+            .h(px(28.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(12.))
+                    .child(path.clone()),
+            )
+            .when(added > 0, |d| {
+                d.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(0x8fd3a5))
+                        .child(format!("+{added}")),
+                )
+            })
+            .when(removed > 0, |d| {
+                d.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(0xe29595))
+                        .child(format!("−{removed}")),
+                )
+            })
+            .child(
+                button(
+                    SharedString::from(format!("viewed-{path}")),
+                    if viewed { "✓ Viewed" } else { "Viewed" },
+                )
+                .disabled(
+                    self.patch_loading
+                        || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.mark_file_viewed(path.clone(), window, cx)
+                })),
+            )
+            .into_any_element()
+    }
+
     fn diff_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let mut positions = HashSet::new();
         let mut annotations: Vec<_> = self
@@ -818,9 +879,14 @@ impl Patch {
             .comments
             .iter()
             .filter(|c| {
-                Some(&c.selection.path) == self.file.as_ref()
-                    && c.digest == self.patch.digest
-                    && positions.insert((c.selection.side.clone(), c.selection.end))
+                self.patches
+                    .get(&c.selection.path)
+                    .is_some_and(|patch| c.digest == patch.digest)
+                    && positions.insert((
+                        c.selection.path.clone(),
+                        c.selection.side.clone(),
+                        c.selection.end,
+                    ))
             })
             .map(|c| {
                 DiffAnnotation::line(
@@ -839,16 +905,17 @@ impl Patch {
                 .iter()
                 .filter(|thread| {
                     thread.kind == "question"
-                        && thread.digest.as_deref() == Some(&self.patch.digest)
+                        && thread.selection.as_ref().is_some_and(|selection| {
+                            self.patches.get(&selection.path).is_some_and(|patch| {
+                                thread.digest.as_deref() == Some(&patch.digest)
+                            })
+                        })
                 })
                 .filter_map(|thread| {
                     thread
                         .selection
                         .as_ref()
-                        .filter(|s| {
-                            Some(&s.path) == self.file.as_ref()
-                                && positions.insert((s.side.clone(), s.end))
-                        })
+                        .filter(|s| positions.insert((s.path.clone(), s.side.clone(), s.end)))
                         .map(|s| {
                             DiffAnnotation::line(
                                 SharedString::from(format!("thread-{}", thread.id)),
@@ -859,22 +926,13 @@ impl Patch {
         );
         let owner = cx.weak_entity();
         let add_owner = owner.clone();
-        let viewed = self
-            .file
-            .as_ref()
-            .is_some_and(|p| self.state.viewed.contains_key(p));
+        let header_owner = owner.clone();
         let header = row()
             .h(px(34.))
             .px_3()
             .border_b_1()
             .border_color(rgb(BORDER))
-            .child(
-                div()
-                    .flex_1()
-                    .truncate()
-                    .text_size(px(12.))
-                    .child(self.file.clone().unwrap_or_default()),
-            )
+            .child(div().flex_1())
             .child(
                 button("diff-mode", if self.split { "Split" } else { "Unified" }).on_click(
                     cx.listener(|this, _, _, cx| {
@@ -896,23 +954,12 @@ impl Patch {
                         this.wrap = !this.wrap;
                         cx.notify();
                     })),
-            )
-            .child(
-                button("viewed", if viewed { "✓ Viewed" } else { "Viewed" })
-                    .disabled(self.patch_loading || self.patch.digest.is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| this.mark_viewed(window, cx))),
             );
         let content = if self.loading || self.patch_loading {
             div()
                 .p_6()
                 .text_color(rgb(MUTED))
                 .child("Loading…")
-                .into_any_element()
-        } else if let Some(notice) = &self.notice {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child(notice.clone())
                 .into_any_element()
         } else if self.file.is_none() {
             div()
@@ -923,7 +970,11 @@ impl Patch {
         } else {
             Diff::new(&self.diff)
                 .size_full()
-                .header_visible(false)
+                .render_header(move |file, _, cx| {
+                    header_owner
+                        .update(cx, |this, cx| this.diff_file_header(file, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
                 .soft_wrap(self.wrap)
                 .text_size(px(12.))
                 .annotations(annotations)
@@ -952,6 +1003,7 @@ impl Patch {
             .child(
                 div()
                     .id("diff-surface")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()

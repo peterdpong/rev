@@ -34,7 +34,7 @@ The JSON request boundary allows the host to be replaced with Rust later. The Ru
 
 1. Inspect a repository, resolve base/head commits, and compute the merge base. The working checkout is not switched.
 2. Persist a project and tab. Each project has a stable Current entry whose navigation request follows `HEAD`; additional branch/PR tabs persist an explicit ref. Review requests used for comments and agents always pin the inspected branch or detached commit.
-3. Load one file patch. GPUI Kit parses it into retained `DiffState`, supplies unified/split layout, syntax highlighting, virtualized rows, folding, and source line selection.
+3. Load the comparison's patches through one `patches` request, validating the inspected endpoints and limiting concurrent Git reads to four. Parse them off the UI thread into one retained `DiffState` with virtualized rows across all files. Each file retains its own digest for feedback and Viewed actions. Binary, oversized, and unavailable files keep a header and an inline notice. Sidebar links reveal and scroll to a file; filtering never filters the diff itself.
 4. Selection actions capture the review, path, side, line range, and patch digest before opening the popover. Cross-side ranges are rejected rather than converted to inaccurate source coordinates.
 5. A change request is saved in Git metadata. Inline comments are only attached when their digest matches the currently displayed patch; older feedback remains in Changes and is rejected on apply.
 6. A selected feedback batch is revalidated immediately before dispatch. The local agent receives the requests and code context. Comments become sent only after explicit successful provider completion.
