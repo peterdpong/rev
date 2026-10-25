@@ -135,6 +135,7 @@ impl Patch {
             .clone()
             .unwrap_or_else(|| review.key.clone());
         self.close_selection_prompt(window, cx);
+        self.hide_file_sheet(window, cx);
         self.set_active_file(path.clone(), cx);
         self.selection = None;
         self.selecting = false;

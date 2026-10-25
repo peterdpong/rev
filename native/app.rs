@@ -22,6 +22,7 @@ use std::{
 
 mod commits;
 mod continuous;
+mod file_sheet;
 mod motion;
 mod projects;
 mod review;
@@ -46,7 +47,9 @@ gpui_kit::actions!(
         ReplyThread,
         NextFile,
         PreviousFile,
-        MarkViewed
+        MarkViewed,
+        BrowseFiles,
+        ChooseFile
     ]
 );
 
@@ -57,6 +60,9 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-r", Refresh, Some("Patch")),
         KeyBinding::new("cmd-k", AskReview, Some("Patch")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Patch")),
+        KeyBinding::new("cmd-p", BrowseFiles, Some("Patch")),
+        KeyBinding::new("enter", ChooseFile, Some("PatchFiles > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchFiles > Input")),
         KeyBinding::new("cmd-enter", ReplyThread, Some("PatchThread > Input")),
         KeyBinding::new("cmd-enter", ReplyThread, Some("PatchThread")),
         KeyBinding::new("alt-down", NextFile, Some("Patch")),
@@ -114,6 +120,7 @@ pub struct Patch {
     thread_scroll: ScrollHandle,
     thread_scroll_target: Option<String>,
     file: Option<String>,
+    file_sheet: file_sheet::FileSheet,
     patch: FilePatch,
     patches: HashMap<String, FilePatch>,
     diff: Entity<DiffState>,
@@ -245,6 +252,7 @@ impl Patch {
             thread_scroll: ScrollHandle::new(),
             thread_scroll_target: None,
             file: None,
+            file_sheet: file_sheet::FileSheet::default(),
             patch: FilePatch::default(),
             patches: HashMap::new(),
             diff,
@@ -367,6 +375,7 @@ impl Patch {
             return;
         }
         self.close_selection_prompt(window, cx);
+        self.hide_file_sheet(window, cx);
         self.loading = true;
         self.patch_loading = false;
         self.error = None;
@@ -554,6 +563,7 @@ impl Patch {
         )
     }
     fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_file_sheet(window, cx);
         if let Some(modal) = self.modal.take()
             && matches!(modal.kind, ModalKind::Ask | ModalKind::Change)
         {

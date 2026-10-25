@@ -4,6 +4,7 @@ use super::*;
 use gpui_kit::{HeadlessAppContext, test::TestWindowExt};
 use std::sync::Arc;
 mod all_files;
+mod file_sheet;
 mod projects;
 
 fn pointer_down(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
@@ -398,6 +399,10 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    file_sheet::check(&mut cx, handle, &app, &output)?;
+    if std::env::args().any(|arg| arg == "--sheet-only") {
+        return Ok(());
+    }
     all_files::check(&mut cx, handle, &app, &output)?;
     if std::env::args().any(|arg| arg == "--continuous-only") {
         return Ok(());
@@ -548,6 +553,7 @@ pub fn run() -> anyhow::Result<()> {
             app.read(cx).prompt.read(cx).value().as_ref(),
             "Keep this question"
         );
+        window.click("browse-files", cx);
         window.click("filter-files", cx);
         assert!(
             app.read(cx).modal.is_none(),
@@ -664,7 +670,7 @@ pub fn run() -> anyhow::Result<()> {
         window.render_frame(cx);
         assert!(window.find("ask-review").visible());
         assert!(window.find("threads-tab").visible());
-        assert!(window.find("filter-files").bounds().size.width > px(150.));
+        assert!(window.find("browse-files").visible());
         window
             .within(("diff-file", 2usize))
             .within(("new", 3usize))
@@ -794,6 +800,7 @@ pub fn run() -> anyhow::Result<()> {
         assert!(app.read(cx).threads_visible);
         window.click("files-tab", cx);
         assert!(!app.read(cx).threads_visible);
+        window.click("browse-files", cx);
         window.click("filter-files", cx);
         window.input("retry", cx);
         assert!(
@@ -974,6 +981,7 @@ pub fn run() -> anyhow::Result<()> {
             .iter()
             .position(|file| file.path == path)
             .unwrap();
+        window.press("cmd-p", cx);
         window.click(SharedString::from(format!("file-threads-{index}")), cx);
         assert!(
             app.read(cx).threads_visible,

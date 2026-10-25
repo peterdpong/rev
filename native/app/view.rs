@@ -398,6 +398,16 @@ impl Patch {
                 }
             })));
         }
+        if files.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child("No files found"),
+            );
+        }
         let total = self.review.as_ref().map(|r| r.files.len()).unwrap_or(0);
         let viewed = self
             .review
@@ -410,12 +420,8 @@ impl Patch {
             })
             .unwrap_or(0);
         column()
-            .w(px(200.))
-            .h_full()
-            .flex_shrink_0()
-            .border_r_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(PANEL))
+            .size_full()
+            .min_h_0()
             .child(
                 row()
                     .h(px(34.))
@@ -872,7 +878,7 @@ impl Patch {
             .into_any_element()
     }
 
-    fn diff_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn diff_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let mut positions = HashSet::new();
         let mut annotations: Vec<_> = self
             .state
@@ -932,6 +938,22 @@ impl Patch {
             .px_3()
             .border_b_1()
             .border_color(rgb(BORDER))
+            .child(
+                div()
+                    .id("file-sheet-trigger")
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(0, *hovered, window, cx);
+                    }))
+                    .child(
+                        button("browse-files", "Files")
+                            .icon(IconName::ChevronDown)
+                            .selected(self.file_sheet.open)
+                            .accessibility_label("Browse files (⌘P)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_file_sheet(window, cx);
+                            })),
+                    ),
+            )
             .child(div().flex_1())
             .child(
                 button("diff-mode", if self.split { "Split" } else { "Unified" }).on_click(
@@ -995,7 +1017,24 @@ impl Patch {
                 })
                 .into_any_element()
         };
+        let sheet = motion::reveal("file-sheet-reveal", self.file_sheet.open, window, cx);
+        let files = self.visible_files(cx);
+        let mut last_folder = "";
+        let folders = files
+            .iter()
+            .filter(|file| {
+                let folder = file.path.rsplit_once('/').map_or("", |(folder, _)| folder);
+                let shown = !folder.is_empty() && folder != last_folder;
+                last_folder = folder;
+                shown
+            })
+            .count();
+        let sheet_height =
+            (84. + files.len() as f32 * 30. + folders as f32 * 32.).clamp(140., 520.);
         column()
+            .id("diff-review")
+            .test_support()
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
@@ -1009,6 +1048,48 @@ impl Patch {
                     .overflow_hidden()
                     .child(content),
             )
+            .child(
+                div()
+                    .id("file-sheet-edge")
+                    .test_support()
+                    .absolute()
+                    .left_0()
+                    .top(px(34.))
+                    .bottom_0()
+                    .w(px(8.))
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(1, *hovered, window, cx);
+                    })),
+            )
+            .when(self.file_sheet.open || sheet > 0., |d| {
+                d.child(
+                    div()
+                        .id("file-sheet")
+                        .test_support()
+                        .absolute()
+                        .left(px(8. - 8. * (1. - sheet)))
+                        .top(px(40.))
+                        .bottom(px(8.))
+                        .w(px(272.))
+                        .max_h(px(sheet_height))
+                        .opacity(sheet)
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .bg(rgb(PANEL))
+                        .shadow_lg()
+                        .overflow_hidden()
+                        .occlude()
+                        .key_context("PatchFiles")
+                        .on_hover(cx.listener(|this, hovered, window, cx| {
+                            this.hover_file_sheet(2, *hovered, window, cx);
+                        }))
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                            this.hide_file_sheet(window, cx);
+                        }))
+                        .child(self.file_list(cx)),
+                )
+            })
             .into_any_element()
     }
 
@@ -1440,14 +1521,7 @@ impl Render for Patch {
             let body = if self.threads_visible {
                 self.threads_view(window, cx)
             } else {
-                row()
-                    .items_start()
-                    .gap_0()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.file_list(cx))
-                    .child(self.diff_view(cx))
-                    .into_any_element()
+                self.diff_view(window, cx)
             };
             column()
                 .flex_1()
@@ -1550,6 +1624,16 @@ impl Render for Patch {
             )
             .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
             .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
+            .on_action(cx.listener(|this, _: &BrowseFiles, window, cx| {
+                this.show_file_sheet(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ChooseFile, window, cx| {
+                if this.file_sheet.open
+                    && let Some(file) = this.visible_files(cx).first()
+                {
+                    this.jump_file(file.path.clone(), window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),

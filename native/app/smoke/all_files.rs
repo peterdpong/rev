@@ -26,6 +26,7 @@ pub(super) fn check(
     assert_eq!(paths.len(), 4);
     for (index, path) in paths.iter().enumerate() {
         cx.update_window(handle, |_, window, cx| {
+            window.press("cmd-p", cx);
             window.click(("file", index), cx);
         })?;
         cx.run_until_parked();
@@ -53,6 +54,7 @@ pub(super) fn check(
         })?;
     }
     cx.update_window(handle, |_, window, cx| {
+        window.press("cmd-p", cx);
         window.click(("file", 0usize), cx);
     })?;
     cx.run_until_parked();
@@ -61,6 +63,7 @@ pub(super) fn check(
     for index in [0usize, 1] {
         let path = &paths[index];
         cx.update_window(handle, |_, window, cx| {
+            window.press("cmd-p", cx);
             window.click(("file", index), cx);
         })?;
         cx.run_until_parked();
@@ -79,6 +82,7 @@ pub(super) fn check(
     }
     // Start at README, then scroll into the next file without choosing it in the sidebar.
     cx.update_window(handle, |_, window, cx| {
+        window.press("cmd-p", cx);
         window.click(("file", 0usize), cx);
     })?;
     cx.run_until_parked();
@@ -169,6 +173,7 @@ pub(super) fn check(
     })?;
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
+        window.press("cmd-p", cx);
         window.click(("file", 0usize), cx);
     })?;
     cx.run_until_parked();
