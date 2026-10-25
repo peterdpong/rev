@@ -65,6 +65,146 @@ fn line_point_on_side(window: &mut Window, line: usize, gutter: bool, old: bool)
     )
 }
 
+fn check_drag_targets(
+    cx: &mut HeadlessAppContext,
+    handle: AnyWindowHandle,
+    app: &Entity<Patch>,
+    output: &str,
+) -> anyhow::Result<()> {
+    cx.update(|cx| cx.set_reduce_motion(false));
+    for (split, old, wrap) in [
+        (false, false, false),
+        (true, false, false),
+        (true, true, false),
+        (false, false, true),
+        (true, false, true),
+        (true, true, true),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| app.close_modal(window, cx));
+            if app.read(cx).split != split {
+                window.click("diff-mode", cx);
+            }
+            if app.read(cx).wrap != wrap {
+                window.click("wrap", cx);
+            }
+        })?;
+        let (first, last) = if old {
+            (1usize, 3usize)
+        } else {
+            (4usize, 6usize)
+        };
+        for start_target in ["number", "comment", "text"] {
+            for (start, end) in [(first, last), (last, first)] {
+                let (origin, target) = cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    let origin = if start_target == "comment" {
+                        window
+                            .within((if old { "old" } else { "new" }, start - 1))
+                            .find(("add-annotation", start - 1))
+                            .bounds()
+                            .center()
+                    } else {
+                        line_point_on_side(window, start, start_target == "number", old)
+                    };
+                    // A line drag must survive leaving the narrow number column.
+                    let target = line_point_on_side(window, end, false, old);
+                    pointer_down(window, origin, cx);
+                    (origin, target)
+                })?;
+                cx.run_until_parked();
+                for step in 1..=8 {
+                    cx.advance_clock(Duration::from_millis(16));
+                    cx.update_window(handle, |_, window, cx| {
+                        pointer_move(window, origin + (target - origin) * (step as f32 / 8.), cx);
+                    })?;
+                    cx.run_until_parked();
+                    cx.update(|cx| assert!(app.read(cx).selecting, "keep the gesture held: {start_target}, split={split}, old={old}, wrap={wrap}"));
+                }
+                cx.update_window(handle, |_, window, cx| pointer_up(window, target, cx))?;
+                cx.run_until_parked();
+                cx.advance_clock(Duration::from_millis(140));
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    let selection = app
+                        .read(cx)
+                        .modal
+                        .as_ref()
+                        .and_then(|m| m.selection.as_ref());
+                    assert_eq!(
+                        selection.map(|s| (s.start, s.end)),
+                        Some((first, last)),
+                        "drag from {start_target}, split={split}, old={old}, wrap={wrap}, {start}–{end}"
+                    );
+                    assert_eq!(selection.unwrap().side, if old { "deletions" } else { "additions" });
+                    window.within("prompt-mode-tabs").click(1usize, cx);
+                    assert_eq!(
+                        app.read(cx)
+                            .modal
+                            .as_ref()
+                            .unwrap()
+                            .selection
+                            .as_ref()
+                            .map(|s| (s.start, s.end)),
+                        Some((first, last))
+                    );
+                })?;
+                if !split && !wrap && start_target == "comment" && start == first {
+                    cx.capture_screenshot(handle)?
+                        .save(format!("{output}/gpui-drag-selection.png"))?;
+                }
+            }
+        }
+        // Also finish a plain + click without a repaint between down and up:
+        // the callback must use the new range, not the previous painted one.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let position = window
+                .within((if old { "old" } else { "new" }, first - 1))
+                .find(("add-annotation", first - 1))
+                .bounds()
+                .center();
+            pointer_down(window, position, cx);
+            pointer_up(window, position, cx);
+        })?;
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx)
+                    .modal
+                    .as_ref()
+                    .and_then(|m| m.selection.as_ref())
+                    .map(|s| (s.start, s.end)),
+                Some((first, first))
+            );
+        });
+        // The release position can be newer than the last coalesced move.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let start = line_point_on_side(window, first, true, old);
+            let middle = line_point_on_side(window, first + 1, false, old);
+            let end = line_point_on_side(window, last, false, old);
+            pointer_down(window, start, cx);
+            pointer_move(window, middle, cx);
+            pointer_up(window, end, cx);
+        })?;
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).selection.as_ref().map(|s| (s.start, s.end)),
+                Some((first, last))
+            )
+        });
+    }
+    cx.update_window(handle, |_, window, cx| {
+        app.update(cx, |app, cx| app.close_modal(window, cx));
+        window.click("diff-mode", cx);
+        window.click("wrap", cx);
+        cx.set_reduce_motion(true);
+    })?;
+    Ok(())
+}
+
 // New viewports get a fresh offscreen renderer: retained GPU paint caches from
 // a resized test window are not representative of a presented macOS frame.
 fn compact_preview(
@@ -232,6 +372,13 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    check_drag_targets(&mut cx, handle, &app, &output)?;
+    if std::env::args().any(|arg| arg == "--drag-only") {
+        println!(
+            "Drag checks passed: numbers, comment controls, code text, leaving the gutter, both directions and diff modes."
+        );
+        return Ok(());
+    }
     // Exercise actual intermediate frames, interruption, and the accessibility
     // preference before running the settled-layout interaction suite below.
     cx.update(|cx| cx.set_reduce_motion(false));

@@ -19,7 +19,7 @@ use gpui_base::{
 };
 
 use super::{
-    DiffFile, DiffSide,
+    DiffFile, DiffLinePosition, DiffMode, DiffSide,
     state::{decode_key, encode_key},
 };
 
@@ -44,6 +44,45 @@ pub(crate) struct SelectionGeometry {
 impl SelectionGeometry {
     pub fn clear(&mut self) {
         self.runs.clear();
+    }
+
+    /// Resolve a held line gesture over the whole code surface, independently
+    /// of the narrow line-number hitboxes. Wrapped runs share source positions.
+    pub fn line_at(
+        &self,
+        point: Point<Pixels>,
+        anchor: &DiffLinePosition,
+        mode: DiffMode,
+    ) -> Option<DiffLinePosition> {
+        let run = self
+            .runs
+            .iter()
+            .filter(|run| {
+                run.document.path() == anchor.path()
+                    && (mode == DiffMode::Unified || run.side == anchor.side())
+            })
+            .min_by(|a, b| {
+                line_distance(point, a.bounds)
+                    .cmp(&line_distance(point, b.bounds))
+                    .then_with(|| {
+                        distance_to_bounds(point, a.bounds)
+                            .total_cmp(&distance_to_bounds(point, b.bounds))
+                    })
+            })?;
+        let line = &run.document.lines(run.side)[run.line_ix];
+        // Unified context rows paint one text run for both number columns.
+        let (side, line) = if run.side != anchor.side()
+            && let Some(counterpart) = line.counterpart()
+        {
+            (anchor.side(), &run.document.lines(anchor.side())[counterpart])
+        } else {
+            (run.side, line)
+        };
+        Some(DiffLinePosition::new(
+            run.document.path().clone(),
+            side,
+            line.line_number(),
+        ))
     }
 
     /// The widest painted source line, measured from its first text run.

@@ -8,7 +8,7 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListOffset, ListState, Pixels, ScrollHandle, SharedString, Size, Subscription, Task, Window,
+    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
     WindowId, point, px,
 };
 use gpui_base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
@@ -916,6 +916,19 @@ impl DiffState {
     fn can_extend(&self, anchor: &DiffLinePosition, position: &DiffLinePosition) -> bool {
         anchor.path() == position.path()
             && (anchor.side() == position.side() || self.mode == DiffMode::Unified)
+    }
+
+    pub(crate) fn drag_line_selection_at(&mut self, point: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.selecting {
+            return;
+        }
+        let position = self
+            .selection_anchor
+            .as_ref()
+            .and_then(|anchor| self.geometry.borrow().line_at(point, anchor, self.mode));
+        if let Some(position) = position {
+            self.drag_line_selection(position, cx);
+        }
     }
 
     /// Finishes an active line-number gesture.
