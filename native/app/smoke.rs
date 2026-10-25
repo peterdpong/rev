@@ -182,6 +182,7 @@ pub fn run() -> anyhow::Result<()> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+        cx.set_reduce_motion(true);
         bind_shortcuts(cx);
     });
     let (handle, app) = cx.update(|cx| {
@@ -231,6 +232,123 @@ pub fn run() -> anyhow::Result<()> {
     })?;
 
     cx.run_until_parked();
+    // Exercise actual intermediate frames, interruption, and the accessibility
+    // preference before running the settled-layout interaction suite below.
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("sidebar-clip").bounds().size.width, px(225.));
+        window.press("cmd-b", cx);
+        window.render_frame(cx);
+        window.click("add-project", cx);
+        assert!(
+            app.read(cx).modal.is_none(),
+            "a closing sidebar must not open an orphaned popover"
+        );
+    })?;
+    cx.advance_clock(Duration::from_millis(60));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let width = window.find("sidebar-clip").bounds().size.width;
+        assert!(
+            width > px(0.) && width < px(225.),
+            "sidebar must have intermediate frames: {width:?}"
+        );
+        let chrome = window.find("navigation-chrome").bounds().size.width;
+        assert!(
+            window.find("navigation-title").bounds().size.height < px(24.),
+            "the app title must not wrap while the sidebar moves"
+        );
+        assert!((chrome - (px(112.) + width * (113. / 225.))).abs() < px(1.));
+        assert!(window.find("refresh").bounds().right() <= window.viewport_size().width);
+        window.press("cmd-b", cx);
+        window.render_frame(cx);
+        assert!(
+            (window.find("sidebar-clip").bounds().size.width - width).abs() < px(1.),
+            "reversing the sidebar must not jump"
+        );
+    })?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-motion-sidebar.png"))?;
+    cx.advance_clock(Duration::from_millis(220));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("sidebar-clip").bounds().size.width, px(225.));
+        window.press("cmd-b", cx);
+        window.render_frame(cx);
+    })?;
+    cx.advance_clock(Duration::from_millis(40));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        cx.set_reduce_motion(true);
+        window.render_frame(cx);
+        assert_eq!(window.find("sidebar-clip").bounds().size.width, px(0.));
+        window.press("cmd-b", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("sidebar-clip").bounds().size.width, px(225.));
+        cx.set_reduce_motion(false);
+        app.update(cx, |app, cx| {
+            app.workspace.projects[0].collapsed = true;
+            cx.notify();
+        });
+        window.render_frame(cx);
+    })?;
+    cx.advance_clock(Duration::from_millis(60));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let project = &app.read(cx).workspace.projects[0];
+        let height = window
+            .find(SharedString::from(format!("project-tabs-{}", project.repo)))
+            .bounds()
+            .size
+            .height;
+        assert!(height > px(0.) && height < px(project.tabs.len() as f32 * 32.));
+        cx.set_reduce_motion(true);
+        app.update(cx, |app, cx| {
+            app.workspace.projects[0].collapsed = false;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        cx.set_reduce_motion(false);
+        window.click("ask-review", cx);
+        window.render_frame(cx);
+        let trigger = window.find("ask-review").bounds();
+        assert!(window.find("review-popover").bounds().top() < trigger.bottom() + px(6.));
+        window.input("Typing during the animation", cx);
+        assert_eq!(
+            app.read(cx).prompt.read(cx).value(),
+            "Typing during the animation"
+        );
+    })?;
+    cx.advance_clock(Duration::from_millis(25));
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+    cx.capture_screenshot(handle)?
+        .save(format!("{output}/gpui-motion-popover.png"))?;
+    cx.advance_clock(Duration::from_millis(150));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let settled = window.find("review-popover").bounds();
+        assert_eq!(
+            settled.top(),
+            window.find("ask-review").bounds().bottom() + px(6.)
+        );
+        window.press("escape", cx);
+        window.press("cmd-k", cx);
+        window.render_frame(cx);
+        assert!(
+            window.find("review-popover").bounds().top() < settled.top(),
+            "reopening must replay the entrance"
+        );
+        assert_eq!(
+            app.read(cx).prompt.read(cx).value(),
+            "Typing during the animation"
+        );
+        cx.set_reduce_motion(true);
+        window.render_frame(cx);
+        assert_eq!(window.find("review-popover").bounds().top(), settled.top());
+        window.press("escape", cx);
+        app.update(cx, |app, _| app.drafts.clear());
+    })?;
     // Popovers use their trigger's geometry and leave the rest of the review interactive.
     cx.update_window(handle, |_, window, cx| window.click("ask-review", cx))?;
     cx.run_until_parked();
@@ -772,7 +890,7 @@ pub fn run() -> anyhow::Result<()> {
     )?;
     service.close();
     println!(
-        "Native UI checks passed: PR/commit details, saved threads and source links, file badges, compact/collapsed layouts, anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
+        "Native UI checks passed: interruptible sidebar motion, synchronized titlebar and toolbar, project reveal, popover entrance and replay, typing during animation, Reduce Motion, PR/commit details, saved threads and source links, file badges, compact/collapsed layouts, anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."
     );
     Ok(())
 }

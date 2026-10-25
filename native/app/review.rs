@@ -1,37 +1,41 @@
 use super::view::{BG, BLUE, BORDER, MUTED, PANEL, SELECTED, button, column, row};
 use super::*;
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{TitleBar, text::TextView};
 
 impl Patch {
-    pub(super) fn top_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let navigation_width = if self.sidebar_collapsed {
-            px(112.)
-        } else {
-            px(225.)
-        };
-        let mut leading = row()
+    pub(super) fn top_nav(
+        &mut self,
+        sidebar: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let navigation_width = px(112. + (motion::SIDEBAR_WIDTH - 112.) * sidebar);
+        let leading = row()
+            .id("navigation-chrome")
+            .test_support()
             .w(navigation_width)
-            .gap_1()
+            .gap_0()
             .h_full()
             .flex_shrink_0()
             .pl(px(80.))
-            .pr_2();
-        if self.sidebar_collapsed {
-            leading = leading.child(self.sidebar_toggle(window, cx));
-        } else {
-            leading = leading
-                .w(px(225.))
-                .border_r_1()
-                .border_color(rgb(BORDER))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Patch"),
-                )
-                .child(self.sidebar_toggle(window, cx));
-        }
+            .pr_2()
+            .border_r(px(sidebar))
+            .border_color(rgb(BORDER).opacity(sidebar))
+            .child(
+                div()
+                    .id("navigation-title")
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .opacity(((sidebar - 0.4) / 0.6).clamp(0., 1.))
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Patch"),
+            )
+            .child(self.sidebar_toggle(window, cx));
         let mut main = row()
             .w((window.viewport_size().width - navigation_width).max(px(0.)))
             .flex_shrink_0()
@@ -125,7 +129,12 @@ impl Patch {
             .into_any_element()
     }
 
-    pub(super) fn toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn toolbar(
+        &mut self,
+        sidebar: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(review) = self.review.clone() else {
             return div().into_any_element();
         };
@@ -384,13 +393,7 @@ impl Patch {
                     .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
             );
         column()
-            .w((window.viewport_size().width
-                - if self.sidebar_collapsed {
-                    px(0.)
-                } else {
-                    px(225.)
-                })
-            .max(px(0.)))
+            .w((window.viewport_size().width - px(motion::SIDEBAR_WIDTH * sidebar)).max(px(0.)))
             .flex_shrink_0()
             .child(summary)
             .child(controls)

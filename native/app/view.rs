@@ -126,12 +126,19 @@ impl Patch {
     }
 
     fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let blocked = self.loading || self.workspace_busy;
+        let blocked = self.loading || self.workspace_busy || self.sidebar_collapsed;
         let mut projects = column().gap_3().min_w_0();
         for project in self.workspace.projects.clone() {
             let repo = project.repo.clone();
             let collapse_repo = repo.clone();
             let collapsed = project.collapsed;
+            let expanded = motion::reveal(
+                SharedString::from(format!("project-reveal-{repo}")),
+                !collapsed,
+                window,
+                cx,
+            );
+            let tabs_height = px(project.tabs.len() as f32 * 32. * expanded);
             let project_button = navigation_button(
                 SharedString::from(format!("project-{repo}")),
                 project.name,
@@ -166,7 +173,7 @@ impl Patch {
             }));
             let add_review =
                 self.popover_button(&review_anchor, add_review, Anchor::TopLeft, window, cx);
-            let mut group = column().gap_1().min_w_0().child(
+            let mut group = column().min_w_0().child(
                 row()
                     .mx_2()
                     .gap_0()
@@ -174,7 +181,8 @@ impl Patch {
                     .child(project_button)
                     .child(add_review),
             );
-            if !collapsed {
+            let mut tabs = column().gap_1().pt_1().min_w_0();
+            if expanded > 0. {
                 for tab in project.tabs {
                     let id = tab.id.clone();
                     let close = id.clone();
@@ -185,7 +193,7 @@ impl Patch {
                         .runs
                         .get(tab.scope_key.as_ref().unwrap_or(&id))
                         .is_some_and(|r| r.status == "running");
-                    group = group.child(
+                    tabs = tabs.child(
                         row()
                             .mx_2()
                             .pl(px(20.))
@@ -205,7 +213,7 @@ impl Patch {
                                         div().child("⑂").into_any_element()
                                     },
                                 )
-                                .disabled(blocked)
+                                .disabled(blocked || collapsed)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.load_review(request.clone(), file.clone(), window, cx)
@@ -218,7 +226,7 @@ impl Patch {
                                     IconName::Close,
                                     "Close review",
                                 )
-                                .disabled(blocked || running)
+                                .disabled(blocked || running || collapsed)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.workspace_action(
@@ -233,6 +241,15 @@ impl Patch {
                     );
                 }
             }
+            group = group.child(
+                div()
+                    .id(SharedString::from(format!("project-tabs-{}", project.repo)))
+                    .test_support()
+                    .h(tabs_height)
+                    .overflow_hidden()
+                    .opacity(expanded)
+                    .child(tabs),
+            );
             projects = projects.child(group);
         }
         column()
@@ -262,6 +279,7 @@ impl Patch {
                         self.popover_button(
                             "add-project",
                             navigation_action("add-project", IconName::Plus, "Open repository")
+                                .disabled(self.sidebar_collapsed)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_modal(
                                         ModalKind::Open,
@@ -288,14 +306,12 @@ impl Patch {
                     .child(projects),
             )
             .child(
-                row()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(self.popover_button(
+                row().p_3().border_t_1().border_color(rgb(BORDER)).child(
+                    self.popover_button(
                         "open-project",
-                        button("open-project", "Open folder").on_click(cx.listener(
-                            |this, _, window, cx| {
+                        button("open-project", "Open folder")
+                            .disabled(self.sidebar_collapsed)
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_modal(
                                     ModalKind::Open,
                                     None,
@@ -304,12 +320,12 @@ impl Patch {
                                     window,
                                     cx,
                                 )
-                            },
-                        )),
+                            })),
                         Anchor::BottomLeft,
                         window,
                         cx,
-                    )),
+                    ),
+                ),
             )
             .into_any_element()
     }
@@ -606,10 +622,19 @@ impl Patch {
         body.into_any_element()
     }
 
-    fn selection_prompt(&self, modal: &Modal, cx: &mut Context<Self>) -> AnyElement {
+    fn selection_prompt(
+        &self,
+        modal: &Modal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let serial = modal.serial;
+        let progress = motion::enter(("selection-enter", serial), window, cx);
         let pane = column()
             .id("selection-prompt")
+            .relative()
+            .top(px(-4. * (1. - progress)))
+            .opacity(progress)
             .w(px(440.))
             .gap_2()
             .p_3()
@@ -970,7 +995,7 @@ impl Patch {
             return if self.selecting {
                 div().into_any_element()
             } else {
-                self.selection_prompt(&modal, cx)
+                self.selection_prompt(&modal, window, cx)
             };
         }
         let title = match modal.kind {
@@ -1251,9 +1276,13 @@ impl Patch {
         })
         .min((window.viewport_size().width - px(16.)).max(px(120.)));
         let serial = modal.serial;
+        let progress = motion::enter(("popover-enter", serial), window, cx);
         column()
             .id("review-popover")
             .test_support()
+            .relative()
+            .top(px(-4. * (1. - progress)))
+            .opacity(progress)
             .role(Role::Dialog)
             .w(width)
             .max_h(max_height)
@@ -1313,7 +1342,14 @@ impl Patch {
 
 impl Render for Patch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Sample once so the titlebar, sidebar and review controls move together.
+        let sidebar = motion::reveal("sidebar-reveal", !self.sidebar_collapsed, window, cx);
         let content = if self.review.is_some() {
+            let body_progress = motion::enter(
+                ("review-body-enter", self.threads_visible as usize),
+                window,
+                cx,
+            );
             let body = if self.threads_visible {
                 self.threads_view(window, cx)
             } else {
@@ -1330,8 +1366,14 @@ impl Render for Patch {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .child(self.toolbar(window, cx))
-                .child(body)
+                .child(self.toolbar(sidebar, window, cx))
+                .child(
+                    column()
+                        .flex_1()
+                        .min_h_0()
+                        .opacity(body_progress)
+                        .child(body),
+                )
                 .into_any_element()
         } else {
             column()
@@ -1435,16 +1477,24 @@ impl Render for Patch {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.top_nav(window, cx))
+            .child(self.top_nav(sidebar, window, cx))
             .child(
                 row()
                     .items_start()
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| {
-                        row.child(self.sidebar(window, cx))
-                    })
+                    .child(
+                        div()
+                            .id("sidebar-clip")
+                            .test_support()
+                            .w(px(motion::SIDEBAR_WIDTH * sidebar))
+                            .h_full()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .opacity(sidebar)
+                            .when(sidebar > 0., |d| d.child(self.sidebar(window, cx))),
+                    )
                     .child(content),
             )
             .when_some(status, |d, error| {

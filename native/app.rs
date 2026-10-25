@@ -21,6 +21,7 @@ use std::{
 };
 
 mod commits;
+mod motion;
 mod review;
 #[cfg(feature = "ui-tests")]
 pub mod smoke;
