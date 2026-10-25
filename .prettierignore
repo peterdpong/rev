@@ -1,0 +1,12 @@
+# Generated files, sample fixtures, and upstream code
+dist/
+target/
+node_modules/
+vendor/
+fixtures/
+.rev-sample/
+.revue-demo/
+.test-artifacts/
+
+# Documentation is maintained separately
+**/*.md
