@@ -48,8 +48,9 @@ pub struct Review {
     #[serde(flatten)]
     pub request: ReviewRequest,
     pub name: String,
+    #[serde(default)]
+    pub branch: String,
     pub key: String,
-    pub branches: Vec<String>,
     pub files: Vec<File>,
     pub dirty: bool,
     #[serde(rename = "branchHeadSha")]
@@ -66,6 +67,22 @@ pub struct Review {
     pub head_commit: Option<CommitDetails>,
     #[serde(rename = "pullRequest", default)]
     pub pull_request: Option<PullRequest>,
+}
+impl Review {
+    pub fn pin_current_request(&mut self) {
+        if self
+            .request
+            .head
+            .as_deref()
+            .is_none_or(|head| head == "HEAD")
+        {
+            self.request.head = Some(if self.branch == "detached HEAD" {
+                self.branch_head_sha.clone()
+            } else {
+                self.branch.clone()
+            });
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct CommitDetails {
@@ -146,8 +163,17 @@ pub struct ReviewTab {
     #[serde(rename = "scopeKey", default)]
     pub scope_key: Option<String>,
     pub label: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(rename = "currentHeadSha", default)]
+    pub current_head_sha: Option<String>,
     pub request: ReviewRequest,
     pub file: Option<String>,
+}
+impl ReviewTab {
+    pub fn is_current(&self) -> bool {
+        self.kind == "current"
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Project {

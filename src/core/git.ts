@@ -29,6 +29,12 @@ export async function defaultBase(repo: string) {
   }
   throw new Error('This repository has no commits yet. Make an initial commit first.');
 }
+export async function listBranches(repo: string): Promise<string[]> {
+  const root = await rootOf(repo);
+  return (await git(root, ['for-each-ref', '--format=%(refname)%09%(refname:short)', 'refs/heads', 'refs/remotes']))
+    .trim().split('\n').filter(Boolean).map(line => line.split('\t'))
+    .filter(([ref]) => !ref.startsWith('refs/remotes/') || !ref.endsWith('/HEAD')).map(([, name]) => name);
+}
 export function parseNameStatus(raw: string): Pick<ChangedFile, 'status' | 'path' | 'oldPath'>[] {
   const parts = raw.split('\0'); const files = [];
   for (let i = 0; i < parts.length - 1;) {

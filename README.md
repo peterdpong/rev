@@ -37,7 +37,7 @@ The first Cargo build downloads and compiles GPUI. Later development builds are 
 
 ## Review workflow
 
-1. **Open folder** to choose an existing local repository. Open branch/PR tabs with the **+** beside its project name. Enter a branch, PR number, or GitHub PR URL; blank means the current branch.
+1. Use **Open repository** (⌘O or the Projects **+**) to add a local Git folder. Its permanent **Current** entry follows the checked-out branch automatically. Use the **+** beside the project name to search and open additional branches or PRs; **Fetch branches** updates the available remote refs without switching your checkout.
 2. Pick a file. Switch between unified/split views, wrap long lines, and mark files viewed. **Working tree** toggles local changes in the comparison. **Fetch** updates remotes and imported PR details without changing the checkout.
 3. Click and drag across code or line numbers—no Shift needed. On release, a floating prompt opens with **Ask agent / Agent change** tabs above its input. Switching tabs keeps your text and selected code. Shift-select also works. Select one side of the diff for an exact source range.
 4. The top **Ask agent** button asks about the whole review. An anchored popover contains the prompt, provider choice, response, and Stop control.

@@ -44,7 +44,7 @@ test('stdio transport keeps requests correlated and persists the native review w
   const viewed = await call('viewed', { review: request, path: 'src/lib/retry.ts', digest: patch.digest, viewed: true });
   assert.equal(viewed.viewed['src/lib/retry.ts'], patch.digest);
   await call('workspaceAction', { type: 'setFile', id: result.review.key, file: 'src/lib/retry.ts' });
-  assert.equal((await call('init')).workspace.projects[0].tabs[0].file, 'src/lib/retry.ts');
+  assert.equal((await call('init')).workspace.projects[0].tabs.find((tab: any) => tab.id === result.review.key).file, 'src/lib/retry.ts');
   await call('deleteComment', { review: request, id: state.comments[0].id });
   assert.equal((await call('review', request)).state.comments.length, 0);
   const working = { ...request, mode: 'working' };

@@ -186,7 +186,8 @@ impl Patch {
                 for tab in project.tabs {
                     let id = tab.id.clone();
                     let close = id.clone();
-                    let active = self.review.as_ref().is_some_and(|r| r.key == tab.id);
+                    let active = self.workspace.active_tab_id.as_ref() == Some(&tab.id);
+                    let current = tab.is_current();
                     let request = tab.request.clone();
                     let file = tab.file.clone();
                     let running = self
@@ -220,24 +221,35 @@ impl Patch {
                                     },
                                 )),
                             )
-                            .child(
-                                navigation_action(
-                                    SharedString::from(format!("close-{id}")),
-                                    IconName::Close,
-                                    "Close review",
+                            .when(current, |d| {
+                                d.child(
+                                    div()
+                                        .pr_2()
+                                        .text_size(px(10.))
+                                        .text_color(rgb(MUTED))
+                                        .child("Current"),
                                 )
-                                .disabled(blocked || running || collapsed)
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.workspace_action(
-                                            json!({ "type": "closeTab", "id": close }),
-                                            active,
-                                            window,
-                                            cx,
-                                        )
-                                    },
-                                )),
-                            ),
+                            })
+                            .when(!current, |d| {
+                                d.child(
+                                    navigation_action(
+                                        SharedString::from(format!("close-{id}")),
+                                        IconName::Close,
+                                        "Close review",
+                                    )
+                                    .disabled(blocked || running || collapsed)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.workspace_action(
+                                                json!({ "type": "closeTab", "id": close }),
+                                                active,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                            }),
                     );
                 }
             }
@@ -978,7 +990,7 @@ impl Patch {
         }
         let title = match modal.kind {
             ModalKind::Open => "Open repository",
-            ModalKind::Review => "Open branch or PR",
+            ModalKind::Review => "Add branch or PR",
             ModalKind::Ask => "Ask agent",
             ModalKind::Change => "Agent change",
             ModalKind::Changes => "Changes",
@@ -1005,46 +1017,89 @@ impl Patch {
                         format!("{} commits", self.commit_picker.count)
                     }),
             );
-        } else if matches!(modal.kind, ModalKind::Open | ModalKind::Review) {
+        } else if modal.kind == ModalKind::Open {
             body = body
                 .child(self.form_field(0, "Repository", "Repository folder"))
                 .child(
                     button("browse", "Choose folder…")
+                        .disabled(self.loading)
                         .on_click(cx.listener(|this, _, window, cx| this.pick_folder(window, cx))),
-                )
-                .child(self.form_field(1, "Base", "Base branch; leave blank to detect"))
+                );
+        } else if modal.kind == ModalKind::Review {
+            body = body
                 .child(self.form_field(
                     2,
                     "Branch / PR",
-                    "Branch, PR number or URL; leave blank for HEAD",
-                ));
-            if modal.kind == ModalKind::Review {
-                let branches = self
-                    .review
-                    .as_ref()
-                    .filter(|r| r.request.repo == modal.request.repo)
-                    .map(|r| r.branches.clone())
-                    .unwrap_or_default();
-                let mut choices = column().gap_1();
-                for (i, branch) in branches.into_iter().enumerate() {
-                    choices = choices.child(
-                        button(("branch", i), branch.clone())
-                            .justify_start()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.fields[2].update(cx, |input, cx| {
-                                    input.set_value(branch.clone(), window, cx)
-                                })
-                            })),
-                    );
-                }
-                body = body.child(
-                    div()
-                        .id("branch-options")
-                        .max_h(px(140.))
-                        .overflow_y_scroll()
-                        .child(choices),
+                    "Search branches or enter a PR number or URL",
+                ))
+                .child(self.form_field(1, "Base", "Automatic"))
+                .child(
+                    row()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_color(rgb(MUTED))
+                                .text_size(px(11.))
+                                .child("Branches"),
+                        )
+                        .child(
+                            button(
+                                "fetch-branches",
+                                if self.branches_loading {
+                                    "Loading…"
+                                } else {
+                                    "Fetch branches"
+                                },
+                            )
+                            .disabled(self.branches_loading || self.loading || self.submitting)
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.load_branches(true, window, cx),
+                            )),
+                        ),
+                );
+            let query = self.fields[2].read(cx).value().to_lowercase();
+            let mut choices = column().gap_1();
+            for (i, branch) in self
+                .branch_options
+                .iter()
+                .filter(|branch| branch.to_lowercase().contains(&query))
+                .take(100)
+                .enumerate()
+            {
+                let branch = branch.clone();
+                choices = choices.child(
+                    Button::new(("branch", i))
+                        .small()
+                        .ghost()
+                        .w_full()
+                        .h(px(28.))
+                        .px_2()
+                        .accessibility_label(branch.clone())
+                        .tooltip(branch.clone())
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.))
+                                .child(branch.clone()),
+                        )
+                        .disabled(self.loading || self.submitting)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.fields[2].update(cx, |input, cx| {
+                                input.set_value(branch.clone(), window, cx)
+                            });
+                            this.submit(window, cx);
+                        })),
                 );
             }
+            body = body.child(
+                div()
+                    .id("branch-options")
+                    .max_h(px(168.))
+                    .overflow_y_scroll()
+                    .child(choices),
+            );
         } else if matches!(modal.kind, ModalKind::Ask | ModalKind::Change) {
             body = body
                 .child(
@@ -1220,7 +1275,7 @@ impl Patch {
             body = body.child(div().text_color(rgb(0xe29595)).child(error.clone()));
         }
         if !matches!(modal.kind, ModalKind::Run | ModalKind::Details) {
-            let label = if self.submitting {
+            let label = if self.submitting || self.loading {
                 "Working…"
             } else {
                 match modal.kind {
@@ -1228,7 +1283,8 @@ impl Patch {
                     ModalKind::Change => "Queue change",
                     ModalKind::Changes => "Send to agent",
                     ModalKind::Commits => "View diff",
-                    _ => "Open",
+                    ModalKind::Open => "Add project",
+                    _ => "Open review",
                 }
             };
             footer = footer.child(
@@ -1237,6 +1293,7 @@ impl Patch {
                     .label(label)
                     .disabled(
                         self.submitting
+                            || self.loading
                             || (modal.kind == ModalKind::Commits && self.commit_picker.loading)
                             || (modal.kind == ModalKind::Changes && self.comment_ids.is_empty()),
                     )

@@ -290,7 +290,9 @@ impl Patch {
                     .child(div().min_w_0().truncate().child(commit.subject.clone())),
             );
         }
-        let mut request = review.request.clone();
+        let mut request = self
+            .navigation_request()
+            .unwrap_or_else(|| review.request.clone());
         request.mode = Some(if working { "branch" } else { "working" }.into());
         request.commit_range = None;
         let queued = self

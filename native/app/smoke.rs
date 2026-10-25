@@ -3,6 +3,7 @@
 use super::*;
 use gpui_kit::{HeadlessAppContext, test::TestWindowExt};
 use std::sync::Arc;
+mod projects;
 
 fn pointer_down(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
     window.simulate_mouse_move(position, cx);
@@ -289,16 +290,15 @@ pub fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|| ".test-artifacts".into());
     std::fs::create_dir_all(&output)?;
     let backend = Backend::start().map_err(anyhow::Error::msg)?;
-    let request = json!({ "repo": repo, "base": "main", "head": "HEAD", "remember": true });
+    let request =
+        json!({ "repo": repo, "base": "main", "head": "HEAD", "remember": true, "current": true });
     let value = backend
         .call("review", request)
         .map_err(anyhow::Error::msg)?;
     let mut review: Review = decode(value["review"].clone()).map_err(anyhow::Error::msg)?;
     let state: ReviewState = decode(value["state"].clone()).map_err(anyhow::Error::msg)?;
     let workspace: Workspace = decode(value["workspace"].clone()).map_err(anyhow::Error::msg)?;
-    if let Some(tab) = workspace.active() {
-        review.request = tab.request.clone();
-    }
+    review.pin_current_request();
     let path = review
         .files
         .iter()
@@ -1033,6 +1033,7 @@ pub fn run() -> anyhow::Result<()> {
         true,
         &format!("{output}/gpui-threads-narrow.png"),
     )?;
+    projects::check_projects(&mut cx, handle, &app, &output)?;
     service.close();
     println!(
         "Native UI checks passed: interruptible sidebar motion, synchronized titlebar and toolbar, project reveal, popover entrance and replay, typing during animation, Reduce Motion, PR/commit details, saved threads and source links, file badges, compact/collapsed layouts, anchored popovers, trigger toggle, outside dismissal, draft restoration, keyboard open/close, single/range commit selection, historical comparison, branch restoration, tabbed prompt, keyboard mode switching, text/context preservation, submit shortcut, forward/reverse code and gutter drags, original/modified split sides, stable selection layout, general ask, change draft, modal Escape, split view, wrap, feedback, file filter."

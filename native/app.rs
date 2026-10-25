@@ -22,6 +22,7 @@ use std::{
 
 mod commits;
 mod motion;
+mod projects;
 mod review;
 #[cfg(feature = "ui-tests")]
 pub mod smoke;
@@ -120,6 +121,8 @@ pub struct Patch {
     selection_menu: Point<Pixels>,
     prompt_mode: ModalKind,
     commit_picker: CommitPicker,
+    branch_options: Vec<String>,
+    branches_loading: bool,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     prompt: Entity<TextareaState>,
@@ -138,6 +141,7 @@ pub struct Patch {
     patch_loading: bool,
     submitting: bool,
     workspace_busy: bool,
+    workspace_epoch: u64,
     review_epoch: u64,
     file_epoch: u64,
     error: Option<String>,
@@ -163,8 +167,16 @@ impl Patch {
             Err(e) => (None, Some(e)),
         };
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Find a file…"));
-        let fields = (0..3)
-            .map(|_| cx.new(|cx| InputState::new(window, cx)))
+        let fields: Vec<Entity<InputState>> = (0..3)
+            .map(|index| {
+                cx.new(|cx| {
+                    InputState::new(window, cx).placeholder(match index {
+                        0 => "Repository folder",
+                        1 => "Automatic",
+                        _ => "Search branches or enter a PR number or URL",
+                    })
+                })
+            })
             .collect();
         let prompt = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -179,6 +191,7 @@ impl Patch {
         });
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
+            cx.observe(&fields[2], |_, _, cx| cx.notify()),
             cx.observe_in(&diff, window, |this, diff, window, cx| {
                 let state = diff.read(cx);
                 if state.selected_lines().is_some() {
@@ -237,6 +250,8 @@ impl Patch {
             selection_menu: Point::default(),
             prompt_mode: ModalKind::Ask,
             commit_picker: CommitPicker::default(),
+            branch_options: vec![],
+            branches_loading: false,
             filter,
             fields,
             prompt,
@@ -255,6 +270,7 @@ impl Patch {
             patch_loading: false,
             submitting: false,
             workspace_busy: false,
+            workspace_epoch: 0,
             review_epoch: 0,
             file_epoch: 0,
             error,
@@ -290,6 +306,7 @@ impl Patch {
                     if let Some(provider) = this.providers.iter().find(|p| p.available) {
                         this.provider = provider.id.clone();
                     }
+                    this.poll_workspace(window, cx);
                     let tab = this.workspace.active().cloned();
                     if let Some(request) = initial {
                         this.load_review(request, None, window, cx);
@@ -356,6 +373,8 @@ impl Patch {
         let epoch = self.review_epoch;
         let mut params = json!(request);
         params["remember"] = json!(true);
+        params["current"] = json!(request.head.as_deref().is_none_or(|head| head == "HEAD"));
+        let modal_serial = self.modal_serial;
         self.rpc(
             "review",
             params,
@@ -378,9 +397,14 @@ impl Patch {
                 });
                 match parsed {
                     Ok((mut review, state, workspace)) => {
-                        // Use the persisted symbolic ref, never allow HEAD to follow another tab's checkout.
-                        if let Some(tab) = workspace.active() {
-                            review.request = tab.request.clone();
+                        // Navigation follows HEAD; comments and agent requests keep the reviewed branch.
+                        review.pin_current_request();
+                        if this.modal_serial == modal_serial
+                            && this.modal.as_ref().is_some_and(|m| {
+                                matches!(m.kind, ModalKind::Open | ModalKind::Review)
+                            })
+                        {
+                            this.close_modal(window, cx);
                         }
                         let selected = file
                             .or_else(|| workspace.active().and_then(|t| t.file.clone()))
@@ -420,6 +444,11 @@ impl Patch {
         let Some(review) = self.review.clone() else {
             return;
         };
+        let tab_id = self
+            .workspace
+            .active_tab_id
+            .clone()
+            .unwrap_or_else(|| review.key.clone());
         self.close_selection_prompt(window, cx);
         self.thread_target = self
             .thread_target
@@ -455,7 +484,7 @@ impl Patch {
                             this.diff.update(cx, |diff, cx| diff.scroll_to_line(DiffLinePosition::new(selection.path.clone(), selection.diff_side(), selection.start), cx));
                         } else { this.error = Some("This conversation refers to an earlier version of the file.".into()); }
                     }
-                    this.rpc("workspaceAction", json!({ "type": "setFile", "id": review.key, "file": path }), window, cx, |this, result, _, _| { this.result(result); });
+                    this.rpc("workspaceAction", json!({ "type": "setFile", "id": tab_id, "file": path }), window, cx, |this, result, _, _| { this.result(result); });
                 }
                 Err(e) => this.error = Some(e),
             }
@@ -475,8 +504,8 @@ impl Patch {
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(review) = &self.review {
-            self.load_review(review.request.clone(), self.file.clone(), window, cx);
+        if let Some(request) = self.navigation_request() {
+            self.load_review(request, self.file.clone(), window, cx);
         }
     }
 
@@ -491,6 +520,7 @@ impl Patch {
             return;
         }
         self.workspace_busy = true;
+        self.workspace_epoch += 1;
         self.rpc(
             "workspaceAction",
             action,
@@ -761,6 +791,9 @@ impl Patch {
             .as_ref()
             .map(|r| r.request.clone())
             .unwrap_or_default();
+        if kind == ModalKind::Commits {
+            request = self.navigation_request().unwrap_or(request);
+        }
         if let Some(repo) = repo {
             request = ReviewRequest {
                 repo,
@@ -788,7 +821,7 @@ impl Patch {
             ModalKind::Review => vec![
                 request.repo.clone(),
                 request.base.clone().unwrap_or_default(),
-                "HEAD".into(),
+                String::new(),
             ],
             _ => vec![String::new(); 3],
         };
@@ -813,8 +846,12 @@ impl Patch {
         self.modal_focus.focus(window, cx);
         if matches!(kind, ModalKind::Ask | ModalKind::Change) {
             self.prompt.update(cx, |input, cx| input.focus(window, cx));
-        } else if matches!(kind, ModalKind::Open | ModalKind::Review) {
+        } else if kind == ModalKind::Open {
             self.fields[0].update(cx, |input, cx| input.focus(window, cx));
+        } else if kind == ModalKind::Review {
+            self.fields[2].update(cx, |input, cx| input.focus(window, cx));
+            self.branch_options.clear();
+            self.load_branches(false, window, cx);
         }
         cx.notify();
     }
@@ -885,7 +922,7 @@ impl Patch {
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
-        if self.submitting {
+        if self.submitting || self.loading {
             return;
         }
         let Some(modal) = self.modal.clone() else {
@@ -899,13 +936,28 @@ impl Patch {
         let body = self.prompt.read(cx).value().trim().to_string();
         self.error = None;
         match modal.kind {
-            ModalKind::Open | ModalKind::Review => {
+            ModalKind::Open => {
                 if values[0].is_empty() {
                     self.error = Some("Choose a repository folder.".into());
                     return;
                 }
+                self.load_review(
+                    ReviewRequest {
+                        repo: values[0].clone(),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            ModalKind::Review => {
+                if values[2].is_empty() {
+                    self.error = Some("Choose a branch or enter a pull request.".into());
+                    return;
+                }
                 let request = ReviewRequest {
-                    repo: values[0].clone(),
+                    repo: modal.request.repo.clone(),
                     base: (!values[1].is_empty()).then(|| values[1].clone()),
                     head: (!values[2].is_empty()).then(|| values[2].clone()),
                     mode: Some("branch".into()),
@@ -927,9 +979,8 @@ impl Patch {
                                 match decode(value) {
                                     Ok(request) => {
                                         if this.modal_serial == modal.serial {
-                                            this.close_modal(window, cx);
+                                            this.load_review(request, None, window, cx);
                                         }
-                                        this.load_review(request, None, window, cx);
                                     }
                                     Err(e) => this.error = Some(e),
                                 }
@@ -937,7 +988,6 @@ impl Patch {
                         },
                     );
                 } else {
-                    self.close_modal(window, cx);
                     self.load_review(request, None, window, cx);
                 }
             }

@@ -18,7 +18,7 @@
 | Shared host API | `src/core/host.ts` | dispatch Git, review storage, workspace and agent operations |
 | Git core | `src/core/git.ts` | merge-base diffs, lazy file patches, fetch, PR import |
 | Review store | `src/core/store.ts` | comments, patch hashes, viewed status, lock + atomic rename |
-| Workspace store | `src/core/workspace.ts` | project folders, pinned branch/PR tabs, selected files |
+| Workspace store | `src/core/workspace.ts` | project folders, Current checkout entries, pinned branch/PR tabs, selected files |
 | Agent adapters | `src/core/agents.ts` | executable discovery, prompt construction, permissions, output events, cancellation |
 | CLI | `src/cli.ts` | terminal diff, questions, queued feedback, apply and native launcher |
 
@@ -33,7 +33,7 @@ The JSON request boundary allows the host to be replaced with Rust later. The Ru
 ## Review and feedback flow
 
 1. Inspect a repository, resolve base/head commits, and compute the merge base. The working checkout is not switched.
-2. Persist a project and tab. `HEAD` is stored as a symbolic branch or detached commit, so a tab cannot silently follow another checkout.
+2. Persist a project and tab. Each project has a stable Current entry whose navigation request follows `HEAD`; additional branch/PR tabs persist an explicit ref. Review requests used for comments and agents always pin the inspected branch or detached commit.
 3. Load one file patch. GPUI Kit parses it into retained `DiffState`, supplies unified/split layout, syntax highlighting, virtualized rows, folding, and source line selection.
 4. Selection actions capture the review, path, side, line range, and patch digest before opening the popover. Cross-side ranges are rejected rather than converted to inaccurate source coordinates.
 5. A change request is saved in Git metadata. Inline comments are only attached when their digest matches the currently displayed patch; older feedback remains in Changes and is rejected on apply.
@@ -61,6 +61,8 @@ Live model calls, login flows, and authenticated PR fetching require a signed-in
 ## Persistence
 
 To keep the two branches comparable, review files retain the existing `<git-dir>/revue/` format. Workspace tabs default to `~/.revue/workspace.json`. `PATCH_DATA_DIR` (or the older `REVUE_DATA_DIR`) can isolate workspace navigation. Closing a tab removes navigation only, not its feedback. Both stores use filesystem locks and atomic replacement.
+
+Opening a folder creates or reuses its Current entry. `init` upgrades existing projects without replacing pinned tabs; the `workspace` RPC refreshes checkout metadata and writes only when it changes. The desktop polls every two seconds, updates branch labels, and reloads an active Current comparison when its branch or tip changes. A checkout change clears its old commit range and selected file. Open prompts and reply drafts defer automatic navigation, retaining their original source context. The project's branch picker calls `branches` and `fetch` for that folder independently of the active review.
 
 ## Future SSH host
 
