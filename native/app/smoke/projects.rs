@@ -173,8 +173,63 @@ pub(super) fn check_projects(
             Some(&branch)
         )
     });
+    // Cycle real review tabs across both projects, including a collapsed project,
+    // with focus in a prompt. Returning to that review must restore its draft.
+    let tabs = cx.update(|cx| {
+        app.read(cx)
+            .workspace
+            .projects
+            .iter()
+            .flat_map(|p| &p.tabs)
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>()
+    });
+    let start = tabs.iter().position(|id| id == &current_id).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.workspace.projects[0].collapsed = true;
+            app.active_thread = Some("navigation-draft".into());
+            app.thread_reply.update(cx, |input, cx| {
+                input.set_value("Keep this thread reply", window, cx)
+            });
+        });
+        window.press("cmd-b", cx);
+        assert!(app.read(cx).sidebar_collapsed);
+        window.press("cmd-k", cx);
+        window.input("Keep this review question", cx);
+    })?;
+    for (shortcut, direction) in [("alt-tab", 1_isize), ("alt-shift-tab", -1)] {
+        for step in 1..=tabs.len() {
+            cx.update_window(handle, |_, window, cx| window.press(shortcut, cx))?;
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let app = app.read(cx);
+                let expected = (start as isize + direction * step as isize)
+                    .rem_euclid(tabs.len() as isize) as usize;
+                assert!(app.error.is_none(), "{:?}", app.error);
+                assert_eq!(app.workspace.active_tab_id.as_ref(), Some(&tabs[expected]));
+                assert!(app.modal.is_none());
+                assert!(app.sidebar_collapsed);
+                assert!(app.thread_reply.read(cx).value().is_empty());
+                assert_eq!(
+                    app.drafts
+                        .get("thread-navigation-draft")
+                        .map(String::as_str),
+                    Some("Keep this thread reply")
+                );
+            });
+        }
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.press("cmd-k", cx);
+        assert_eq!(
+            app.read(cx).prompt.read(cx).value(),
+            "Keep this review question"
+        );
+        window.press("escape", cx);
+    })?;
     println!(
-        "Project checks passed: folder-only add, project branch picker, pinned tabs, automatic checkout following, detached/attached HEAD, prompt preservation."
+        "Project checks passed: folder-only add, project branch picker, pinned tabs, automatic checkout following, detached/attached HEAD, prompt preservation, keyboard tab cycling in both directions across projects with wraparound and a hidden sidebar."
     );
     Ok(())
 }

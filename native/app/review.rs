@@ -343,13 +343,12 @@ impl Patch {
             .child(
                 button("toggle-threads", format!("Threads  {count}"))
                     .selected(self.threads_visible)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.threads_visible {
-                            this.hide_threads(window, cx);
-                        } else {
-                            this.show_threads(None, None, window, cx);
-                        }
-                    })),
+                    .tooltip(if self.threads_visible {
+                        "Hide threads (⌘⇧B)"
+                    } else {
+                        "Show threads (⌘⇧B)"
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_threads(window, cx))),
             )
             .child(div().flex_1())
             .child(self.popover_button(

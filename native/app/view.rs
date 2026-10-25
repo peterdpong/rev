@@ -1631,6 +1631,15 @@ impl Render for Patch {
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &ToggleThreads, window, cx| this.toggle_threads(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &NextTab, window, cx| this.navigate_tab(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousTab, window, cx| this.navigate_tab(-1, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
             .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .on_action(cx.listener(|this, _: &BrowseFiles, window, cx| {

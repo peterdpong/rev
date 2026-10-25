@@ -45,6 +45,9 @@ gpui_kit::actions!(
         PromptChange,
         TogglePromptMode,
         ToggleSidebar,
+        ToggleThreads,
+        NextTab,
+        PreviousTab,
         ReplyThread,
         NextFile,
         PreviousFile,
@@ -61,6 +64,9 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-r", Refresh, Some("Patch")),
         KeyBinding::new("cmd-k", AskReview, Some("Patch")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Patch")),
+        KeyBinding::new("cmd-shift-b", ToggleThreads, Some("Patch")),
+        KeyBinding::new("alt-tab", NextTab, Some("Patch")),
+        KeyBinding::new("alt-shift-tab", PreviousTab, Some("Patch")),
         KeyBinding::new("cmd-p", BrowseFiles, Some("Patch")),
         KeyBinding::new("enter", ChooseFile, Some("PatchFiles > Input")),
         KeyBinding::new("escape", CloseModal, Some("PatchFiles > Input")),
@@ -433,7 +439,14 @@ impl Patch {
                                 !state.threads.is_empty() || !state.comments.is_empty();
                             this.changes_only = false;
                             this.thread_filter = None;
-                            this.active_thread = None;
+                            if let Some(id) = this.active_thread.take() {
+                                this.drafts.insert(
+                                    format!("thread-{id}"),
+                                    this.thread_reply.read(cx).value().to_string(),
+                                );
+                            }
+                            this.thread_reply
+                                .update(cx, |input, cx| input.set_value("", window, cx));
                         }
                         this.workspace = workspace;
                         this.state = state;

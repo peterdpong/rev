@@ -581,7 +581,7 @@ impl Patch {
                     )
                     .child(
                         button("close-threads", "×")
-                            .tooltip("Close threads")
+                            .tooltip("Close threads (⌘⇧B)")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.hide_threads(window, cx)),
                             ),

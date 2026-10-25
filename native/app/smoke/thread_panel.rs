@@ -82,6 +82,17 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
         assert!(window.find("apply-changes").bounds().bottom() <= panel.bottom());
         window.click("threads-changes", cx);
         window.render_frame(cx);
+        window.press("cmd-shift-b", cx);
+        window.render_frame(cx);
+        assert!(!app.read(cx).threads_visible);
+        assert!(window.find("diff-surface").bounds().size.width > diff.size.width);
+        window.press("cmd-shift-b", cx);
+        window.render_frame(cx);
+        assert!(app.read(cx).threads_visible);
+        assert!(
+            app.read(cx).changes_only,
+            "sidebar toggles preserve filters"
+        );
         assert!(!present(window, "thread-source-fixture"));
         assert!(present(window, "queued-queued-0"));
         assert!(present(window, "snippet-comment-code-queued-0"));
@@ -132,6 +143,24 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     cx.capture_screenshot(handle)?
         .save(format!("{output}/gpui-ask-sidebar.png"))?;
     cx.update_window(handle, |_, window, cx| {
+        app.read(cx).thread_reply.focus_handle(cx).focus(window, cx);
+        window.render_frame(cx);
+        window.input("Keep this follow-up", cx);
+        window.press("cmd-shift-b", cx);
+        assert!(!app.read(cx).threads_visible);
+        assert!(app.read(cx).focus.is_focused(window));
+        window.press("cmd-shift-b", cx);
+        window.render_frame(cx);
+        assert!(app.read(cx).threads_visible);
+        assert_eq!(app.read(cx).active_thread.as_deref(), Some("ask-fixture"));
+        assert_eq!(
+            app.read(cx).thread_reply.read(cx).value(),
+            "Keep this follow-up"
+        );
+        app.update(cx, |app, cx| {
+            app.thread_reply
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        });
         window.click("ask-review", cx);
         assert!(
             app.read(cx).prompt.read(cx).value().is_empty(),

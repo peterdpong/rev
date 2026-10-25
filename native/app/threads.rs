@@ -176,6 +176,22 @@ impl Patch {
         );
     }
 
+    pub(super) fn toggle_threads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.review.is_none() {
+            return;
+        }
+        if self.modal.is_some() {
+            self.close_modal(window, cx);
+        }
+        if self.threads_visible {
+            self.hide_threads(window, cx);
+        } else {
+            self.hide_file_sheet(window, cx);
+            self.threads_visible = true;
+            cx.notify();
+        }
+    }
+
     pub(super) fn hide_threads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.threads_visible = false;
         if self
