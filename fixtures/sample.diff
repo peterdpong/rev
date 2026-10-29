@@ -1,0 +1,15 @@
+diff --git a/src/retry.ts b/src/retry.ts
+index 1234567..2345678 100644
+--- a/src/retry.ts
++++ b/src/retry.ts
+@@ -1,6 +1,8 @@
+ export async function retry(run: () => Promise<void>) {
+-  for (let attempt = 0; attempt < 3; attempt++) {
++  const limit = 3;
++  for (let attempt = 0; attempt < limit; attempt++) {
+     try { return await run(); }
+-    catch { /* retry */ }
++    catch (error) { if (attempt === limit - 1) throw error; }
++    await new Promise(resolve => setTimeout(resolve, 100));
+   }
+ }

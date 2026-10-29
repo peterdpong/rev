@@ -1,5 +1,5 @@
 target/
-/docs/
+docs/
 node_modules/
 dist/
 .test-artifacts/

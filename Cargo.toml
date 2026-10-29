@@ -11,6 +11,7 @@ path = "native/main.rs"
 
 [dependencies]
 gpui-kit = { version = "=0.8.0", features = ["tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-javascript", "tree-sitter-python", "tree-sitter-markdown"] }
+anyhow = "1"
 
 [profile.dev]
 debug = 0
