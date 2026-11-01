@@ -3,6 +3,6 @@ docs/
 node_modules/
 dist/
 .test-artifacts/
-.rev-demo/
+.rev-sample/
 .DS_Store
 *.log
