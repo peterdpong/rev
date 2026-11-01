@@ -1,0 +1,25 @@
+{
+  "name": "rev-review",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A native GPUI diff review desk for humans and local agents.",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "sample": "node --import tsx scripts/sample.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "prettier": "3.9.10",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
