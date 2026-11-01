@@ -6,12 +6,12 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-gpui_kit::actions!(patch, [Quit]);
+gpui_kit::actions!(rev, [Quit]);
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         titlebar: Some(TitlebarOptions {
-            title: Some("Patch".into()),
+            title: Some("Rev".into()),
             appears_transparent: true,
             traffic_light_position: Some(point(px(16.), px(15.))),
         }),
@@ -26,7 +26,7 @@ pub fn window_options(cx: &App) -> WindowOptions {
     }
 }
 
-pub struct Patch {
+pub struct Rev {
     focus: FocusHandle,
     pub(crate) diff: Entity<DiffState>,
     split: bool,
@@ -34,7 +34,7 @@ pub struct Patch {
     title: SharedString,
     pub(crate) error: Option<String>,
 }
-impl Patch {
+impl Rev {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::from_patch(
             include_str!("../fixtures/sample.diff"),
@@ -65,10 +65,10 @@ impl Patch {
         }
     }
 }
-impl Render for Patch {
+impl Render for Rev {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("patch")
+            .id("rev")
             .size_full()
             .flex()
             .flex_col()
@@ -77,7 +77,7 @@ impl Render for Patch {
             .text_size(px(13.))
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
-            .key_context("Patch")
+            .key_context("Rev")
             .child(
                 TitleBar::new()
                     .h(px(44.))
@@ -85,7 +85,7 @@ impl Render for Patch {
                     .bg(rgb(0x131519))
                     .border_b_1()
                     .border_color(rgb(0x2b2e34))
-                    .child("Patch"),
+                    .child("Rev"),
             )
             .child(
                 div()
