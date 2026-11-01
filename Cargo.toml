@@ -1,12 +1,12 @@
 [package]
-name = "patch-desktop"
+name = "rev-desktop"
 version = "0.1.0"
 edition = "2024"
 publish = false
-default-run = "patch"
+default-run = "rev"
 
 [[bin]]
-name = "patch"
+name = "rev"
 path = "native/main.rs"
 
 [dependencies]

@@ -16,9 +16,9 @@ fn main() {
             })
             .detach();
             gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
-                cx.new(|cx| app::Patch::new(window, cx))
+                cx.new(|cx| app::Rev::new(window, cx))
             })
-            .expect("open Patch window");
+            .expect("open Rev window");
             cx.activate(true);
         });
 }
