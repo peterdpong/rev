@@ -412,8 +412,8 @@ impl Diff {
     }
 
     /// Shows an add button beside the hovered line and at the end of the
-    /// selected lines. The handler receives the selected range when the line
-    /// is part of it, or that line alone.
+    /// selected lines. The handler receives the selected range when any line
+    /// drag is released.
     pub fn on_add_annotation<F>(mut self, handler: F) -> Self
     where
         F: Fn(&DiffLineRange, &mut Window, &mut App) + 'static,
@@ -508,6 +508,7 @@ fn render_diff(
     } else {
         content_width
     };
+    let on_add_annotation = props.on_add_annotation.clone();
     let code = Rc::new(CodePresentation {
         files: state.files().to_vec(),
         presentations: state.presentations().to_vec(),
@@ -534,8 +535,8 @@ fn render_diff(
         on_line_click: props.on_line_click,
         on_line_hover: props.on_line_hover,
         selection: state.selection().clone(),
-        selected_lines: state.selected_lines(),
         selected: state.selected_span(),
+        drag_anchor: state.drag_anchor().cloned(),
         geometry: state.geometry().clone(),
         state: cx.entity(),
     });
@@ -592,14 +593,20 @@ fn render_diff(
                     this.child(Scrollbar::horizontal(&horizontal))
                 })
         })
+        // Track line drags anywhere over the diff, not just the gutter.
+        .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+            if event.pressed_button == Some(MouseButton::Left) {
+                this.drag_line_selection_at(event.position, cx);
+            }
+        }))
         // A line-number drag may finish anywhere, including outside the body.
         .on_mouse_up(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| this.end_line_selection(cx)),
+            release_line_selection(cx.entity(), on_add_annotation.clone()),
         )
         .on_mouse_up_out(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| this.end_line_selection(cx)),
+            release_line_selection(cx.entity(), on_add_annotation),
         )
         .on_action(cx.listener(|this, _: &ScrollUp, window, cx| {
             if !body_focused(this, window, cx) {
@@ -772,8 +779,8 @@ struct CodePresentation {
     on_line_click: Option<ClickHandler>,
     on_line_hover: Option<HoverHandler>,
     selection: gpui_kit::base::TextSelectionHandle,
-    selected_lines: Option<DiffLineRange>,
     selected: Option<SelectedLines>,
+    drag_anchor: Option<DiffLinePosition>,
     geometry: Rc<std::cell::RefCell<selection::SelectionGeometry>>,
     state: Entity<DiffState>,
 }
@@ -1344,6 +1351,25 @@ fn render_gutter(
         .into_any_element()
 }
 
+/// Ends a line drag at the release point and reports its range to
+/// `on_add_annotation`.
+fn release_line_selection(
+    state: Entity<DiffState>,
+    on_add_annotation: Option<RangeHandler>,
+) -> impl Fn(&gpui::MouseUpEvent, &mut Window, &mut App) {
+    move |event, window, cx| {
+        let range = state.update(cx, |state, cx| {
+            state.drag_line_selection_at(event.position, cx);
+            state.end_line_selection(cx)
+        });
+
+        // Called after the update, since hosts may update this state.
+        if let Some((range, handler)) = range.zip(on_add_annotation.as_ref()) {
+            handler(&range, window, cx);
+        }
+    }
+}
+
 fn side_label(side: DiffSide) -> std::borrow::Cow<'static, str> {
     if side == DiffSide::Original {
         t!("Diff.Original")
@@ -1508,6 +1534,42 @@ fn line_highlights(
     highlights
 }
 
+/// A bar through the selected lines' add buttons, from first to last.
+fn annotation_bar(
+    file: usize,
+    side: DiffSide,
+    ix: usize,
+    left: Pixels,
+    code: &CodePresentation,
+    cx: &App,
+) -> Option<AnyElement> {
+    let selected = code
+        .selected
+        .as_ref()
+        .filter(|selected| selected.contains(&code.files, file, side, ix))?;
+    let first = selected.is_first(&code.files, file, side, ix);
+    let last = selected.is_last(&code.files, file, side, ix);
+    if first && last {
+        return None;
+    }
+    let middle = code.row_height / 2.;
+    Some(
+        div()
+            .id(("annotation-bar", ix))
+            .test_support()
+            .absolute()
+            .left(left + middle - px(1.5))
+            .w(px(3.))
+            .bg(cx.theme().selection.alpha(1.))
+            .map(|this| match (first, last) {
+                (true, _) => this.top(middle).bottom_0(),
+                (_, true) => this.top_0().h(middle),
+                _ => this.top_0().bottom_0(),
+            })
+            .into_any_element(),
+    )
+}
+
 /// The add-annotation button, shown on hover and at the end of the selection.
 fn add_annotation_button(
     file: usize,
@@ -1517,24 +1579,13 @@ fn add_annotation_button(
     code: &CodePresentation,
     cx: &App,
 ) -> Option<AnyElement> {
-    let handler = code.on_add_annotation.clone()?;
+    code.on_add_annotation.as_ref()?;
     let position = code.position(file, side, ix);
-    let range = code
-        .selected_lines
-        .clone()
-        .filter(|_| code.is_selected(file, side, ix))
-        .unwrap_or_else(|| {
-            DiffLineRange::new(
-                position.path().clone(),
-                side,
-                position.line(),
-                position.line(),
-            )
-        });
     let at_selection_end = code
         .selected
         .as_ref()
         .is_some_and(|selected| selected.is_last(&code.files, file, side, ix));
+    let state = code.state.clone();
     Some(
         div()
             .id(("add-annotation", ix))
@@ -1547,17 +1598,27 @@ fn add_annotation_button(
             .items_center()
             .justify_center()
             .rounded(cx.theme().radius)
-            .bg(cx.theme().primary)
-            .text_color(cx.theme().primary_foreground)
-            .when(!at_selection_end, |this| {
-                this.opacity(0.)
-                    .group_hover("diff-line", |this| this.opacity(1.))
+            .bg(cx.theme().selection.alpha(1.))
+            .text_color(gpui::white())
+            .map(|this| match &code.drag_anchor {
+                // During a drag, show only the starting button.
+                Some(anchor) => this.when(*anchor != position, |this| this.opacity(0.)),
+                None => this.when(!at_selection_end, |this| {
+                    this.opacity(0.)
+                        .group_hover("diff-line", |this| this.opacity(1.))
+                }),
             })
             .role(gpui::accesskit::Role::Button)
             .aria_label(t!("Diff.AddAnnotation", line = position.line()).to_string())
             .child(Icon::new(IconName::Plus).xsmall())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| handler(&range, window, cx))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                state.update(cx, |state, cx| {
+                    state.begin_line_selection(position.clone(), false, window, cx);
+                });
+                cx.stop_propagation();
+            })
+            // No-op: release reports the range. Keeps the accessibility Click action.
+            .on_click(|_, _, _| {})
             .into_any_element(),
     )
 }
@@ -1679,8 +1740,9 @@ fn code_line(
         code.hover_highlight,
         DiffHoverHighlight::Line | DiffHoverHighlight::Both
     );
-    let add_button =
-        add_annotation_button(file, side, ix, gutters_width + code.rem / 2., &code, cx);
+    let add_left = gutters_width + code.rem / 2.;
+    let bar = annotation_bar(file, side, ix, add_left, &code, cx);
+    let add_button = add_annotation_button(file, side, ix, add_left, &code, cx);
     h_flex()
         .id("line-row")
         .group("diff-line")
@@ -1765,6 +1827,7 @@ fn code_line(
                 })
                 .child(text),
         )
+        .children(bar)
         .children(add_button)
         .into_any_element()
 }
@@ -1866,6 +1929,8 @@ fn has_line_ending_change(
     })
 }
 
+#[cfg(test)]
+mod annotation_tests;
 #[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
