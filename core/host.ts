@@ -1,35 +1,176 @@
-import { inspect, filePatch, reviewPatches } from './git';
-import type { FilePatch, Review, ReviewPatch, ReviewRequest } from './git';
-
-export type ReviewResponse = {
-  review: Review;
-  patches: ReviewPatch[];
-};
+import path from 'node:path';
+import { homedir } from 'node:os';
+import {
+  inspect,
+  filePatch,
+  reviewPatches,
+  fetchRepo,
+  importPR,
+  listCommits,
+  listBranches,
+} from './git';
+import { readState, mutateState } from './store';
+import { createDemo } from './demo';
+import {
+  refreshWorkspace,
+  rememberReview,
+  updateWorkspace,
+  applyWorkspaceAction,
+} from './workspace';
+import type { ReviewRequest } from './types';
 
 export class HostService {
+  private sample: string | undefined;
   private closed = false;
-  
-  async call(method: string, params: any): Promise<ReviewResponse | FilePatch> {
+  readonly dataDir: string;
+  constructor(
+    readonly initial?: ReviewRequest,
+    dataDir?: string,
+  ) {
+    this.dataDir =
+      dataDir ||
+      process.env.REV_DATA_DIR ||
+      process.env.REVUE_DATA_DIR ||
+      path.join(homedir(), '.revue');
+  }
+  async call(method: string, p: any = {}): Promise<unknown> {
     if (this.closed) {
       throw new Error('The local service is closing.');
     }
-
-    if (!params || typeof params.repo !== 'string') {
-      throw new Error('Pass a repository folder.');
+    const dataDir = this.dataDir;
+    const options = { initial: this.initial };
+    let result: unknown;
+    switch (method) {
+      case 'init':
+        result = {
+          initial: options.initial,
+          workspace: await refreshWorkspace(dataDir),
+        };
+        break;
+      case 'workspace':
+        result = await refreshWorkspace(dataDir);
+        break;
+      case 'branches':
+        result = await listBranches(p.repo);
+        break;
+      case 'workspaceAction':
+        result = await updateWorkspace(dataDir, (workspace) =>
+          applyWorkspaceAction(workspace, p),
+        );
+        break;
+      case 'commits':
+        result = await listCommits(p.review, p.offset);
+        break;
+      case 'review': {
+        if (p.current && p.head && p.head !== 'HEAD') {
+          throw new Error('The Current branch tab must follow HEAD.');
+        }
+        const review = await inspect(p);
+        const workspace = p.remember
+          ? await updateWorkspace(dataDir, (workspace) => {
+              rememberReview(workspace, review, p.current ? p : undefined);
+            })
+          : undefined;
+        // The desktop validates viewed markers against patches as they load.
+        // Revalidating every marker here would eagerly read deferred diffs.
+        result = {
+          review,
+          ...(p.remember === undefined
+            ? { patches: await reviewPatches(review) }
+            : {}),
+          state: await readState(review, p.preview !== true),
+          workspace,
+        };
+        break;
+      }
+      case 'patch': {
+        const review = await inspect(p.review || p);
+        if (
+          (p.headSha !== undefined || p.mergeBase !== undefined) &&
+          (p.headSha !== review.headSha || p.mergeBase !== review.mergeBase)
+        ) {
+          throw new Error(
+            'The comparison changed while loading. Refresh the review.',
+          );
+        }
+        result = await filePatch(review, p.path);
+        break;
+      }
+      case 'patches': {
+        const review = await inspect(p.review || p);
+        if (p.headSha !== review.headSha || p.mergeBase !== review.mergeBase) {
+          throw new Error(
+            'The comparison changed while loading. Refresh the review.',
+          );
+        }
+        result = await reviewPatches(review);
+        break;
+      }
+      case 'viewed': {
+        const review = await inspect(p.review || p);
+        const patch = await filePatch(review, p.path);
+        if (p.digest && patch.digest !== p.digest) {
+          throw new Error(
+            'This file changed while you were reviewing it. Refresh before marking it viewed.',
+          );
+        }
+        result = await mutateState(
+          review,
+          (s) => {
+            if (p.viewed) {
+              s.viewed[p.path] = patch.digest;
+            } else {
+              delete s.viewed[p.path];
+            }
+          },
+          p.preview !== true,
+        );
+        break;
+      }
+      case 'fetch': {
+        if (p.review) {
+          const review = await inspect(p.review || p);
+          const imported = /^refs\/revue\/([^/]+\/[^/]+)\/(\d+)\/head$/.exec(
+            review.head,
+          );
+          const url =
+            review.pullRequest?.url ||
+            (imported
+              ? `https://github.com/${imported[1]}/pull/${imported[2]}`
+              : undefined);
+          if (url) {
+            const automaticBase = review.head.replace(/\/head$/, '/base');
+            const base =
+              p.review.base && p.review.base !== automaticBase
+                ? p.review.base
+                : undefined;
+            result = {
+              request: {
+                ...(await importPR(review.repo, url)),
+                mode: p.review.mode || 'branch',
+                commitRange: p.review.commitRange,
+              },
+            };
+            break;
+          }
+        }
+        await fetchRepo(p.repo);
+        result = true;
+        break;
+      }
+      case 'pr':
+        result = await importPR(p.repo, p.value);
+        break;
+      case 'demo':
+        this.sample ||= await createDemo();
+        result = { repo: this.sample, base: 'main', head: 'HEAD' };
+        break;
+      default:
+        throw new Error('Unknown action.');
     }
 
-    if (!['review', 'patch'].includes(method)) {
-      throw new Error('Unknown action.');
-    }
-
-    const review = await inspect(params as ReviewRequest);
-    if (method === 'patch') {
-      return filePatch(review, params.path);
-    }
-    
-    return { review, patches: await reviewPatches(review) };
+    return result;
   }
-
   close() {
     this.closed = true;
   }
