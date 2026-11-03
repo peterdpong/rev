@@ -900,6 +900,8 @@ impl Rev {
 
             ModalKind::Commits => "Commits",
             ModalKind::Details => "Review details",
+
+            _ => return div().into_any_element(),
         };
         let mut body = column().gap_3();
         let mut footer = row().justify_end().gap_2();
@@ -1036,6 +1038,8 @@ impl Rev {
             ModalKind::Commits => 480.,
 
             ModalKind::Details => 560.,
+
+            _ => return div().into_any_element(),
         })
         .min((window.viewport_size().width - px(16.)).max(px(120.)));
         let serial = modal.serial;

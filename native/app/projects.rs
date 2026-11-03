@@ -72,6 +72,7 @@ impl Rev {
                     if this.modal.is_none()
                         && !this.selecting
                         && !this.submitting
+                        && this.thread_reply.read(cx).value().trim().is_empty()
                         && let Some(tab) = this
                             .workspace
                             .active()

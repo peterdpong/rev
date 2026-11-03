@@ -6,7 +6,8 @@ use gpui_kit::component::{
     Disableable, Selectable, Sizable,
     button::{Button, ButtonVariants},
     diff::*,
-    input::{Input, InputState},
+    input::{Input, InputState, Textarea, TextareaState},
+    tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -28,6 +29,7 @@ mod panes;
 mod projects;
 mod review;
 
+mod threads;
 mod view;
 use commits::CommitPicker;
 gpui_kit::actions!(
@@ -35,14 +37,20 @@ gpui_kit::actions!(
     [
         Quit,
         OpenProject,
+        AskReview,
         Refresh,
         CloseModal,
         Submit,
+        PromptAsk,
+        PromptChange,
+        TogglePromptMode,
         ToggleSidebar,
+        ToggleThreads,
         NextTab,
         PreviousTab,
         GoBack,
         GoForward,
+        ReplyThread,
         NextFile,
         PreviousFile,
         MarkViewed,
@@ -79,6 +87,10 @@ pub fn bind_shortcuts(cx: &mut App) {
 enum ModalKind {
     Open,
     Review,
+    Ask,
+    Change,
+    Changes,
+    Run,
     Commits,
     Details,
 }
@@ -86,6 +98,9 @@ enum ModalKind {
 struct Modal {
     kind: ModalKind,
     request: ReviewRequest,
+    tab: String,
+    selection: Option<Selection>,
+    digest: String,
     serial: u64,
     anchor: Option<SharedString>,
     anchor_bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -99,6 +114,16 @@ pub struct Rev {
     sidebar_focus: FocusHandle,
     review: Option<Review>,
     state: ReviewState,
+    threads_visible: bool,
+    thread_filter: Option<String>,
+    changes_only: bool,
+    show_archived: bool,
+    active_thread: Option<String>,
+    thread_reply: Entity<TextareaState>,
+    thread_scroll: ListState,
+    thread_items: Vec<(String, bool)>,
+    thread_hinted_width: Option<Pixels>,
+    thread_scroll_target: Option<String>,
     file: Option<String>,
     file_sheet: file_sheet::FileSheet,
     patch: FilePatch,
@@ -111,15 +136,25 @@ pub struct Rev {
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
+    prompt_mode: ModalKind,
     commit_picker: CommitPicker,
     branch_options: Vec<String>,
     branches_loading: bool,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
+    prompt: Entity<TextareaState>,
     focus: FocusHandle,
     modal_focus: FocusHandle,
     modal: Option<Modal>,
     modal_serial: u64,
+    drafts: HashMap<String, String>,
+    preview: Option<String>,
+    providers: Vec<Provider>,
+    provider: String,
+    new_session: bool,
+    runs: HashMap<String, AgentRun>,
+    run_requests: HashMap<String, ReviewRequest>,
+    comment_ids: HashSet<String>,
     loading: bool,
     patch_loading: bool,
     submitting: bool,
@@ -160,7 +195,11 @@ impl Rev {
                 })
             })
             .collect();
-
+        let prompt = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(5)
+                .placeholder("Write a question or change request…")
+        });
         let diff = cx.new(|cx| DiffState::new([], cx));
         let owner = cx.entity();
         let diff_pane =
@@ -168,6 +207,11 @@ impl Rev {
         let files_pane =
             cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Files, &diff, cx));
 
+        let thread_reply = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(2)
+                .placeholder("Send a follow-up…")
+        });
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
             cx.observe(&fields[2], |_, _, cx| cx.notify()),
@@ -192,7 +236,7 @@ impl Rev {
                 } else if this.selecting {
                     this.selecting = false;
                     this.selection = None;
-
+                    this.close_selection_prompt(window, cx);
                     cx.notify();
                 }
             }),
@@ -224,6 +268,16 @@ impl Rev {
             sidebar_focus: cx.focus_handle(),
             review: None,
             state: ReviewState::default(),
+            threads_visible: false,
+            thread_filter: None,
+            changes_only: false,
+            show_archived: false,
+            active_thread: None,
+            thread_reply,
+            thread_scroll: ListState::new(0, ListAlignment::Top, px(0.)),
+            thread_items: Vec::new(),
+            thread_hinted_width: None,
+            thread_scroll_target: None,
             file: None,
             file_sheet: file_sheet::FileSheet::default(),
             patch: FilePatch::default(),
@@ -236,15 +290,25 @@ impl Rev {
             selection: None,
             selecting: false,
             selection_menu: Point::default(),
+            prompt_mode: ModalKind::Ask,
             commit_picker: CommitPicker::default(),
             branch_options: vec![],
             branches_loading: false,
             filter,
             fields,
+            prompt,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             modal: None,
             modal_serial: 0,
+            drafts: HashMap::new(),
+            preview: None,
+            providers: vec![],
+            provider: "codex".into(),
+            new_session: false,
+            runs: HashMap::new(),
+            run_requests: HashMap::new(),
+            comment_ids: HashSet::new(),
             loading: false,
             patch_loading: false,
             submitting: false,
@@ -268,12 +332,21 @@ impl Rev {
                     let Some(value) = this.result(result) else {
                         return;
                     };
-                    match decode(value["workspace"].clone()) {
-                        Ok(workspace) => this.workspace = workspace,
-                        Err(error) => {
-                            this.error = Some(error);
+                    match (
+                        decode(value["workspace"].clone()),
+                        decode(value["providers"].clone()),
+                    ) {
+                        (Ok(workspace), Ok(providers)) => {
+                            this.workspace = workspace;
+                            this.providers = providers;
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            this.error = Some(e);
                             return;
                         }
+                    }
+                    if let Some(provider) = this.providers.iter().find(|p| p.available) {
+                        this.provider = provider.id.clone();
                     }
                     this.poll_workspace(window, cx);
                     let tab = this.workspace.active().cloned();
@@ -335,7 +408,7 @@ impl Rev {
         }
         let previous = self.navigation_location(cx);
         let travel = self.navigation.travel.take();
-
+        self.close_selection_prompt(window, cx);
         self.hide_file_sheet(window, cx);
         self.loading = true;
         self.patch_loading = false;
@@ -372,7 +445,7 @@ impl Rev {
                 });
                 match parsed {
                     Ok((mut review, state, workspace)) => {
-                        // Navigation follows HEAD; the loaded comparison remains pinned to its branch.
+                        // Navigation follows HEAD; comments and agent requests keep the reviewed branch.
                         review.pin_current_request();
                         if this.modal_serial == modal_serial
                             && this.modal.as_ref().is_some_and(|m| {
@@ -385,7 +458,24 @@ impl Rev {
                             .or_else(|| workspace.active().and_then(|t| t.file.clone()))
                             .filter(|file| review.files.iter().any(|f| &f.path == file))
                             .or_else(|| review.files.first().map(|f| f.path.clone()));
-
+                        if this
+                            .review
+                            .as_ref()
+                            .is_none_or(|old| old.scope_key != review.scope_key)
+                        {
+                            this.threads_visible =
+                                !state.threads.is_empty() || !state.comments.is_empty();
+                            this.changes_only = false;
+                            this.thread_filter = None;
+                            if let Some(id) = this.active_thread.take() {
+                                this.drafts.insert(
+                                    format!("thread-{id}"),
+                                    this.thread_reply.read(cx).value().to_string(),
+                                );
+                            }
+                            this.thread_reply
+                                .update(cx, |input, cx| input.set_value("", window, cx));
+                        }
                         this.workspace = workspace;
                         this.navigation.loaded(
                             previous,
@@ -516,10 +606,30 @@ impl Rev {
         }
     }
 
+    fn draft_key(modal: &Modal) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            modal.tab,
+            modal.kind as u8,
+            serde_json::to_string(&modal.request).unwrap_or_default(),
+            modal
+                .selection
+                .as_ref()
+                .map(Selection::label)
+                .unwrap_or_default()
+        )
+    }
     fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.modal = None;
         self.hide_file_sheet(window, cx);
-
+        if let Some(modal) = self.modal.take()
+            && matches!(modal.kind, ModalKind::Ask | ModalKind::Change)
+        {
+            self.drafts.insert(
+                Self::draft_key(&modal),
+                self.prompt.read(cx).value().to_string(),
+            );
+        }
+        self.preview = None;
         self.modal_serial += 1;
         self.selection = None;
         self.selecting = false;
@@ -542,6 +652,7 @@ impl Rev {
         };
         if modal.serial != serial
             || (modal.anchor.is_some() && modal.anchor_bounds.get().contains(&event.position))
+            || (Self::is_selection_prompt(modal) && event.modifiers.shift)
         {
             return;
         }
@@ -555,6 +666,48 @@ impl Rev {
         _cx: &mut Context<Self>,
     ) {
         self.selection = Selection::from_range(range);
+    }
+
+    fn is_selection_prompt(modal: &Modal) -> bool {
+        matches!(modal.kind, ModalKind::Ask | ModalKind::Change)
+            && modal.selection.as_ref().is_some_and(|s| s.start > 0)
+    }
+
+    fn close_selection_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.as_ref().is_some_and(Self::is_selection_prompt) {
+            self.close_modal(window, cx);
+        }
+    }
+
+    fn switch_prompt_mode(&mut self, kind: ModalKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(modal) = &mut self.modal else {
+            return;
+        };
+        if self.submitting
+            || self.selecting
+            || !matches!(modal.kind, ModalKind::Ask | ModalKind::Change)
+        {
+            return;
+        }
+        modal.kind = kind;
+        self.prompt_mode = kind;
+        self.error = None;
+        self.preview = None;
+        self.prompt.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    fn toggle_prompt_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Ask)
+        {
+            ModalKind::Change
+        } else {
+            ModalKind::Ask
+        };
+        self.switch_prompt_mode(kind, window, cx);
     }
 
     fn open_modal(
@@ -579,7 +732,7 @@ impl Rev {
         }
         self.close_modal(window, cx);
         self.error = None;
-
+        self.new_session = false;
         let mut request = self
             .review
             .as_ref()
@@ -594,15 +747,22 @@ impl Rev {
                 ..Default::default()
             };
         }
-
+        let tab = self
+            .review
+            .as_ref()
+            .map(|r| r.scope_key.clone())
+            .unwrap_or_default();
         let modal = Modal {
             kind,
             request: request.clone(),
+            tab,
             anchor: selection
                 .as_ref()
                 .is_none_or(|s| s.start == 0)
                 .then(|| SharedString::from(anchor.to_owned())),
             anchor_bounds: Default::default(),
+            selection,
+            digest: self.patch.digest.clone(),
             serial: self.modal_serial,
         };
         let values: Vec<String> = match kind {
@@ -612,10 +772,25 @@ impl Rev {
         for (input, value) in self.fields.iter().zip(values) {
             input.update(cx, |input, cx| input.set_value(value, window, cx));
         }
-
+        let draft = self
+            .drafts
+            .get(&Self::draft_key(&modal))
+            .cloned()
+            .unwrap_or_default();
+        self.prompt
+            .update(cx, |input, cx| input.set_value(draft, window, cx));
+        self.comment_ids = self
+            .state
+            .comments
+            .iter()
+            .filter(|c| c.status == "queued")
+            .map(|c| c.id.clone())
+            .collect();
         self.modal = Some(modal);
         self.modal_focus.focus(window, cx);
-        if kind == ModalKind::Open {
+        if matches!(kind, ModalKind::Ask | ModalKind::Change) {
+            self.prompt.update(cx, |input, cx| input.focus(window, cx));
+        } else if kind == ModalKind::Open {
             self.fields[0].update(cx, |input, cx| input.focus(window, cx));
         } else if kind == ModalKind::Review {
             self.fields[2].update(cx, |input, cx| input.focus(window, cx));
@@ -702,7 +877,7 @@ impl Rev {
             .iter()
             .map(|input| input.read(cx).value().trim().to_string())
             .collect();
-
+        let body = self.prompt.read(cx).value().trim().to_string();
         self.error = None;
         match modal.kind {
             ModalKind::Open => {
@@ -760,10 +935,229 @@ impl Rev {
                     self.load_review(request, None, window, cx);
                 }
             }
-
+            ModalKind::Change => {
+                if body.is_empty() {
+                    self.error = Some("Write a change request.".into());
+                    return;
+                }
+                self.submitting = true;
+                self.rpc("comment", json!({ "review": modal.request, "selection": modal.selection, "body": body, "digest": modal.digest }), window, cx, move |this, result, window, cx| {
+                    this.submitting = false;
+                    if let Some(value) = this.result(result) {
+                        match decode::<ReviewState>(value) {
+                            Ok(state) if this.review.as_ref().map(|r| &r.scope_key) == Some(&modal.tab) => {
+                                let id = state.comments.last().map(|comment| comment.id.clone());
+                                this.state = state;
+                                this.threads_visible = true;
+                                this.thread_filter = None;
+                                this.thread_scroll_target = id;
+                            },
+                            Ok(_) => {}, Err(e) => { this.error = Some(e); return }
+                        }
+                        this.drafts.remove(&Self::draft_key(&modal));
+                        if this.modal_serial == modal.serial {
+                            this.prompt.update(cx, |input, cx| input.set_value("", window, cx));
+                            this.close_modal(window, cx);
+                            this.selection = None;
+                            this.diff.update(cx, |diff, cx| diff.set_selected_lines(None, cx));
+                        }
+                    }
+                });
+            }
+            ModalKind::Ask | ModalKind::Changes => {
+                if modal.kind == ModalKind::Ask && body.is_empty() {
+                    self.error = Some("Write a question.".into());
+                    return;
+                }
+                if modal.kind == ModalKind::Changes && self.comment_ids.is_empty() {
+                    self.error = Some("Select feedback to send.".into());
+                    return;
+                }
+                if !self
+                    .providers
+                    .iter()
+                    .any(|p| p.id == self.provider && p.available)
+                {
+                    self.error = Some(
+                        "Install and sign in to the selected agent CLI, then restart Rev.".into(),
+                    );
+                    return;
+                }
+                self.submitting = true;
+                let params = self.agent_request(&modal, &body);
+                self.rpc(
+                    "run",
+                    params,
+                    window,
+                    cx,
+                    move |this, result, window, cx| {
+                        this.submitting = false;
+                        if let Some(value) = this.result(result) {
+                            match decode::<AgentRun>(value) {
+                                Ok(run) => {
+                                    if this.modal_serial == modal.serial {
+                                        this.close_modal(window, cx);
+                                        this.drafts.remove(&Self::draft_key(&modal));
+                                        this.prompt.update(cx, |input, cx| {
+                                            input.set_value("", window, cx)
+                                        });
+                                    }
+                                    this.track_thread_run(
+                                        modal.tab,
+                                        modal.request,
+                                        run,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                                Err(e) => this.error = Some(e),
+                            }
+                        }
+                    },
+                );
+            }
             ModalKind::Commits => self.apply_commit_selection(window, cx),
-            ModalKind::Details => {}
+            ModalKind::Run | ModalKind::Details => {}
         }
         cx.notify();
+    }
+
+    fn agent_request(&self, modal: &Modal, body: &str) -> Value {
+        let comment_ids: Vec<_> = if modal.kind == ModalKind::Changes {
+            self.comment_ids.iter().collect()
+        } else {
+            Vec::new()
+        };
+        json!({ "review": modal.request, "provider": self.provider, "mode": if modal.kind == ModalKind::Changes { "apply" } else { "ask" },
+            "question": body, "selection": modal.selection, "selectionDigest": modal.digest, "commentIds": comment_ids, "newSession": self.new_session })
+    }
+
+    fn preview_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(modal) = self.modal.clone() else {
+            return;
+        };
+        let params = self.agent_request(&modal, &self.prompt.read(cx).value());
+        self.submitting = true;
+        self.rpc("prompt", params, window, cx, move |this, result, _, _| {
+            this.submitting = false;
+            if this.modal_serial != modal.serial {
+                return;
+            }
+            if let Some(value) = this.result(result) {
+                this.preview = value["prompt"].as_str().map(str::to_string);
+            }
+        });
+    }
+
+    fn open_run(&mut self, scope: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_modal(ModalKind::Run, None, None, "agent-output", window, cx);
+        if let Some(modal) = &mut self.modal {
+            if let Some(request) = self.run_requests.get(&scope) {
+                modal.request = request.clone();
+            }
+            modal.tab = scope;
+        }
+    }
+
+    fn poll_run(&mut self, tab: String, id: String, window: &Window, cx: &mut Context<Self>) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let polled_id = id.clone();
+        let delay = cx.background_executor().timer(Duration::from_millis(500));
+        let task = cx.background_executor().spawn(async move {
+            delay.await;
+            backend.call("runStatus", json!({ "id": id }))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await.and_then(decode::<AgentRun>);
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(run) => {
+                        let running = run.is_active();
+                        let id = run.id.clone();
+                        this.remember_thread(&tab, &run, cx);
+                        this.runs.insert(id.clone(), run);
+                        if running {
+                            this.poll_run(tab, id, window, cx);
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(run) = this.runs.get_mut(&polled_id) {
+                            run.status = "failed".into();
+                            run.events.push(AgentEvent {
+                                kind: "error".into(),
+                                text: e,
+                            });
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn cancel_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(run) = self.modal.as_ref().and_then(|m| self.runs.get(&m.tab)) {
+            self.rpc(
+                "cancel",
+                json!({ "id": run.id }),
+                window,
+                cx,
+                |this, result, _, _| {
+                    this.result(result);
+                },
+            );
+        }
+    }
+
+    fn approve_run(
+        &mut self,
+        approval_id: String,
+        allow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(run) = self.modal.as_ref().and_then(|m| self.runs.get(&m.tab)) {
+            self.rpc(
+                "approve",
+                json!({ "id": run.id, "approvalId": approval_id, "allow": allow }),
+                window,
+                cx,
+                |this, result, _, _| {
+                    this.result(result);
+                },
+            );
+        }
+    }
+
+    fn delete_comment(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(modal) = self.modal.clone() else {
+            return;
+        };
+        self.submitting = true;
+        self.rpc(
+            "deleteComment",
+            json!({ "review": modal.request, "id": id }),
+            window,
+            cx,
+            move |this, result, _, _| {
+                this.submitting = false;
+                if let Some(value) = this.result(result)
+                    && this
+                        .review
+                        .as_ref()
+                        .is_some_and(|r| r.scope_key == modal.tab)
+                {
+                    match decode(value) {
+                        Ok(state) => this.state = state,
+                        Err(e) => this.error = Some(e),
+                    }
+                    this.comment_ids.remove(&id);
+                    this.preview = None;
+                }
+            },
+        );
     }
 }

@@ -1,6 +1,10 @@
 use super::*;
 
 pub(super) enum PendingFileNavigation {
+    Code {
+        selection: Selection,
+        digest: String,
+    },
     History {
         path: String,
         position: DiffScrollPosition,
@@ -10,6 +14,7 @@ pub(super) enum PendingFileNavigation {
 impl PendingFileNavigation {
     fn path(&self) -> &str {
         match self {
+            Self::Code { selection, .. } => &selection.path,
             Self::History { path, .. } => path,
         }
     }
@@ -252,6 +257,9 @@ impl Rev {
                         let pending = this.pending_file_navigation.take().unwrap();
                         if loaded {
                             match pending {
+                                PendingFileNavigation::Code { selection, digest } => {
+                                    this.select_code(selection, digest, cx)
+                                }
                                 PendingFileNavigation::History { position, .. } => {
                                     this.diff.update(cx, |diff, cx| {
                                         diff.restore_scroll_position(&position, cx)
@@ -291,7 +299,7 @@ impl Rev {
             .active_tab_id
             .clone()
             .unwrap_or_else(|| review.key.clone());
-
+        self.close_selection_prompt(window, cx);
         self.hide_file_sheet(window, cx);
         self.set_active_file(path.clone(), cx);
         self.pending_file_navigation = None;
