@@ -7,7 +7,7 @@ use gpui_kit::{
     component::{Icon, TitleBar},
 };
 
-const SIDEBAR_WIDTH: f32 = 225.;
+use super::motion::SIDEBAR_WIDTH;
 const PR_DESCRIPTION_GAP: f32 = 2.;
 
 #[derive(IntoElement)]
@@ -643,30 +643,17 @@ impl Render for Rev {
             list.sync_status(self.file.as_deref(), &self.state.viewed, self.loading, cx)
         });
 
-        let counts = self
-            .file
-            .as_deref()
-            .and_then(|path| self.file_list.read(cx).file_counts(path));
-
-        self.diff.update(cx, |diff, cx| {
-            diff.sync_status(
-                DiffViewStatus {
-                    path: self.file.clone(),
-                    counts,
-                    viewed: self
-                        .file
-                        .as_ref()
-                        .is_some_and(|path| self.state.viewed.contains_key(path)),
-                    viewed_disabled: self.loading
-                        || self.patch_loading
-                        || self.submitting
-                        || self.patch.digest.is_empty(),
-                    loading: self.loading || self.patch_loading,
-                    notice: self.notice.clone(),
-                },
-                cx,
-            )
-        });
+        let files = self.review.iter().flat_map(|review| &review.files).map(|file| {
+            let patch = self.patches.get(&file.path);
+            (file.path.clone(), DiffFileStatus {
+                counts: (file.added, file.removed),
+                viewed: patch.is_some_and(|patch| self.state.viewed.get(&file.path) == Some(&patch.digest)),
+                disabled: self.loading || self.patch_loading || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
+            })
+        }).collect();
+        self.diff.update(cx, |diff, cx| diff.sync_status(DiffViewStatus {
+            path: self.file.clone(), loading: self.loading || self.patch_loading, files,
+        }, cx));
 
         let content =
             if self.review.is_some() {
@@ -848,6 +835,7 @@ mod tests {
             state: ReviewState::default(),
             file: None,
             patch: FilePatch::default(),
+            patches: Default::default(),
             diff,
             file_list,
             commit_picker: Default::default(),
