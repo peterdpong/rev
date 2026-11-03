@@ -32,6 +32,7 @@ gpui_kit::actions!(
         Refresh,
         CloseModal,
         Submit,
+        ToggleSidebar,
         NextFile,
         PreviousFile,
         MarkViewed
@@ -43,6 +44,7 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+        KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
@@ -94,6 +96,8 @@ pub struct Rev {
     backend: Option<Backend>,
     workspace: WorkspaceState,
     data_dir: PathBuf,
+    sidebar_collapsed: bool,
+    sidebar_focus: FocusHandle,
     review: Option<Review>,
     review_snapshot_id: Option<String>,
     state: ReviewState,
@@ -276,6 +280,8 @@ impl Rev {
             backend,
             workspace,
             data_dir,
+            sidebar_collapsed: false,
+            sidebar_focus: cx.focus_handle(),
             review: None,
             review_snapshot_id: None,
             state: ReviewState::default(),
@@ -563,6 +569,14 @@ impl Rev {
                 }
             },
         );
+        cx.notify();
+    }
+
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        if self.sidebar_collapsed && self.sidebar_focus.contains_focused(window, cx) {
+            self.focus.focus(window, cx);
+        }
         cx.notify();
     }
 
