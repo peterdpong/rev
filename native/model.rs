@@ -58,6 +58,35 @@ pub struct Review {
     pub commit_count: usize,
     #[serde(rename = "scopeKey")]
     pub scope_key: String,
+    #[serde(rename = "headSha", default)]
+    pub head_sha: String,
+    #[serde(rename = "mergeBase", default)]
+    pub merge_base: String,
+    #[serde(rename = "headCommit", default)]
+    pub head_commit: Option<CommitDetails>,
+    #[serde(rename = "pullRequest", default)]
+    pub pull_request: Option<PullRequest>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct CommitDetails {
+    pub sha: String,
+    pub subject: String,
+    pub body: String,
+    pub author: String,
+    pub date: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    pub number: usize,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    pub state: String,
+    pub is_draft: bool,
+    pub head_ref_name: String,
+    pub base_ref_name: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Selection {
