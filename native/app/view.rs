@@ -972,20 +972,19 @@ impl Render for Rev {
         // Sample once so the titlebar, sidebar and review controls move together.
         let sidebar = motion::reveal("sidebar-reveal", !self.sidebar_collapsed, window, cx);
         let content = if self.review.is_some() {
-            let body_progress = motion::enter(("review-body-enter", 0_usize), window, cx);
-            let body = { self.diff_view(window, cx) };
+            let body = row()
+                .gap_0()
+                .items_start()
+                .flex_1()
+                .min_h_0()
+                .child(self.diff_view(window, cx))
+                .into_any_element();
             column()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .child(self.toolbar(sidebar, window, cx))
-                .child(
-                    column()
-                        .flex_1()
-                        .min_h_0()
-                        .opacity(body_progress)
-                        .child(body),
-                )
+                .child(column().flex_1().min_h_0().child(body))
                 .into_any_element()
         } else {
             column()
@@ -1053,6 +1052,12 @@ impl Render for Rev {
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &NextTab, window, cx| this.navigate_tab(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousTab, window, cx| this.navigate_tab(-1, window, cx)),
             )
             .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
             .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))

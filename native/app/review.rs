@@ -266,6 +266,7 @@ impl Rev {
             .flex_shrink_0()
             .child(
                 div()
+                    .text_size(px(12.))
                     .text_color(rgb(MUTED))
                     .child(format!("{} files", review.files.len())),
             )

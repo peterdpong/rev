@@ -550,7 +550,7 @@ impl DiffFile {
 
     /// Copies patch-provided lines. Unavailable context is omitted, without
     /// inventing source lines.
-    pub(crate) fn text_for_lines(&self, side: DiffSide, start: usize, end: usize) -> String {
+    pub fn text_for_lines(&self, side: DiffSide, start: usize, end: usize) -> String {
         let lines = self.lines(side);
         let start_ix = lines.partition_point(|line| line.line_number < start);
         let end_ix = lines.partition_point(|line| line.line_number <= end);
