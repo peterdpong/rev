@@ -18,6 +18,7 @@ mod commits;
 mod continuous;
 mod file_sheet;
 mod motion;
+mod projects;
 mod review;
 use commits::CommitPicker;
 mod controls;
@@ -39,6 +40,8 @@ gpui_kit::actions!(
         CloseModal,
         Submit,
         ToggleSidebar,
+        NextTab,
+        PreviousTab,
         NextFile,
         PreviousFile,
         MarkViewed,
@@ -53,6 +56,8 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
+        KeyBinding::new("alt-tab", NextTab, Some("Rev")),
+        KeyBinding::new("alt-shift-tab", PreviousTab, Some("Rev")),
         KeyBinding::new("cmd-p", BrowseFiles, Some("Rev")),
         KeyBinding::new("enter", ChooseFile, Some("RevFiles > Input")),
         KeyBinding::new("escape", CloseModal, Some("RevFiles > Input")),

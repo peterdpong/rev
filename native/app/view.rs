@@ -739,6 +739,12 @@ impl Render for Rev {
                     this.jump_file(path, window, cx);
                 }
             }))
+            .on_action(
+                cx.listener(|this, _: &NextTab, window, cx| this.navigate_tab(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousTab, window, cx| this.navigate_tab(-1, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
