@@ -17,6 +17,7 @@ use std::{
 mod branch_comparison;
 mod commits;
 mod continuous;
+mod projects;
 use commits::CommitPicker;
 mod controls;
 mod diff_view;
@@ -39,6 +40,8 @@ gpui_kit::actions!(
         ClosePopover,
         Submit,
         ToggleSidebar,
+        NextTab,
+        PreviousTab,
         NextFile,
         PreviousFile,
         MarkViewed
@@ -51,6 +54,8 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
+        KeyBinding::new("alt-tab", NextTab, Some("Rev")),
+        KeyBinding::new("alt-shift-tab", PreviousTab, Some("Rev")),
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
