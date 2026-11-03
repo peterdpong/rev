@@ -15,6 +15,7 @@ use std::{
 };
 
 mod commits;
+mod motion;
 mod review;
 use commits::CommitPicker;
 mod controls;
