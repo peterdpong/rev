@@ -186,6 +186,7 @@ impl SelectedLines {
                     && *selected_side == side
                     && files[file].line_number(side, ix) == lines.start
             }
+
             Self::Patch {
                 file: selected,
                 patch,
