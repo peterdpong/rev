@@ -2,7 +2,7 @@
   "name": "rev-review",
   "version": "0.1.0",
   "private": true,
-  "description": "A native GPUI diff review desk for humans and local agents.",
+  "description": "A native GPUI diff review desk and CLI for humans and local agents.",
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
@@ -13,10 +13,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "demo": "node --import tsx scripts/demo.ts",
-    "build": "npm run build:host && cargo build --release --locked",
+    "build": "npm run build:host && npm run build:cli && cargo build --release --locked",
     "bundle": "npm run build:host && node scripts/bundle.mjs",
     "test:native": "cargo test --locked",
-    "agent:example": "node --import tsx scripts/agent-example.ts"
+    "agent:example": "node --import tsx scripts/agent-example.ts",
+    "cli": "node --import tsx cli/main.ts",
+    "build:cli": "tsc --noEmit && node scripts/build-cli.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -30,5 +32,8 @@
     "prettier": "3.9.10",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
+  },
+  "bin": {
+    "rev": "bin/rev.mjs"
   }
 }
