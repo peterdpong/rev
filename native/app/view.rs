@@ -304,6 +304,32 @@ impl Rev {
                         .child(
                             icon_actions()
                                 .id("review-header-actions")
+                                .child({
+                                    let branch = review
+                                        .pull_request
+                                        .as_ref()
+                                        .map(|pr| pr.head_ref_name.clone())
+                                        .unwrap_or_else(|| {
+                                            review
+                                                .request
+                                                .head
+                                                .clone()
+                                                .filter(|head| head != "HEAD")
+                                                .unwrap_or_else(|| review.branch.clone())
+                                        });
+                                    icon_button(
+                                        "copy-review-branch",
+                                        "Copy branch name",
+                                        IconName::Copy,
+                                    )
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                branch.clone(),
+                                            ))
+                                        },
+                                    )
+                                })
                                 .child(
                                     icon_button(
                                         "navigate-back",
@@ -474,6 +500,13 @@ impl Rev {
                     let working_tree = tab.kind == crate::workspace_state::TabKind::Current;
                     let id = tab.id.clone();
                     let close = id.clone();
+                    let branch_name = tab
+                        .request
+                        .head
+                        .as_deref()
+                        .filter(|head| *head != "HEAD")
+                        .unwrap_or(&tab.label)
+                        .to_owned();
                     let active = self.workspace.active_tab_id.as_ref() == Some(&tab.id);
                     let request = tab.request.clone();
                     let file = tab.file.clone();
@@ -503,6 +536,20 @@ impl Rev {
                                         this.load_review(request.clone(), file.clone(), window, cx)
                                     },
                                 )),
+                            )
+                            .child(
+                                icon_button(
+                                    SharedString::from(format!("copy-branch-{id}")),
+                                    "Copy branch name",
+                                    IconName::Copy,
+                                )
+                                .invisible()
+                                .group_hover(hover_group.clone(), |button| button.visible())
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        branch_name.clone(),
+                                    ))
+                                }),
                             )
                             .when(!working_tree, |row| {
                                 row.child(

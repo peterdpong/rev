@@ -71,7 +71,7 @@ impl Rev {
             kind: ModalKind::Commits,
             base_input: cx.new(|cx| InputState::new(window, cx)),
             head_input: cx.new(|cx| InputState::new(window, cx)),
-            request: review.request.clone(),
+            request: self.navigation_request().unwrap_or_else(|| review.request.clone()),
             serial: self.modal_serial,
             anchor: Some("choose-commits".into()),
             anchor_bounds: Default::default(),
