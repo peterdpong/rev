@@ -94,6 +94,10 @@ pub struct Review {
     pub scope_key: String,
     #[serde(default)]
     pub commit_count: usize,
+    #[serde(default)]
+    pub head_sha: String,
+    #[serde(default)]
+    pub merge_base: String,
     /// The newest compared commit, which is the selected commit for a single-commit review.
     #[serde(default)]
     pub head_commit: Option<HeadCommit>,
@@ -209,6 +213,13 @@ pub struct FilePatch {
     pub patch: String,
     pub digest: String,
     pub too_large: bool,
+}
+#[derive(Deserialize)]
+pub struct ReviewPatch {
+    pub path: String,
+    #[serde(flatten)]
+    pub patch: FilePatch,
+    pub error: Option<String>,
 }
 
 impl FilePatch {

@@ -16,8 +16,9 @@ impl Rev {
         }));
     }
 
-    fn can_refresh_working_tree(&self) -> bool {
-        !self.loading
+    fn can_refresh_working_tree(&self, cx: &App) -> bool {
+        !self.diff.read(cx).is_selecting(cx)
+            && !self.loading
             && !self.folder_picker_open
             && !self.patch_loading
             && !self.submitting
@@ -101,7 +102,7 @@ impl Rev {
         }
 
         if let Some(state) = refresh
-            && self.can_refresh_working_tree()
+            && self.can_refresh_working_tree(cx)
         {
             self.refresh_working_tree(state, window, cx);
         }
@@ -127,7 +128,7 @@ impl Rev {
 
                 if this.review_epoch != review_epoch
                     || this.file_epoch != file_epoch
-                    || !this.can_refresh_working_tree()
+                    || !this.can_refresh_working_tree(cx)
                 {
                     return;
                 }
@@ -153,28 +154,6 @@ impl Rev {
                 let fetch_pull_request =
                     !same_checkout && this.apply_cached_pull_request(&mut update.review);
                 let same_file = this.file == update.path;
-
-                // The digest covers the patch text and the too-large flag.
-                let patch_changed =
-                    !same_file || !same_checkout || this.patch.digest != update.patch.digest;
-                let notice = update.patch.notice();
-
-                if patch_changed {
-                    let files = if notice.is_some() || update.path.is_none() {
-                        Vec::new()
-                    } else {
-                        let Ok(files) = DiffFile::parse(&update.patch.patch) else {
-                            return;
-                        };
-                        files
-                    };
-
-                    this.file_epoch += 1;
-                    this.diff.update(cx, |diff, cx| {
-                        diff.refresh_files(files, same_file && same_checkout, cx);
-                    });
-                }
-
                 if !same_checkout {
                     this.review_epoch += 1;
                 }
@@ -188,17 +167,16 @@ impl Rev {
                 this.state = update.state;
                 this.file = update.path;
                 this.patch = update.patch;
-                this.notice = notice;
+                this.notice = None;
                 this.working_tree_revisions
                     .insert(snapshot.repo, snapshot.revision);
 
                 if review_changed || !same_file {
                     this.save_workspace();
                 }
-
+                this.load_patches(window, cx);
                 cx.notify();
 
-                // Update pull request information if checkout changed.
                 if fetch_pull_request {
                     this.load_pull_request(window, cx);
                 }

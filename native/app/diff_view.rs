@@ -1,30 +1,37 @@
+use std::collections::HashMap;
 use super::controls::*;
 use crate::{
-    diff::{Diff, DiffFile, DiffHunkSeparator, DiffMode, DiffState},
+    diff::{Diff, DiffEvent, DiffFile, DiffHunkSeparator, DiffMode, DiffState},
     theme::*,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 pub(super) enum DiffViewEvent {
-    ToggleViewed,
+    ToggleViewed(String),
+    VisibleFileChanged(String),
 }
 
 #[derive(Default, PartialEq)]
 pub(super) struct DiffViewStatus {
     pub path: Option<String>,
-    pub counts: Option<(usize, usize)>,
-    pub viewed: bool,
-    pub viewed_disabled: bool,
     pub loading: bool,
-    pub notice: Option<String>,
+    pub files: HashMap<String, DiffFileStatus>,
+}
+
+#[derive(Default, PartialEq)]
+pub(super) struct DiffFileStatus {
+    pub counts: (usize, usize),
+    pub viewed: bool,
+    pub disabled: bool,
 }
 
 pub(super) struct DiffView {
     state: Entity<DiffState>,
     status: DiffViewStatus,
     wrap: bool,
-    _state_subscription: Subscription,
+    selecting: bool,
+    _state_subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<DiffViewEvent> for DiffView {}
@@ -32,14 +39,31 @@ impl EventEmitter<DiffViewEvent> for DiffView {}
 impl DiffView {
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
         let state = cx.new(|cx| DiffState::new([], cx));
-        let subscription = cx.observe(&state, |_, _, cx| cx.notify());
+        let subscriptions = vec![
+            cx.observe(&state, |_, _, cx| cx.notify()),
+            cx.subscribe(&state, |this, _, event, cx| match event {
+                DiffEvent::VisibleFileChanged(path) => cx.emit(DiffViewEvent::VisibleFileChanged(path.to_string())),
+                DiffEvent::SelectionStarted(_) => this.selecting = true,
+                DiffEvent::SelectionEnded(_) => this.selecting = false,
+                _ => {},
+            }),
+        ];
 
         Self {
             state,
             status: DiffViewStatus::default(),
             wrap: false,
-            _state_subscription: subscription,
+            selecting: false,
+            _state_subscriptions: subscriptions,
         }
+    }
+
+    pub(super) fn state(&self) -> &Entity<DiffState> {
+        &self.state
+    }
+
+    pub(super) fn is_selecting(&self, cx: &App) -> bool {
+        self.selecting || self.state.read(cx).is_selecting_text(cx)
     }
 
     pub(super) fn sync_status(&mut self, status: DiffViewStatus, cx: &mut Context<Self>) {
@@ -54,6 +78,7 @@ impl DiffView {
         files: impl IntoIterator<Item = DiffFile>,
         cx: &mut Context<Self>,
     ) {
+        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_files(files, cx));
     }
@@ -76,6 +101,7 @@ impl DiffView {
     }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_selected_lines(None, cx));
     }
@@ -103,46 +129,55 @@ impl DiffView {
     }
 }
 
-impl Render for DiffView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = self.state.clone();
-        let file_header = file_header_row()
+impl DiffView {
+    fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
+        let path = file.path().to_string();
+        let status = self.status.files.get(&path);
+        let viewed = status.is_some_and(|status| status.viewed);
+        let (added, removed) = status.map_or((file.additions(), file.deletions()), |status| status.counts);
+        row()
+            .id(SharedString::from(format!("diff-heading-{path}")))
+            .debug_selector({
+                let path = path.clone();
+                move || format!("diff-heading-{path}")
+            })
+            .min_w_0()
+            .gap(px(UI_SPACING))
+            .h(px(CONTROL_HEIGHT))
+            .text_size(px(12.))
+            .line_height(px(HEADER_PILL_LINE_HEIGHT))
             .child(
                 row()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(12.))
+                    .child(div().min_w_0().truncate().child(path.clone()))
                     .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .child(self.status.path.clone().unwrap_or_default()),
-                    )
-                    .when_some(self.status.counts, |d, (added, removed)| {
-                        d.child(
-                            row()
-                                .flex_shrink_0()
-                                .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
-                                .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
-                        )
-                    }),
+                        row()
+                            .flex_shrink_0()
+                            .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
+                            .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
+                    ),
             )
             .child(
-                viewed_button(self.status.viewed, self.status.viewed_disabled)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::ToggleViewed))),
-            );
+                viewed_button(
+                    viewed,
+                    status.is_none_or(|status| status.disabled),
+                )
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(DiffViewEvent::ToggleViewed(path.clone())))),
+            )
+            .into_any_element()
+    }
+}
 
-        let content = if self.status.loading {
+impl Render for DiffView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.state.clone();
+        let header_owner = cx.weak_entity();
+        let content = if self.status.loading && self.state.read(cx).files().is_empty() {
             div()
                 .p_6()
                 .text_color(rgb(MUTED))
                 .child("Loading…")
-                .into_any_element()
-        } else if let Some(notice) = &self.status.notice {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child(notice.clone())
                 .into_any_element()
         } else if self.status.path.is_none() {
             div()
@@ -154,7 +189,10 @@ impl Render for DiffView {
             Diff::new(&self.state)
                 .size_full()
                 .border_0()
-                .header_visible(false)
+                .render_header(move |file, _, cx| {
+                    header_owner.update(cx, |this, cx| this.diff_file_header(file, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
                 .hunk_separator(DiffHunkSeparator::Simple)
                 .soft_wrap(self.wrap)
                 .text_size(px(12.))
@@ -170,8 +208,7 @@ impl Render for DiffView {
             .flex_1()
             .min_w_0()
             .h_full()
-            .child(file_header)
-            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
+            .child(div().id("diff-surface").flex_1().min_h_0().overflow_hidden().child(content))
             .into_any_element()
     }
 }
@@ -196,6 +233,61 @@ mod tests {
         }
     }
 
+    struct ResizableHost {
+        view: Entity<DiffView>,
+        width: f32,
+    }
+
+    impl Render for ResizableHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(self.width)).h(px(300.)).child(self.view.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn file_header_controls_follow_a_resize_in_the_same_frame(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| ResizableHost {
+            width: 700.,
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                let files = DiffFile::parse("diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1 +1 @@\n-old\n+new\n").unwrap();
+                view.set_files(files, cx);
+                view.sync_status(DiffViewStatus { path: Some("file.rs".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        for _ in 0..3 {
+            draw(cx);
+        }
+        let inset = px(crate::theme::UI_SPACING);
+        let heading = cx.debug_bounds("diff-heading-file.rs").unwrap();
+        assert_eq!(heading.right(), px(700.) - inset);
+
+        for width in [520., 760.] {
+            cx.update(|window, cx| {
+                host.update(cx, |host, cx| {
+                    host.width = width;
+                    cx.notify();
+                });
+                _ = window.draw(cx);
+            });
+            let heading = cx.debug_bounds("diff-heading-file.rs").unwrap();
+            assert_eq!(heading.right(), px(width) - inset, "at {width}px");
+        }
+    }
+
     #[gpui::test]
     fn selections_redraw_the_diff_and_viewed_clicks_emit_an_action(cx: &mut TestAppContext) {
         use gpui_kit::test::TestQueryExt;
@@ -211,7 +303,7 @@ mod tests {
                 let mut view = DiffView::new(cx);
                 let files = DiffFile::parse("diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1,3 +1,3 @@\n before\n-old\n+new\n after\n").unwrap();
                 view.set_files(files, cx);
-                view.sync_status(DiffViewStatus { path: Some("file.rs".into()), ..Default::default() }, cx);
+                view.sync_status(DiffViewStatus { path: Some("file.rs".into()), files: [("file.rs".into(), Default::default())].into(), ..Default::default() }, cx);
                 view
             }),
         });
@@ -228,7 +320,9 @@ mod tests {
                 cx.observe(&view, move |_, _| {
                     notifications.set(notifications.get() + 1)
                 }),
-                cx.subscribe(&view, move |_, _, _| actions.set(actions.get() + 1)),
+                cx.subscribe(&view, move |_, event, _| {
+                    if matches!(event, super::DiffViewEvent::ToggleViewed(_)) { actions.set(actions.get() + 1); }
+                }),
             ]
         });
 
