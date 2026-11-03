@@ -50,3 +50,5 @@ export type {
   PullRequest,
 } from './types';
 export { resolveReviewRef } from './refs';
+
+export { reviewDigest } from './patch';

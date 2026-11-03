@@ -1,6 +1,7 @@
 export type * from './git/types';
 
-export type ReviewState = { viewed: Record<string, string> };
+import type { AgentReviewState } from './agent-types';
+export type ReviewState = { viewed: Record<string, string> } & AgentReviewState;
 
 import type { ReviewRequest } from './git/types';
 export type ReviewTab = {

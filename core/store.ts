@@ -8,8 +8,8 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Review, ReviewState } from './types';
-import { filePatch, git, hash } from './git';
+import type { Review, ReviewState, Selection, Comment } from './types';
+import { filePatch, git, reviewDigest, hash } from './git';
 
 async function statePath(review: Review) {
   const gitDir = (
@@ -25,7 +25,10 @@ export async function readState(
   validateViewed = true,
 ): Promise<ReviewState> {
   try {
-    const state: ReviewState = JSON.parse(await readPersistedState(review));
+    const state: ReviewState = {
+      comments: [],
+      ...JSON.parse(await readPersistedState(review)),
+    };
     const names = validateViewed ? Object.keys(state.viewed) : [];
     for (let i = 0; i < names.length; i += 8) {
       await Promise.all(
@@ -43,7 +46,7 @@ export async function readState(
     return state;
   } catch (e: any) {
     if (e.code === 'ENOENT') {
-      return { viewed: {} };
+      return { viewed: {}, comments: [] };
     }
     throw e;
   }
@@ -108,4 +111,123 @@ async function readPersistedState(review: Review): Promise<string> {
       : key;
     return readFile(path.join(path.dirname(file), `${scope}.json`), 'utf8');
   }
+}
+
+export async function addComment(
+  review: Review,
+  selection: Selection | undefined,
+  body: string,
+  expectedDigest?: string,
+): Promise<ReviewState> {
+  selection ||= {
+    scope: 'review',
+    path: '',
+    side: 'additions',
+    start: 0,
+    end: 0,
+  };
+  if (
+    selection.scope &&
+    !['lines', 'file', 'review'].includes(selection.scope)
+  ) {
+    throw new Error('Unknown review scope.');
+  }
+  if (selection.scope === 'review' || selection.scope === 'file') {
+    const patch =
+      selection.scope === 'file'
+        ? await filePatch(review, selection.path)
+        : undefined;
+    if (patch && expectedDigest && patch.digest !== expectedDigest) {
+      throw new Error('This file changed. Refresh before sending feedback.');
+    }
+    if (!body?.trim() || body.length > 20_000) {
+      throw new Error('Write a comment between 1 and 20,000 characters.');
+    }
+    const comment: Comment = {
+      ...selection,
+      path: patch ? selection.path : '',
+      start: 0,
+      end: 0,
+      id: randomUUID(),
+      body: body.trim(),
+      headSha: review.headSha,
+      mergeBase: review.mergeBase,
+      digest: patch?.digest || (await reviewDigest(review)),
+      createdAt: new Date().toISOString(),
+      status: 'queued',
+    };
+    return mutateState(review, (state) => {
+      state.comments.push(comment);
+    });
+  }
+  if (!body?.trim() || body.length > 20_000) {
+    throw new Error('Write a comment between 1 and 20,000 characters.');
+  }
+  if (
+    !['additions', 'deletions'].includes(selection.side) ||
+    !Number.isInteger(selection.start) ||
+    !Number.isInteger(selection.end) ||
+    selection.start < 1 ||
+    selection.end < selection.start
+  ) {
+    throw new Error('Select a valid line range first.');
+  }
+  const patch = await filePatch(review, selection.path);
+  if (patch.tooLarge) {
+    throw new Error('This file is too large for inline comments.');
+  }
+  if (expectedDigest && patch.digest !== expectedDigest) {
+    throw new Error(
+      'This file changed since you selected it. Refresh and select the lines again.',
+    );
+  }
+  const valid = new Set<number>();
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+  for (const line of patch.patch.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) {
+      continue;
+    }
+    if (line.startsWith(' ')) {
+      valid.add(selection.side === 'deletions' ? oldLine : newLine);
+      oldLine++;
+      newLine++;
+    } else if (line.startsWith('+')) {
+      if (selection.side === 'additions') {
+        valid.add(newLine);
+      }
+      newLine++;
+    } else if (line.startsWith('-')) {
+      if (selection.side === 'deletions') {
+        valid.add(oldLine);
+      }
+      oldLine++;
+    }
+  }
+  if (!valid.has(selection.start) || !valid.has(selection.end)) {
+    throw new Error(
+      'The selected lines are not present on that side of this diff. Refresh and select the visible lines.',
+    );
+  }
+  const comment: Comment = {
+    ...selection,
+    id: randomUUID(),
+    body: body.trim(),
+    headSha: review.headSha,
+    mergeBase: review.mergeBase,
+    digest: patch.digest,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  return mutateState(review, (state) => {
+    state.comments.push(comment);
+  });
 }

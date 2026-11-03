@@ -67,3 +67,29 @@ test('older review identities retain saved markers and unknown state during migr
   assert.deepEqual(migrated.viewed, {});
   assert.deepEqual(JSON.parse(await readFile(legacyFile, 'utf8')), legacy);
 });
+
+test('agent builds can add comments to viewer-only saved state', async (t) => {
+  const review = await inspect(await fixture(t));
+  const patch = await filePatch(review, 'app.ts');
+  const folder = path.join(
+    (await git(review.repo, ['rev-parse', '--absolute-git-dir'])).trim(),
+    'revue',
+  );
+  await mkdir(folder, { recursive: true });
+  await writeFile(
+    path.join(folder, `${review.scopeKey}.json`),
+    JSON.stringify({ viewed: { 'app.ts': patch.digest } }),
+  );
+  const state = await readState(review);
+  assert.deepEqual(state.comments, []);
+  const { addComment } = await import('../core/store');
+  await addComment(
+    review,
+    { path: 'app.ts', side: 'additions', start: 1, end: 1 },
+    'Explain this change',
+    patch.digest,
+  );
+  const updated = await readState(review);
+  assert.equal(updated.comments.length, 1);
+  assert.equal(updated.viewed['app.ts'], patch.digest);
+});

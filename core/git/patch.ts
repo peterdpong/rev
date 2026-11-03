@@ -144,3 +144,12 @@ export async function reviewPatches(
     }
   });
 }
+
+/** Fingerprint all reviewed files for requests that apply to the entire review. */
+export async function reviewDigest(review: Review) {
+  const fingerprints: [string, string][] = [];
+  for (const file of review.files) {
+    fingerprints.push([file.path, (await filePatch(review, file.path)).digest]);
+  }
+  return hash(JSON.stringify(fingerprints));
+}
