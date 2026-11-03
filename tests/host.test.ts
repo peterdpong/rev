@@ -3,17 +3,44 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createSampleRepo } from '../core/git';
+import { runGitText } from '../core/git';
+import { HostService } from '../core/host';
+
+test('the host requires an explicit local repository folder', async (t) => {
+  const host = new HostService();
+  t.after(() => host.close());
+  for (const repo of [undefined, '', '   ']) {
+    await assert.rejects(
+      host.call('review', { repo }),
+      /Pass a repository folder/,
+    );
+  }
+  const folder = await mkdtemp(path.join(tmpdir(), 'rev-not-a-repo-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  await assert.rejects(
+    host.call('review', { repo: folder }),
+    /not a git repository/i,
+  );
+});
 
 test(
   'private host handles concurrent request IDs, errors, and parent shutdown',
   { timeout: 15000 },
   async (t) => {
-    const root = await mkdtemp(path.join(tmpdir(), 'rev-host-'));
-    const repo = await createSampleRepo(path.join(root, 'repo'));
+    const repo = await mkdtemp(path.join(tmpdir(), 'rev-host-'));
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    await runGitText(repo, ['init', '-b', 'main']);
+    await runGitText(repo, ['config', 'user.name', 'Rev Test']);
+    await runGitText(repo, ['config', 'user.email', 'test@example.invalid']);
+    await writeFile(path.join(repo, 'file.txt'), 'before\n');
+    await runGitText(repo, ['add', '.']);
+    await runGitText(repo, ['commit', '-m', 'base']);
+    await runGitText(repo, ['switch', '-c', 'feature']);
+    await writeFile(path.join(repo, 'file.txt'), 'after\n');
+    await runGitText(repo, ['commit', '-am', 'change']);
     const child = spawn(process.execPath, ['--import', 'tsx', 'core/main.ts'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -28,7 +55,6 @@ test(
       child.kill();
       await exited;
       lines.close();
-      await rm(root, { recursive: true, force: true });
     });
     const call = (id: number | null, value: string) =>
       new Promise<any>((resolve) => {
@@ -49,13 +75,13 @@ test(
         JSON.stringify({
           id: 2,
           method: 'patch',
-          params: { repo, base: 'main', path: 'src/lib/retry.ts' },
+          params: { repo, base: 'main', path: 'file.txt' },
         }),
       ),
       call(null, 'not json'),
     ]);
     assert.ok(review.result.patches.length > 0);
-    assert.match(patch.result.patch, /retry/);
+    assert.match(patch.result.patch, /\+after/);
     assert.equal(typeof invalid.error, 'string');
     const unknown = await call(
       3,

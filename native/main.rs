@@ -39,37 +39,27 @@ fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
 
 fn main() -> anyhow::Result<()> {
     let initial = initial_review()?;
-    let backend = if initial.is_some() {
-        Some(backend::Backend::start().map_err(anyhow::Error::msg)?)
-    } else {
-        None
-    };
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-            cx.bind_keys([KeyBinding::new("cmd-q", app::Quit, None)]);
+            cx.bind_keys([
+                KeyBinding::new("cmd-q", app::Quit, None),
+                KeyBinding::new("cmd-o", app::OpenFolder, Some("Rev")),
+            ]);
             cx.on_action(|_: &app::Quit, cx| cx.quit());
 
-            if let Some(service) = backend.clone() {
-                cx.on_app_quit(move |_| {
-                    service.close();
-                    async {}
-                })
-                .detach();
-            }
-            
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
             })
             .detach();
-            
+
             gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
                 cx.new(|cx| match initial {
-                    Some(request) => app::Rev::from_repo(backend.unwrap(), request, window, cx),
+                    Some(request) => app::Rev::from_repo(request, window, cx),
                     None => app::Rev::new(window, cx),
                 })
             })

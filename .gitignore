@@ -1,8 +1,7 @@
 target/
 docs/
-node_modules/
+node_modules
 dist/
 .test-artifacts/
-.rev-sample/
 .DS_Store
 *.log

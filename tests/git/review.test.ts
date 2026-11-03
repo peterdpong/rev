@@ -195,6 +195,12 @@ test('review keys, branch lists and default bases', async (t) => {
   assert.equal(branch.base, 'origin/main');
   assert.equal(branch.baseSha, await resolveRef(repo, 'main'));
   assert.equal(working.baseSha, branch.baseSha);
+  assert.equal(working.mergeBase, branch.mergeBase);
+  assert.equal(working.headSha, branch.headSha);
+  assert.equal(branch.commitCount, 1);
+  assert.equal(working.commitCount, branch.commitCount);
+  assert.equal(working.commitRange, undefined);
+  assert.equal(working.scopeKey, working.key);
   assert.notEqual(branch.key, working.key);
   assert.equal(branch.key, (await inspect({ repo })).key);
   assert.deepEqual(branch.branches, ['feature', 'main', 'origin/main']);
