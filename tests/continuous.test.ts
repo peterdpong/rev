@@ -62,6 +62,23 @@ test('continuous patches retain Git order and per-file digests across text, rena
     /rename from rename.ts/,
   );
 
+  const second = patches.find((p) => p.path === 'second.ts')!;
+  const state: any = await service.call('comment', {
+    review: request,
+    selection: { path: 'second.ts', side: 'additions', start: 1, end: 1 },
+    digest: second.digest,
+    body: 'Feedback on the second file',
+  });
+  assert.equal(state.comments[0].path, 'second.ts');
+  await assert.rejects(
+    service.call('comment', {
+      review: request,
+      selection: { path: 'second.ts', side: 'additions', start: 1, end: 1 },
+      digest: patches.find((p) => p.path === 'first.ts')!.digest,
+      body: 'Wrong digest',
+    }),
+    /changed/i,
+  );
 });
 
 test('a moved branch is rejected instead of mixing patches with an older review', async (t) => {

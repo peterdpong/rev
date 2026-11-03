@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git, inspect, filePatch, importPR, hash } from '../core/git';
+import { HostService } from '../core/host';
 import { addComment, readState, mutateState } from '../core/store';
 import {
   createRunHistory,
@@ -46,6 +47,85 @@ function run(id: string): AgentRun {
     startedAt: new Date().toISOString(),
   } as AgentRun;
 }
+
+test('review metadata includes full commit context and cached PR details without switching branches', async (t) => {
+  const f = await fixture(t);
+  const review = await inspect(f.request);
+  assert.equal(review.commitCount, 1);
+  assert.equal(review.headCommit?.subject, 'Handle transient failures');
+  assert.equal(
+    review.headCommit?.body,
+    'Retry the request before giving up.\nPreserve the original error.',
+  );
+  assert.equal(review.headCommit?.author, 'Review Test');
+  const bin = path.join(f.repo, 'fake-bin');
+  await mkdir(bin);
+  const details = {
+    number: 42,
+    title: 'Improve request reliability',
+    body: '## Context\nRetry transient failures.',
+    author: { login: 'reviewer' },
+    state: 'OPEN',
+    isDraft: true,
+    headRefName: 'feature',
+    baseRefName: 'main',
+    updatedAt: new Date().toISOString(),
+    url: 'https://github.com/acme/rev/pull/42',
+  };
+  await writeFile(
+    path.join(bin, 'gh'),
+    `#!/bin/sh\ncat <<'REV_PR_JSON'\n${JSON.stringify(details)}\nREV_PR_JSON\n`,
+    { mode: 0o755 },
+  );
+  await git(f.repo, ['update-ref', 'refs/pull/42/head', 'HEAD']);
+  await git(f.repo, [
+    'config',
+    `url.${pathToFileURL(f.repo).href}.insteadOf`,
+    'https://github.com/acme/rev.git',
+  ]);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  let request;
+  try {
+    request = await importPR(f.repo, '42');
+  } finally {
+    process.env.PATH = previousPath;
+  }
+  const imported = await inspect(request);
+  assert.equal(imported.pullRequest?.title, details.title);
+  assert.equal(imported.pullRequest?.body, details.body);
+  assert.equal(imported.pullRequest?.author, 'reviewer');
+  assert.equal(imported.pullRequest?.isDraft, true);
+  assert.equal(
+    (await git(f.repo, ['branch', '--show-current'])).trim(),
+    'feature',
+  );
+  assert.equal((await inspect(f.request)).pullRequest, undefined);
+  // Tabs imported before metadata was supported can refresh their details too.
+  await rm(
+    path.join(
+      f.repo,
+      '.git',
+      'revue',
+      `pr-${hash(request.head!).slice(0, 24)}.json`,
+    ),
+  );
+  assert.equal((await inspect(request)).pullRequest, undefined);
+  const host = new HostService();
+  process.env.PATH = `${bin}:${previousPath}`;
+  try {
+    const refreshed = (await host.call('fetch', {
+      repo: f.repo,
+      review: { ...request, mode: 'working' },
+    })) as { request: typeof request };
+    assert.equal(refreshed.request.head, request.head);
+    assert.equal(refreshed.request.mode, 'working');
+    assert.equal((await inspect(request)).pullRequest?.title, details.title);
+  } finally {
+    process.env.PATH = previousPath;
+    host.close();
+  }
+});
 
 test('questions, streaming responses, and follow-ups persist as one conversation', async (t) => {
   const f = await fixture(t),

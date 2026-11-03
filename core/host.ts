@@ -1,3 +1,5 @@
+import { AgentRunner, preparePrompt, providers } from './agents';
+import { flushRunHistory } from './threads';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -9,7 +11,7 @@ import {
   listCommits,
   listBranches,
 } from './git';
-import { readState, mutateState } from './store';
+import { readState, addComment, mutateState } from './store';
 import { createDemo } from './demo';
 import {
   refreshWorkspace,
@@ -20,6 +22,7 @@ import {
 import type { ReviewRequest } from './types';
 
 export class HostService {
+  readonly runner: AgentRunner;
   private sample: string | undefined;
   private closed = false;
   readonly dataDir: string;
@@ -32,18 +35,21 @@ export class HostService {
       process.env.REV_DATA_DIR ||
       process.env.REVUE_DATA_DIR ||
       path.join(homedir(), '.revue');
+    this.runner = new AgentRunner();
   }
   async call(method: string, p: any = {}): Promise<unknown> {
     if (this.closed) {
       throw new Error('The local service is closing.');
     }
     const dataDir = this.dataDir;
+    const runner = this.runner;
     const options = { initial: this.initial };
     let result: unknown;
     switch (method) {
       case 'init':
         result = {
           initial: options.initial,
+          providers: await providers(),
           workspace: await refreshWorkspace(dataDir),
         };
         break;
@@ -106,6 +112,34 @@ export class HostService {
         result = await reviewPatches(review, p.preview === true);
         break;
       }
+      case 'comment':
+        result = await addComment(
+          await inspect(p.review),
+          p.selection,
+          p.body,
+          p.digest,
+        );
+        break;
+      case 'archiveThread':
+        result = await mutateState(
+          await inspect(p.review),
+          (s) => {
+            const thread = s.threads?.find(
+              (t) => t.id === p.id && t.kind === 'question',
+            );
+            if (!thread) {
+              throw new Error('Question thread not found.');
+            }
+            thread.archived = p.archived !== false;
+          },
+          false,
+        );
+        break;
+      case 'deleteComment':
+        result = await mutateState(await inspect(p.review), (s) => {
+          s.comments = s.comments.filter((c) => c.id !== p.id);
+        });
+        break;
       case 'viewed': {
         const review = await inspect(p.review || p);
         const patch = await filePatch(review, p.path);
@@ -165,6 +199,32 @@ export class HostService {
         this.sample ||= await createDemo();
         result = { repo: this.sample, base: 'main', head: 'HEAD' };
         break;
+      case 'prompt':
+        result = { prompt: (await preparePrompt(p)).prompt };
+        break;
+      case 'run': {
+        const run = await runner.start(p);
+        if (this.closed) {
+          runner.cancel(run.id);
+        }
+        result = run;
+        break;
+      }
+      case 'runStatus':
+        await flushRunHistory(p.id);
+        result = runner.runs.get(p.id);
+        if (!result) {
+          throw new Error('This run is no longer available.');
+        }
+        break;
+      case 'cancel':
+        runner.cancel(p.id);
+        result = true;
+        break;
+      case 'approve':
+        runner.respondToApproval(p.id, p.approvalId, p.allow);
+        result = true;
+        break;
       default:
         throw new Error('Unknown action.');
     }
@@ -173,5 +233,6 @@ export class HostService {
   }
   close() {
     this.closed = true;
+    this.runner.stopAll();
   }
 }
