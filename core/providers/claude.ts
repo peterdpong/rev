@@ -53,7 +53,7 @@ export function claudeOptions(turn: ProviderTurn): Options {
   const tools =
     turn.mode === 'ask'
       ? ['Read', 'Glob', 'Grep']
-      : ['Read', 'Glob', 'Grep', 'Edit', 'Write'];
+      : ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash'];
   return {
     cwd: turn.cwd,
     pathToClaudeCodeExecutable: turn.executable,
@@ -74,6 +74,18 @@ export function claudeOptions(turn: ProviderTurn): Options {
             async (input) => {
               if (input.hook_event_name !== 'PreToolUse') {
                 return {};
+              }
+              // Commands can run checks or explicit Git requests, but must reach the
+              // reviewer's approval UI even if their Claude settings allow them.
+              if (turn.mode === 'apply' && input.tool_name === 'Bash') {
+                return {
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'ask',
+                    permissionDecisionReason:
+                      'Review this command before execution.',
+                  },
+                };
               }
               const writing =
                 input.tool_name === 'Edit' || input.tool_name === 'Write';

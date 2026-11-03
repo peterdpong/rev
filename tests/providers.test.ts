@@ -314,6 +314,70 @@ test('Claude tool policy rejects writes in Ask and symlink/outside/Git writes in
   );
 });
 
+test('Claude commands always request review approval, including explicit Git operations', async () => {
+  const signal = new AbortController().signal;
+  let allowed = false;
+  const requests: string[] = [];
+  const options = claudeOptions(
+    context('/tmp', {
+      mode: 'apply',
+      async approve(request) {
+        requests.push(request.detail);
+        return allowed;
+      },
+    }),
+  );
+  assert.ok((options.tools as string[]).includes('Bash'));
+  const input = { command: 'git commit -am "Requested change"' };
+  const hook = await options.hooks!.PreToolUse![0].hooks[0](
+    {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: input,
+      session_id: 's',
+      cwd: '/tmp',
+      transcript_path: '',
+      tool_use_id: 't',
+    },
+    't',
+    { signal },
+  );
+  assert.equal((hook as any).hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(
+    (
+      await options.canUseTool!('Bash', input, {
+        signal,
+        toolUseID: 't',
+        requestId: 't',
+      })
+    )?.behavior,
+    'deny',
+  );
+  allowed = true;
+  assert.equal(
+    (
+      await options.canUseTool!('Bash', input, {
+        signal,
+        toolUseID: 'u',
+        requestId: 'u',
+      })
+    )?.behavior,
+    'allow',
+  );
+  assert.equal(requests.length, 2);
+  const ask = claudeOptions(context('/tmp'));
+  assert.equal(
+    (
+      await ask.canUseTool!('Bash', input, {
+        signal,
+        toolUseID: 'v',
+        requestId: 'v',
+      })
+    )?.behavior,
+    'deny',
+  );
+});
+
 test(
   'official Claude SDK talks to the configured local executable over its real protocol',
   { timeout: 15000 },
