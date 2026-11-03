@@ -1,23 +1,25 @@
 mod app;
 mod backend;
 mod model;
+use app::*;
 use gpui_kit::*;
 use model::ReviewRequest;
 
-fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.is_empty() {
-        return Ok(None);
+fn main() -> anyhow::Result<()> {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let explicit_open = args.first().is_some_and(|a| a == "open");
+    if explicit_open {
+        args.remove(0);
     }
     let mut request = ReviewRequest::default();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
             "--repo" | "--base" | "--head" => {
-                let flag = &args[i];
-                i += 1;
+                let flag = args[index].clone();
+                index += 1;
                 let value = args
-                    .get(i)
+                    .get(index)
                     .ok_or_else(|| anyhow::anyhow!("Missing value for {flag}"))?
                     .clone();
                 match flag.as_str() {
@@ -27,31 +29,40 @@ fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
                 }
             }
             "--working" => request.mode = Some("working".into()),
-            other => anyhow::bail!(
-                "Unknown option: {other}. Use --repo <folder> [--base main] [--head branch] [--working]."
-            ),
+            "--help" | "-h" => {
+                println!("Rev\n\n  rev open [repo] [--base main] [--head feature] [--working]");
+                return Ok(());
+            }
+            value if !value.starts_with('-') && request.repo.is_empty() => {
+                request.repo = value.into()
+            }
+            other => anyhow::bail!("Unknown argument: {other}"),
         }
-        i += 1;
+        index += 1;
     }
-    anyhow::ensure!(!request.repo.is_empty(), "Pass --repo <folder>.");
-    Ok(Some(request))
-}
-
-fn main() -> anyhow::Result<()> {
-    let initial = initial_review()?;
-    let backend = if initial.is_some() {
-        Some(backend::Backend::start().map_err(anyhow::Error::msg)?)
-    } else {
-        None
-    };
+    if request.repo.is_empty() && (explicit_open || !args.is_empty()) {
+        request.repo = std::env::current_dir()?.to_string_lossy().to_string();
+    }
+    let initial = (!request.repo.is_empty()).then_some(request);
+    let backend = backend::Backend::start();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-            cx.bind_keys([KeyBinding::new("cmd-q", app::Quit, None)]);
-            cx.on_action(|_: &app::Quit, cx| cx.quit());
-            if let Some(service) = backend.clone() {
+            cx.bind_keys([
+                KeyBinding::new("cmd-q", Quit, None),
+                KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
+                KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+                KeyBinding::new("alt-down", NextFile, Some("Rev")),
+                KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
+                KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+                KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+                KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+            ]);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            if let Ok(service) = &backend {
+                let service = service.clone();
                 cx.on_app_quit(move |_| {
                     service.close();
                     async {}
@@ -64,11 +75,22 @@ fn main() -> anyhow::Result<()> {
                 }
             })
             .detach();
-            gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
-                cx.new(|cx| match initial {
-                    Some(request) => app::Rev::from_repo(backend.unwrap(), request, window, cx),
-                    None => app::Rev::new(window, cx),
-                })
+            let options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Rev".into()),
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1320.), px(860.)),
+                    cx,
+                ))),
+                window_min_size: Some(size(px(940.), px(600.))),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Rev::new(backend, initial, window, cx))
             })
             .expect("open Rev window");
             cx.activate(true);
