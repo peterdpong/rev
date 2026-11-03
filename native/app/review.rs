@@ -114,6 +114,70 @@ impl Rev {
                             cx.write_to_clipboard(ClipboardItem::new_string(branch_name.clone()))
                         }),
                 );
+            let run_scope = self
+                .runs
+                .iter()
+                .find(|(scope, run)| {
+                    run.is_active()
+                        && self.run_requests.get(*scope).is_some_and(|request| {
+                            request.repo == review.request.repo
+                                && request.base == review.request.base
+                                && request.head == review.request.head
+                        })
+                })
+                .map(|(scope, _)| scope.clone())
+                .or_else(|| {
+                    self.runs
+                        .iter()
+                        .find(|(_, run)| run.scope_key == review.scope_key)
+                        .map(|(id, _)| id.clone())
+                });
+            if let Some(scope) = run_scope {
+                let label = if self.runs.get(&scope).is_some_and(|run| run.is_active()) {
+                    "Agent running…"
+                } else {
+                    "Agent response"
+                };
+                main = main.child(self.popover_button(
+                    "agent-output",
+                    button("agent-output", label).on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            let thread = this
+                                .runs
+                                .get(&scope)
+                                .and_then(|run| run.thread.as_ref())
+                                .map(|thread| thread.id.clone());
+                            if this.review.as_ref().is_some_and(|review| {
+                                this.runs
+                                    .get(&scope)
+                                    .is_some_and(|run| review.scope_key == run.scope_key)
+                            }) && thread.is_some()
+                            {
+                                this.show_threads(None, thread, window, cx);
+                            } else {
+                                this.open_run(scope.clone(), window, cx);
+                            }
+                        },
+                    )),
+                    Anchor::TopRight,
+                    window,
+                    cx,
+                ));
+            }
+            main = main.child(
+                self.popover_button(
+                    "ask-review",
+                    Button::new("ask-review")
+                        .small()
+                        .label("Ask / change")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_modal(ModalKind::Ask, None, None, "ask-review", window, cx)
+                        })),
+                    Anchor::TopRight,
+                    window,
+                    cx,
+                ),
+            );
         } else {
             main = main.child(div().text_color(rgb(MUTED)).child("Review"));
         }
@@ -291,7 +355,7 @@ impl Rev {
             .unwrap_or_else(|| review.request.clone());
         request.mode = Some(if working { "branch" } else { "working" }.into());
         request.commit_range = None;
-
+        let count = self.thread_count(None);
         let busy = self.loading || self.submitting;
         let commits = if review.request.commit_range.is_some() {
             format!("{} selected ▾", review.commit_count)
@@ -319,6 +383,16 @@ impl Rev {
                     .text_size(px(12.))
                     .text_color(rgb(MUTED))
                     .child(format!("{} files", review.files.len())),
+            )
+            .child(
+                button("toggle-threads", format!("Threads  {count}"))
+                    .selected(self.threads_visible)
+                    .tooltip(if self.threads_visible {
+                        "Hide threads (⌘⇧B)"
+                    } else {
+                        "Show threads (⌘⇧B)"
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_threads(window, cx))),
             )
             .child(div().flex_1())
             .child(self.popover_button(

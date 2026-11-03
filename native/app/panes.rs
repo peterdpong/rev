@@ -5,11 +5,13 @@ use super::*;
 pub(super) enum PaneKind {
     Diff,
     Files,
+    Threads,
 }
 
 pub(super) struct Pane {
     owner: WeakEntity<Rev>,
     kind: PaneKind,
+    remeasure: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -20,7 +22,8 @@ impl Pane {
         diff: &Entity<DiffState>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut subscriptions = vec![cx.observe(&owner, |_, _, cx| {
+        let mut subscriptions = vec![cx.observe(&owner, |pane, _, cx| {
+            pane.remeasure = true;
             cx.notify();
         })];
         if matches!(kind, PaneKind::Diff) {
@@ -29,17 +32,25 @@ impl Pane {
         Self {
             owner: owner.downgrade(),
             kind,
+            remeasure: true,
             _subscriptions: subscriptions,
         }
     }
 }
 
 impl Render for Pane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.owner
             .update(cx, |app, cx| match self.kind {
                 PaneKind::Diff => app.diff_content(cx),
                 PaneKind::Files => app.file_list(cx),
+                PaneKind::Threads => {
+                    if self.remeasure {
+                        app.thread_scroll.remeasure();
+                        self.remeasure = false;
+                    }
+                    app.threads_view(window, cx)
+                }
             })
             .unwrap_or_else(|_| div().into_any_element())
     }

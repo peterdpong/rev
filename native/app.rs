@@ -28,7 +28,7 @@ mod navigation;
 mod panes;
 mod projects;
 mod review;
-
+mod thread_panel;
 mod threads;
 mod view;
 use commits::CommitPicker;
@@ -64,7 +64,9 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+        KeyBinding::new("cmd-k", AskReview, Some("Rev")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
+        KeyBinding::new("cmd-shift-b", ToggleThreads, Some("Rev")),
         KeyBinding::new("alt-tab", NextTab, Some("Rev")),
         KeyBinding::new("alt-shift-tab", PreviousTab, Some("Rev")),
         KeyBinding::new("cmd-[", GoBack, Some("Rev")),
@@ -72,13 +74,21 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-p", BrowseFiles, Some("Rev")),
         KeyBinding::new("enter", ChooseFile, Some("RevFiles > Input")),
         KeyBinding::new("escape", CloseModal, Some("RevFiles > Input")),
+        KeyBinding::new("enter", ReplyThread, Some("RevThread > Input")),
+        KeyBinding::new("enter", Submit, Some("RevPrompt > Input")),
+        KeyBinding::new("enter", Submit, Some("RevAgent > Input")),
+        KeyBinding::new("cmd-enter", ReplyThread, Some("RevThread > Input")),
+        KeyBinding::new("cmd-enter", ReplyThread, Some("RevThread")),
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
         KeyBinding::new("escape", CloseModal, Some("RevPopover")),
         KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", CloseModal, Some("Rev")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPrompt")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPrompt > Input")),
         KeyBinding::new("cmd-enter", Submit, Some("RevPopover > Input")),
+        KeyBinding::new("escape", CloseModal, Some("RevPrompt > Input")),
         KeyBinding::new("escape", CloseModal, Some("RevPopover > Input")),
     ]);
 }
@@ -133,6 +143,7 @@ pub struct Rev {
     diff: Entity<DiffState>,
     diff_pane: Entity<panes::Pane>,
     files_pane: Entity<panes::Pane>,
+    threads_pane: Entity<panes::Pane>,
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
@@ -206,7 +217,8 @@ impl Rev {
             cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Diff, &diff, cx));
         let files_pane =
             cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Files, &diff, cx));
-
+        let threads_pane =
+            cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Threads, &diff, cx));
         let thread_reply = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .rows(2)
@@ -287,6 +299,7 @@ impl Rev {
             diff,
             diff_pane,
             files_pane,
+            threads_pane,
             selection: None,
             selecting: false,
             selection_menu: Point::default(),
@@ -662,10 +675,79 @@ impl Rev {
     fn accept_selection(
         &mut self,
         range: &DiffLineRange,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.selection = Selection::from_range(range);
+        const CROSS_SIDE: &str = "Select lines on one side of the diff.";
+        if self.selection.is_none() {
+            self.error = Some(CROSS_SIDE.into());
+        } else if self.error.as_deref() == Some(CROSS_SIDE) {
+            self.error = None;
+        }
+        let Some(selection) = self.selection.clone() else {
+            if self.modal.as_ref().is_some_and(Self::is_selection_prompt)
+                && let Some(modal) = self.modal.take()
+            {
+                self.drafts.insert(
+                    Self::draft_key(&modal),
+                    self.prompt.read(cx).value().to_string(),
+                );
+                self.modal_serial += 1;
+            }
+            return;
+        };
+        self.set_active_file(selection.path.clone(), cx);
+        let Some(review) = self.review.as_ref() else {
+            return;
+        };
+        if self.patch.digest.is_empty() || self.patch_loading {
+            return;
+        }
+        if self.submitting
+            || self
+                .modal
+                .as_ref()
+                .is_some_and(|m| !Self::is_selection_prompt(m))
+        {
+            return;
+        }
+        if self.modal.as_ref().is_some_and(|m| {
+            m.selection.as_ref() == Some(&selection)
+                && m.digest == self.patch.digest
+                && m.tab == review.scope_key
+        }) {
+            return;
+        }
+        if let Some(previous) = &self.modal {
+            self.drafts.insert(
+                Self::draft_key(previous),
+                self.prompt.read(cx).value().to_string(),
+            );
+        }
+        self.modal_serial += 1;
+        let modal = Modal {
+            kind: self.prompt_mode,
+            request: review.request.clone(),
+            tab: review.scope_key.clone(),
+            selection: Some(selection),
+            digest: self.patch.digest.clone(),
+            serial: self.modal_serial,
+            anchor: None,
+            anchor_bounds: Default::default(),
+        };
+        let draft = self
+            .drafts
+            .get(&Self::draft_key(&modal))
+            .cloned()
+            .unwrap_or_default();
+        self.prompt
+            .update(cx, |input, cx| input.set_value(draft, window, cx));
+        self.modal = Some(modal);
+        self.preview = None;
+        self.new_session = false;
+        // Preserve diff focus so Shift-selection and copying keep working.
+        cx.notify();
     }
 
     fn is_selection_prompt(modal: &Modal) -> bool {

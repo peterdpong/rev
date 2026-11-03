@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::{Icon, IconName};
+use gpui_kit::component::{Icon, IconName, text::TextView};
 
 pub(super) const BG: u32 = 0x17191d;
 pub(super) const PANEL: u32 = 0x131519;
@@ -196,7 +196,9 @@ impl Rev {
                     let current = tab.is_current();
                     let request = tab.request.clone();
                     let file = tab.file.clone();
-
+                    let running = self.runs.values().any(|r| {
+                        &r.scope_key == tab.scope_key.as_ref().unwrap_or(&id) && r.is_active()
+                    });
                     tabs = tabs.child(
                         row()
                             .mx_2()
@@ -209,7 +211,13 @@ impl Rev {
                                 navigation_button(
                                     SharedString::from(format!("tab-{id}")),
                                     tab.label,
-                                    div().child("⑂").into_any_element(),
+                                    if running {
+                                        gpui_kit::component::spinner::Spinner::new()
+                                            .small()
+                                            .into_any_element()
+                                    } else {
+                                        div().child("⑂").into_any_element()
+                                    },
                                 )
                                 .disabled(blocked || collapsed)
                                 .on_click(cx.listener(
@@ -246,7 +254,7 @@ impl Rev {
                                         IconName::Close,
                                         "Close review",
                                     )
-                                    .disabled(blocked || collapsed)
+                                    .disabled(blocked || running || collapsed)
                                     .on_click(cx.listener(
                                         move |this, _, window, cx| {
                                             this.workspace_action(
@@ -335,8 +343,9 @@ impl Rev {
             .map_or(path.as_str(), |(_, name)| name);
         let selected = self.file.as_ref() == Some(&path);
         let viewed = self.is_file_viewed(&path);
-
-        let item = row()
+        let count = self.thread_count(Some(&path));
+        let thread_path = path.clone();
+        let mut item = row()
             .id(("file", index))
             .cursor_pointer()
             .rounded_md()
@@ -377,7 +386,22 @@ impl Rev {
                         .child("Ignored"),
                 )
             });
-
+        if count > 0 {
+            item = item.child(
+                button(
+                    SharedString::from(format!("file-threads-{index}")),
+                    count.to_string(),
+                )
+                .h(px(22.))
+                .px_1()
+                .text_color(rgb(BLUE))
+                .tooltip(format!("{count} threads in this file"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.show_threads(Some(thread_path.clone()), None, window, cx);
+                })),
+            );
+        }
         item.on_click(cx.listener(move |this, _, window, cx| {
             if !this.loading {
                 this.jump_file(path.clone(), window, cx);
@@ -592,11 +616,275 @@ impl Rev {
             .into_any_element()
     }
 
+    fn prompt_tabs(&self, kind: ModalKind, cx: &mut Context<Self>) -> AnyElement {
+        row()
+            .gap_1()
+            .child(
+                button("prompt-ask", "Ask agent")
+                    .selected(kind == ModalKind::Ask)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.switch_prompt_mode(ModalKind::Ask, window, cx)
+                    })),
+            )
+            .child(
+                button("prompt-change", "Agent change")
+                    .selected(kind == ModalKind::Change)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.switch_prompt_mode(ModalKind::Change, window, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn provider_controls(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut body = column().gap_2();
+        let mut providers = row().gap_2();
+        for provider in &self.providers {
+            let id = provider.id.clone();
+            let label = if id == "codex" {
+                "Codex"
+            } else {
+                "Claude Code"
+            };
+            providers = providers.child(
+                button(SharedString::from(format!("provider-{id}")), label)
+                    .selected(self.provider == id)
+                    .disabled(!provider.available || self.submitting)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.provider = id.clone();
+                        cx.notify();
+                    })),
+            );
+        }
+        providers = providers.child(div().flex_1()).child(
+            button("new-conversation", "New conversation")
+                .selected(self.new_session)
+                .disabled(self.submitting)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.new_session = !this.new_session;
+                    cx.notify();
+                })),
+        );
+        body = body.child(providers);
+        if !self.providers.iter().any(|p| p.available) {
+            body = body.child(
+                div()
+                    .text_color(rgb(MUTED))
+                    .child("Install and sign in to Codex or Claude Code, then restart Rev."),
+            );
+        }
+        body.into_any_element()
+    }
+
+    fn selection_prompt(
+        &self,
+        modal: &Modal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let serial = modal.serial;
+        let progress = motion::enter(("selection-enter", serial), window, cx);
+        let pane = column()
+            .id("selection-prompt")
+            .relative()
+            .top(px(-4. * (1. - progress)))
+            .opacity(progress)
+            .w(px(440.))
+            .gap_2()
+            .p_3()
+            .bg(rgb(PANEL))
+            .border_1()
+            .border_color(rgb(BORDER))
+            .rounded_lg()
+            .shadow_lg()
+            .occlude()
+            .track_focus(&self.modal_focus)
+            .key_context("RevPrompt")
+            .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
+                this.dismiss_popover(serial, event, window, cx)
+            }))
+            .child(
+                row()
+                    .child(self.prompt_tabs(modal.kind, cx))
+                    .child(div().flex_1())
+                    .child(
+                        button("close-modal", "×").on_click(
+                            cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                        ),
+                    ),
+            )
+            .child(
+                Textarea::new(&self.prompt)
+                    .accessibility_id("agent-prompt")
+                    .aria_label("Agent prompt")
+                    .h(px(110.))
+                    .disabled(self.submitting),
+            )
+            .when(modal.kind == ModalKind::Ask, |pane| {
+                pane.child(self.provider_controls(cx))
+            })
+            .when_some(self.error.clone(), |pane, error| {
+                pane.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(0xe29595))
+                        .child(error),
+                )
+            })
+            .child(
+                row()
+                    .child(
+                        div()
+                            .flex_1()
+                            .truncate()
+                            .text_size(px(11.))
+                            .text_color(rgb(MUTED))
+                            .child(
+                                modal
+                                    .selection
+                                    .as_ref()
+                                    .map(Selection::label)
+                                    .unwrap_or_default(),
+                            ),
+                    )
+                    .child(
+                        Button::new("submit-modal")
+                            .primary()
+                            .small()
+                            .label(if self.submitting {
+                                "Working…"
+                            } else if modal.kind == ModalKind::Change {
+                                "Queue change"
+                            } else {
+                                "Ask agent"
+                            })
+                            .disabled(self.submitting)
+                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                    ),
+            );
+        deferred(
+            anchored()
+                .position(self.selection_menu)
+                .snap_to_window_with_margin(px(8.))
+                .child(pane),
+        )
+        .into_any_element()
+    }
+
+    fn annotation(&mut self, annotation: &DiffAnnotation, cx: &mut Context<Self>) -> AnyElement {
+        let comment = self
+            .state
+            .comments
+            .iter()
+            .find(|c| annotation.id() == &ElementId::Name(c.id.clone().into()));
+        let thread = self.state.threads.iter().find(|t| {
+            annotation.id() == &ElementId::Name(format!("thread-{}", t.id).into())
+                || comment.is_some_and(|c| t.comment_ids.contains(&c.id))
+        });
+        let (kind, body, id, file) = if let Some(thread) = thread {
+            (
+                if thread.kind == "question" {
+                    "Question"
+                } else {
+                    "Agent change"
+                },
+                thread.body.clone(),
+                thread.id.clone(),
+                self.file.clone(),
+            )
+        } else if let Some(comment) = comment {
+            (
+                if comment.status == "queued" {
+                    "Queued change"
+                } else {
+                    "Sent change"
+                },
+                comment.body.clone(),
+                comment.id.clone(),
+                Some(comment.selection.path.clone()),
+            )
+        } else {
+            return div().into_any_element();
+        };
+        let anchor = comment
+            .map(|c| &c.selection)
+            .or_else(|| thread.and_then(|t| t.selection.as_ref()));
+        let count = anchor
+            .map(|s| {
+                self.state
+                    .comments
+                    .iter()
+                    .filter(|c| {
+                        self.patches
+                            .get(&s.path)
+                            .is_some_and(|patch| c.digest == patch.digest)
+                            && c.selection.path == s.path
+                            && c.selection.side == s.side
+                            && c.selection.end == s.end
+                    })
+                    .count()
+                    + self
+                        .state
+                        .threads
+                        .iter()
+                        .filter(|t| {
+                            t.kind == "question"
+                                && self
+                                    .patches
+                                    .get(&s.path)
+                                    .is_some_and(|patch| t.digest.as_deref() == Some(&patch.digest))
+                                && t.selection.as_ref().is_some_and(|a| {
+                                    a.path == s.path && a.side == s.side && a.end == s.end
+                                })
+                        })
+                        .count()
+            })
+            .unwrap_or(1);
+        let label = if count > 1 {
+            format!("{count} threads")
+        } else {
+            kind.to_string()
+        };
+        row()
+            .px_2()
+            .py_1()
+            .gap_2()
+            .bg(rgb(PANEL))
+            .border_l_2()
+            .border_color(rgb(BLUE))
+            .child(div().text_size(px(11.)).text_color(rgb(BLUE)).child(label))
+            .child(
+                Button::new(SharedString::from(format!("open-thread-{id}")))
+                    .ghost()
+                    .small()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        row()
+                            .w_full()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .child(body),
+                            )
+                            .child("›"),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.show_threads(file.clone(), Some(id.clone()), window, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
         let path = file.path().to_string();
         let patch = self.patches.get(&path);
         let viewed = self.is_file_viewed(&path);
-
+        let agent_path = path.clone();
         let load_path = path.clone();
         let counts = self
             .review
@@ -669,6 +957,34 @@ impl Rev {
                 )
             })
             .child(
+                button(
+                    SharedString::from(format!("file-agent-{path}")),
+                    "Ask / change",
+                )
+                .disabled(self.loading || self.patch_loading)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_active_file(agent_path.clone(), cx);
+                    this.selection_menu = window.mouse_position();
+                    this.open_modal(
+                        ModalKind::Ask,
+                        Some(Selection {
+                            scope: Some("file".into()),
+                            path: agent_path.clone(),
+                            side: "additions".into(),
+                            start: 0,
+                            end: 0,
+                        }),
+                        None,
+                        "file-agent",
+                        window,
+                        cx,
+                    );
+                    if let Some(modal) = &mut this.modal {
+                        modal.anchor = None;
+                    }
+                })),
+            )
+            .child(
                 button(SharedString::from(format!("viewed-{path}")), "Viewed")
                     .icon(if viewed {
                         gpui_kit::assets::IconName::SquareCheck
@@ -688,6 +1004,61 @@ impl Rev {
     }
 
     pub(super) fn diff_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let mut positions = HashSet::new();
+        let mut annotations: Vec<_> = self
+            .state
+            .comments
+            .iter()
+            .filter(|c| {
+                c.selection.start > 0
+                    && self
+                        .patches
+                        .get(&c.selection.path)
+                        .is_some_and(|patch| c.digest == patch.digest)
+                    && positions.insert((
+                        c.selection.path.clone(),
+                        c.selection.side.clone(),
+                        c.selection.end,
+                    ))
+            })
+            .map(|c| {
+                DiffAnnotation::line(
+                    SharedString::from(c.id.clone()),
+                    DiffLinePosition::new(
+                        c.selection.path.clone(),
+                        c.selection.diff_side(),
+                        c.selection.end,
+                    ),
+                )
+            })
+            .collect();
+        annotations.extend(
+            self.state
+                .threads
+                .iter()
+                .filter(|thread| {
+                    !thread.archived
+                        && thread.kind == "question"
+                        && thread.selection.as_ref().is_some_and(|selection| {
+                            selection.start > 0
+                                && self.patches.get(&selection.path).is_some_and(|patch| {
+                                    thread.digest.as_deref() == Some(&patch.digest)
+                                })
+                        })
+                })
+                .filter_map(|thread| {
+                    thread
+                        .selection
+                        .as_ref()
+                        .filter(|s| positions.insert((s.path.clone(), s.side.clone(), s.end)))
+                        .map(|s| {
+                            DiffAnnotation::line(
+                                SharedString::from(format!("thread-{}", thread.id)),
+                                DiffLinePosition::new(s.path.clone(), s.diff_side(), s.end),
+                            )
+                        })
+                }),
+        );
         let owner = cx.weak_entity();
         let add_owner = owner.clone();
         let header_owner = owner.clone();
@@ -713,6 +1084,12 @@ impl Rev {
                 })
                 .soft_wrap(self.wrap)
                 .text_size(px(12.))
+                .annotations(annotations)
+                .render_annotation(move |annotation, _, cx| {
+                    owner
+                        .update(cx, |this, cx| this.annotation(annotation, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
                 .on_add_annotation(move |range, window, cx| {
                     let _ = add_owner.update(cx, |this, cx| {
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
@@ -893,15 +1270,22 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
-
+        if Self::is_selection_prompt(&modal) {
+            return if self.selecting {
+                div().into_any_element()
+            } else {
+                self.selection_prompt(&modal, window, cx)
+            };
+        }
         let title = match modal.kind {
             ModalKind::Open => "Open repository",
             ModalKind::Review => "Add branch or PR",
-
+            ModalKind::Ask => "Ask agent",
+            ModalKind::Change => "Agent change",
+            ModalKind::Changes => "Changes",
+            ModalKind::Run => "Agent response",
             ModalKind::Commits => "Commits",
             ModalKind::Details => "Review details",
-
-            _ => return div().into_any_element(),
         };
         let mut body = column().gap_3();
         let mut footer = row().justify_end().gap_2();
@@ -1005,16 +1389,227 @@ impl Rev {
                     .overflow_y_scroll()
                     .child(choices),
             );
+        } else if matches!(modal.kind, ModalKind::Ask | ModalKind::Change) {
+            body = body
+                .key_context("RevAgent")
+                .child(self.prompt_tabs(modal.kind, cx))
+                .child(
+                    div().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                        modal
+                            .selection
+                            .as_ref()
+                            .map(Selection::label)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "{} → {}",
+                                    modal.request.base.as_deref().unwrap_or("base"),
+                                    modal.request.head.as_deref().unwrap_or("HEAD")
+                                )
+                            }),
+                    ),
+                )
+                .child(
+                    Textarea::new(&self.prompt)
+                        .accessibility_id("agent-prompt")
+                        .aria_label("Agent prompt")
+                        .h(px(140.))
+                        .disabled(self.submitting),
+                );
+        } else if modal.kind == ModalKind::Changes {
+            let mut comments = column().gap_3();
+            if self.state.comments.is_empty() {
+                comments =
+                    comments.child(div().text_color(rgb(MUTED)).child("No feedback queued."));
+            }
+            for comment in self.state.comments.clone() {
+                let id = comment.id.clone();
+                let remove = id.clone();
+                let selected = self.comment_ids.contains(&id);
+                comments = comments.child(
+                    column()
+                        .gap_2()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .child(
+                            row()
+                                .child(
+                                    button(
+                                        SharedString::from(format!("select-{id}")),
+                                        if comment.status == "sent" {
+                                            "Sent"
+                                        } else if selected {
+                                            "☑"
+                                        } else {
+                                            "☐"
+                                        },
+                                    )
+                                    .disabled(comment.status == "sent" || self.submitting)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            if !this.comment_ids.remove(&id) {
+                                                this.comment_ids.insert(id.clone());
+                                            }
+                                            this.preview = None;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_color(rgb(MUTED))
+                                        .text_size(px(11.))
+                                        .child(comment.selection.label()),
+                                )
+                                .child(
+                                    button(
+                                        SharedString::from(format!("remove-{remove}")),
+                                        "Remove",
+                                    )
+                                    .disabled(self.submitting)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.delete_comment(remove.clone(), window, cx)
+                                        },
+                                    )),
+                                ),
+                        )
+                        .child(div().child(comment.body)),
+                );
+            }
+            body = body.child(comments);
+            footer = footer.child(
+                button("preview-prompt", "Preview prompt")
+                    .disabled(self.submitting || self.comment_ids.is_empty())
+                    .on_click(cx.listener(|this, _, window, cx| this.preview_prompt(window, cx))),
+            );
+        } else if modal.kind == ModalKind::Run {
+            if let Some(run) = self.runs.get(&modal.tab) {
+                body = body.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(MUTED))
+                        .child(format!(
+                            "{} · {}",
+                            if run.mode == "apply" {
+                                "Agent changes"
+                            } else {
+                                "Question"
+                            },
+                            run.status
+                        )),
+                );
+                for (index, event) in run.events.iter().enumerate() {
+                    body = body.child(if event.kind == "message" {
+                        TextView::markdown(("agent-message", index), event.text.clone())
+                            .selectable(true)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(if event.kind == "error" {
+                                0xe29595
+                            } else {
+                                MUTED
+                            }))
+                            .child(event.text.clone())
+                            .into_any_element()
+                    });
+                }
+                if run.events.is_empty() {
+                    body = body.child(div().text_color(rgb(MUTED)).child("Starting agent…"));
+                }
+                for approval in &run.approvals {
+                    let allow_id = approval.id.clone();
+                    let deny_id = approval.id.clone();
+                    body = body.child(
+                        div()
+                            .p_3()
+                            .bg(rgb(PANEL))
+                            .child(div().child(approval.title.clone()))
+                            .child(div().text_size(px(12.)).child(approval.detail.clone()))
+                            .child(
+                                row()
+                                    .gap_2()
+                                    .child(
+                                        button(
+                                            SharedString::from(format!("deny-{}", approval.id)),
+                                            "Deny",
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.approve_run(deny_id.clone(), false, window, cx)
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        button(
+                                            SharedString::from(format!("allow-{}", approval.id)),
+                                            "Allow once",
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.approve_run(allow_id.clone(), true, window, cx)
+                                            }),
+                                        ),
+                                    ),
+                            ),
+                    );
+                }
+                if run.is_active() {
+                    footer =
+                        footer.child(button("stop-agent", "Stop").on_click(
+                            cx.listener(|this, _, window, cx| this.cancel_run(window, cx)),
+                        ));
+                }
+                let transcript = run
+                    .events
+                    .iter()
+                    .map(|event| event.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                footer = footer.child(button("copy-response", "Copy").on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(transcript.clone()))
+                }));
+            }
+            footer = footer.child(
+                button("close-response", "Close")
+                    .on_click(cx.listener(|this, _, window, cx| this.close_modal(window, cx))),
+            );
         }
-
+        if matches!(modal.kind, ModalKind::Ask | ModalKind::Changes) {
+            body = body.child(self.provider_controls(cx));
+        }
+        if let Some(preview) = &self.preview {
+            let text = preview.clone();
+            body = body
+                .child(row().child(div().flex_1().child("Prompt preview")).child(
+                    button("copy-prompt", "Copy").on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                    }),
+                ))
+                .child(
+                    div()
+                        .p_3()
+                        .bg(rgb(PANEL))
+                        .text_size(px(11.))
+                        .font_family("Menlo")
+                        .child(preview.clone()),
+                );
+        }
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(0xe29595)).child(error.clone()));
         }
-        if modal.kind != ModalKind::Details {
+        if !matches!(modal.kind, ModalKind::Run | ModalKind::Details) {
             let label = if self.submitting || self.loading {
                 "Working…"
             } else {
                 match modal.kind {
+                    ModalKind::Ask => "Ask agent",
+                    ModalKind::Change => "Queue change",
+                    ModalKind::Changes => "Send to agent",
                     ModalKind::Commits => "View diff",
                     ModalKind::Open => "Add project",
                     _ => "Open review",
@@ -1027,7 +1622,8 @@ impl Rev {
                     .disabled(
                         self.submitting
                             || self.loading
-                            || (modal.kind == ModalKind::Commits && self.commit_picker.loading),
+                            || (modal.kind == ModalKind::Commits && self.commit_picker.loading)
+                            || (modal.kind == ModalKind::Changes && self.comment_ids.is_empty()),
                     )
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
@@ -1036,10 +1632,10 @@ impl Rev {
         let width = px(match modal.kind {
             ModalKind::Open | ModalKind::Review => 420.,
             ModalKind::Commits => 480.,
-
+            ModalKind::Ask | ModalKind::Change => 460.,
+            ModalKind::Changes => 520.,
+            ModalKind::Run => 600.,
             ModalKind::Details => 560.,
-
-            _ => return div().into_any_element(),
         })
         .min((window.viewport_size().width - px(16.)).max(px(120.)));
         let serial = modal.serial;
@@ -1111,13 +1707,33 @@ impl Render for Rev {
         // Sample once so the titlebar, sidebar and review controls move together.
         let sidebar = motion::reveal("sidebar-reveal", !self.sidebar_collapsed, window, cx);
         let content = if self.review.is_some() {
-            let body = row()
-                .gap_0()
-                .items_start()
-                .flex_1()
-                .min_h_0()
-                .child(self.diff_view(window, cx))
-                .into_any_element();
+            let thread_progress =
+                motion::reveal("thread-sidebar-reveal", self.threads_visible, window, cx);
+            let available =
+                f32::from(window.viewport_size().width) - motion::SIDEBAR_WIDTH * sidebar;
+            let thread_width = (available * 0.34).clamp(280., 360.);
+            let body =
+                row()
+                    .gap_0()
+                    .items_start()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.diff_view(window, cx))
+                    .child(
+                        div()
+                            .id("thread-sidebar-clip")
+                            .w(px(thread_width * thread_progress))
+                            .h_full()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .opacity(thread_progress)
+                            .when(self.threads_visible || thread_progress > 0., |d| {
+                                d.child(self.threads_pane.clone().cached(
+                                    StyleRefinement::default().w(px(thread_width)).h_full(),
+                                ))
+                            }),
+                    )
+                    .into_any_element();
             column()
                 .flex_1()
                 .min_w_0()
@@ -1213,8 +1829,25 @@ impl Render for Rev {
                 };
                 this.open_modal(ModalKind::Open, None, None, anchor, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &AskReview, window, cx| {
+                if this.review.is_some() {
+                    this.open_modal(ModalKind::Ask, None, None, "ask-review", window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PromptAsk, window, cx| {
+                this.switch_prompt_mode(ModalKind::Ask, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &PromptChange, window, cx| {
+                this.switch_prompt_mode(ModalKind::Change, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &TogglePromptMode, window, cx| {
+                this.toggle_prompt_mode(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleThreads, window, cx| this.toggle_threads(window, cx)),
             )
             .on_action(
                 cx.listener(|this, _: &NextTab, window, cx| this.navigate_tab(1, window, cx)),
@@ -1286,7 +1919,8 @@ impl Render for Rev {
             .when(
                 self.modal.as_ref().is_some_and(|m| m.anchor.is_none()),
                 |d| {
-                    let selection_prompt = false;
+                    let selection_prompt =
+                        self.modal.as_ref().is_some_and(Self::is_selection_prompt);
                     let panel = self.popover(window, cx);
                     if selection_prompt {
                         d.child(panel)
