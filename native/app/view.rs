@@ -174,7 +174,7 @@ fn row() -> Div {
 fn icon_actions() -> Div {
     row().gap(px(UI_SPACING)).flex_shrink_0()
 }
-fn column() -> Div {
+pub(super) fn column() -> Div {
     div().flex().flex_col()
 }
 fn file_header_row() -> Div {
@@ -229,7 +229,7 @@ fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Base
         .child(label)
 }
 
-fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
+pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
     button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
 }
 
@@ -548,6 +548,24 @@ impl Rev {
                         .child(
                             icon_actions()
                                 .id("review-header-actions")
+                                .child(
+                                    self.popover_button(
+                                        "review-details",
+                                        icon_button(
+                                            "review-details",
+                                            "Review details",
+                                            IconName::Info,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_review_details(window, cx)
+                                            }),
+                                        ),
+                                        Anchor::TopRight,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                                 .child(
                                     self.popover_button(
                                         "choose-commits",
@@ -1260,7 +1278,10 @@ impl Rev {
             return div().into_any_element();
         };
         let is_commits = modal.kind == ModalKind::Commits;
-        let title = if is_commits {
+        let is_details = modal.kind == ModalKind::Details;
+        let title = if is_details {
+            "Review details in"
+        } else if is_commits {
             "Review commits in"
         } else {
             "Open branch or PR in"
@@ -1269,6 +1290,8 @@ impl Rev {
         let mut footer = icon_actions().justify_end();
         if is_commits {
             body = body.child(self.commit_choices(cx));
+        } else if is_details {
+            body = body.child(self.review_details());
         } else {
             let mut choices = column().gap(px(2.));
             for (i, branch) in modal.local_branches.iter().enumerate() {
@@ -1380,7 +1403,7 @@ impl Rev {
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
-        {
+        if !is_details {
             let label = if self.submitting {
                 "Working…"
             } else {
@@ -1465,15 +1488,17 @@ impl Rev {
                     .p(px(POPOVER_PADDING))
                     .child(body),
             )
-            .child(
-                div()
-                    .px(px(POPOVER_PADDING))
-                    .py(px(UI_SPACING))
-                    .flex_shrink_0()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(footer),
-            )
+            .when(!is_details, |dialog| {
+                dialog.child(
+                    div()
+                        .px(px(POPOVER_PADDING))
+                        .py(px(UI_SPACING))
+                        .flex_shrink_0()
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(footer),
+                )
+            })
             .focus_trap("modal-trap", &self.modal_focus)
             .into_any_element()
     }
@@ -1918,6 +1943,7 @@ mod performance_tests {
                     head_ref_name: "feature".into(),
                     base_ref_name: "main".into(),
                     comparison_base_ref_name: None,
+                    ..Default::default()
                 });
                 app
             }),
