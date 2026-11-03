@@ -8,7 +8,7 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListOffset, ListState, Pixels, ScrollHandle, SharedString, Size, Subscription, Task, Window,
+    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
     WindowId, point, px,
 };
 use gpui_kit::base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
@@ -508,6 +508,22 @@ impl DiffState {
     pub fn selected_lines(&self) -> Option<DiffLineRange> {
         self.selected_lines.clone()
     }
+    /// Exact source lines touched by the native text selection. End offsets
+    /// are exclusive, so stopping at the next line's start does not include it.
+    pub fn selected_text_lines(&self, cx: &App) -> Option<DiffLineRange> {
+        let (file, side, range) = super::selection::selected_source_range(&self.selection, cx)?;
+        let document = self.files.get(file)?;
+        let lines = document.lines(side);
+        let first = lines.get(lines.partition_point(|line| line.source().end <= range.start))?;
+        let last = lines.get(lines.partition_point(|line| line.source().start < range.end).checked_sub(1)?)?;
+        Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
+    }
+
+    /// Whether a native text gesture is still held, including an empty range.
+    pub fn is_selecting_text(&self, cx: &App) -> bool {
+        self.selection.snapshot(cx).is_some_and(|snapshot| snapshot.is_selecting())
+    }
+
     /// Whether the file at `path` shows only its header.
     pub fn is_file_collapsed(&self, path: &str) -> bool {
         self.collapsed.contains(path)
@@ -900,6 +916,19 @@ impl DiffState {
     fn can_extend(&self, anchor: &DiffLinePosition, position: &DiffLinePosition) -> bool {
         anchor.path() == position.path()
             && (anchor.side() == position.side() || self.mode == DiffMode::Unified)
+    }
+
+    pub(crate) fn drag_line_selection_at(&mut self, point: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.selecting {
+            return;
+        }
+        let position = self
+            .selection_anchor
+            .as_ref()
+            .and_then(|anchor| self.geometry.borrow().line_at(point, anchor, self.mode));
+        if let Some(position) = position {
+            self.drag_line_selection(position, cx);
+        }
     }
 
     /// Finishes an active line-number gesture.

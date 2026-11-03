@@ -77,6 +77,8 @@ pub struct Rev {
     patch: FilePatch,
     diff: Entity<DiffState>,
     selection: Option<Selection>,
+    selecting: bool,
+    selection_menu: Point<Pixels>,
     filter: Entity<InputState>,
     collapsed_file_folders: HashMap<String, HashSet<String>>,
     filtered_file_folders: HashSet<String>,
@@ -206,15 +208,39 @@ impl Rev {
                     cx.notify();
                 }
             }),
-            cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, _, cx| {
-                match event {
-                    DiffEvent::SelectionEnded(range) | DiffEvent::SelectionChanged(Some(range)) => {
-                        this.selection = Selection::from_range(range);
-                        if this.selection.is_none() {
-                            this.error = Some("Select lines on one side of the diff.".into());
-                        }
+            cx.observe_in(&diff, window, |this, diff, window, cx| {
+                let state = diff.read(cx);
+                if state.selected_lines().is_some() {
+                    return;
+                } // Gutter/keyboard events own this range.
+                let previous = (this.selecting, this.selection.clone());
+                let selecting = state.is_selecting_text(cx);
+                let range = state.selected_text_lines(cx);
+                if selecting {
+                    this.selecting = true;
+                } else if let Some(range) = range {
+                    this.selecting = false;
+                    if this.selection != Selection::from_range(&range) {
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(&range);
                     }
-                    DiffEvent::SelectionChanged(None) => this.selection = None,
+                } else if this.selecting {
+                    this.selecting = false;
+                    this.selection = None;
+                }
+                if previous != (this.selecting, this.selection.clone()) {
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, window, cx| {
+                match event {
+                    DiffEvent::SelectionStarted(_) => this.selecting = true,
+                    DiffEvent::SelectionEnded(range) => {
+                        this.selecting = false;
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(range);
+                    }
+                    DiffEvent::SelectionChanged(None) if !this.selecting => this.selection = None,
                     _ => {}
                 }
                 cx.notify();
@@ -239,6 +265,8 @@ impl Rev {
             file_scroll: UniformListScrollHandle::default(),
             #[cfg(test)]
             file_rows_rendered: Default::default(),
+            selecting: false,
+            selection_menu: Point::default(),
             fields,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
@@ -466,6 +494,7 @@ impl Rev {
         self.selection = None;
         self.patch = FilePatch::default();
         self.error = None;
+        self.selecting = false;
         self.notice = None;
         self.diff.update(cx, |diff, cx| diff.set_files([], cx));
         self.rpc(
@@ -662,8 +691,14 @@ impl Rev {
         self.selection = None;
         self.diff
             .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
+        self.selecting = false;
+        gpui_kit::base::TextSelection::clear(window, cx);
         self.focus.focus(window, cx);
         cx.notify();
+    }
+
+    fn accept_selection(&mut self, range: &DiffLineRange) {
+        self.selection = Selection::from_range(range);
     }
 
     fn open_branch_modal(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
