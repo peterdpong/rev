@@ -12,7 +12,10 @@
     "start": "npm run build:host && cargo run --bin rev --",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "demo": "node --import tsx scripts/demo.ts"
+    "demo": "node --import tsx scripts/demo.ts",
+    "build": "npm run build:host && cargo build --release --locked",
+    "bundle": "npm run build:host && node scripts/bundle.mjs",
+    "test:native": "cargo test --locked"
   },
   "engines": {
     "node": ">=22"
