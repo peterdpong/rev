@@ -10,7 +10,7 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
 };
 
@@ -74,6 +74,7 @@ pub struct Rev {
     file: Option<String>,
     patch: FilePatch,
     patches: HashMap<String, FilePatch>,
+    loading_patches: HashSet<String>,
     diff: Entity<DiffView>,
     file_list: Entity<FileList>,
     commit_picker: CommitPicker,
@@ -144,6 +145,7 @@ impl Rev {
             file: None,
             patch: FilePatch::default(),
             patches: HashMap::new(),
+            loading_patches: HashSet::new(),
             diff,
             file_list,
             commit_picker: CommitPicker::default(),
@@ -208,6 +210,7 @@ impl Rev {
                 match event {
                     DiffViewEvent::ToggleViewed(path) => this.mark_file_viewed(path.clone(), window, cx),
                     DiffViewEvent::VisibleFileChanged(path) => this.set_active_file(path.clone(), cx),
+                    DiffViewEvent::LoadFile(path) => this.load_file_patch(path.clone(), window, cx),
                 }
             }),
         ]
@@ -292,12 +295,13 @@ impl Rev {
         // any pending patch, so its loading flag must clear here.
         self.review_epoch += 1;
         self.file_epoch += 1;
-        self.patch_loading = false;
+        self.loading_patches.clear();
         let epoch = self.review_epoch;
 
-        // Patches are fetched per file by `load_file`, so skip them here.
+        // Load the review summary first; diff previews are fetched separately.
         let mut params = json!(request);
         params["patches"] = json!(false);
+        params["preview"] = json!(true);
 
         self.rpc(
             "review",
@@ -506,7 +510,8 @@ impl Rev {
                 self.patches.clear();
                 self.file_epoch += 1;
                 self.patch_loading = false;
-                self.diff.update(cx, |diff, cx| diff.set_files([], cx));
+                self.loading_patches.clear();
+                        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
             }
         }
         cx.notify();
