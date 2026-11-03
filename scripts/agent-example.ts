@@ -1,7 +1,6 @@
 import { parseArgs } from 'node:util';
 import { rootOf } from '../core/git';
-import { codex } from '../core/providers/codex';
-import { executable } from '../core/providers/executable';
+import { executable, providerAdapter } from '../core/providers';
 
 // A connection example, deliberately separate from the PR review runner.
 async function main() {
@@ -10,11 +9,16 @@ async function main() {
     options: {
       repo: { type: 'string' },
       session: { type: 'string' },
+      agent: { type: 'string' },
     },
   });
   const question = positionals.join(' ').trim();
   if (!values.repo || !question) {
     throw new Error('Pass --repo <folder> and a question.');
+  }
+  const provider = values.agent || 'codex';
+  if (provider !== 'codex' && provider !== 'claude') {
+    throw new Error('Choose --agent codex or --agent claude.');
   }
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -22,8 +26,8 @@ async function main() {
   const timer = setTimeout(abort, 120_000);
   const messages = new Map<string, string>();
   try {
-    await codex.run({
-      executable: await executable('codex'),
+    await providerAdapter(provider).run({
+      executable: await executable(provider),
       cwd: await rootOf(values.repo),
       mode: 'ask',
       prompt: `Answer only. Do not edit files, commit, push, or switch branches.\nHuman question: ${question}`,

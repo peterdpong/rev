@@ -1,4 +1,4 @@
-export type Provider = 'codex';
+export type Provider = 'codex' | 'claude';
 
 export type AgentEvent = {
   kind: 'message' | 'activity' | 'error';

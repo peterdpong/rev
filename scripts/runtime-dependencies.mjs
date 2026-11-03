@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { cp, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
-// Preserve the relative resources of any production packages left external by esbuild.
+// esbuild leaves packages external. Keep the SDK's relative resources and its
+// runtime dependency graph intact in the .app; never bundle another agent CLI.
 export async function copyRuntimeDependencies(
   destination,
   root = process.cwd(),
@@ -14,7 +15,11 @@ export async function copyRuntimeDependencies(
   )
     .trim()
     .split('\n');
-  const selected = packages.filter((file) => file !== root);
+  const selected = packages.filter(
+    (file) =>
+      file !== root &&
+      !/[/\\]@anthropic-ai[/\\]claude-agent-sdk-[^/\\]+$/.test(file),
+  );
   for (const file of selected) {
     const relative = path.relative(root, file);
     if (!relative.startsWith('node_modules' + path.sep)) {
