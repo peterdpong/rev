@@ -42,6 +42,8 @@ pub struct File {
     pub status: String,
     pub added: usize,
     pub removed: usize,
+    #[serde(default)]
+    pub ignored: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Review {
@@ -107,6 +109,8 @@ pub struct PullRequest {
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Selection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     pub path: String,
     pub side: String,
     pub start: usize,
@@ -120,6 +124,7 @@ impl Selection {
             return None;
         }
         Some(Self {
+            scope: None,
             path: range.path().to_string(),
             side: match range.side() {
                 DiffSide::Original => "deletions",
@@ -138,6 +143,12 @@ impl Selection {
         }
     }
     pub fn label(&self) -> String {
+        if self.scope.as_deref() == Some("review") {
+            return "Entire review".into();
+        }
+        if self.scope.as_deref() == Some("file") {
+            return self.path.clone();
+        }
         format!("{}:{}–{} · {}", self.path, self.start, self.end, self.side)
     }
 }

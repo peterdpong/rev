@@ -312,6 +312,7 @@ impl Element for CodeText {
         if let Some((file, side, range)) = selected_source_range(&self.selection, cx)
             && file == self.file
             && side == self.side
+            && range.start >= line.source().start && range.end <= line.source().end
         {
             let start = range.start.max(line.source().start);
             let end = range.end.min(line.content_end());
