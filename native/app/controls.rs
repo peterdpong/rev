@@ -56,6 +56,12 @@ impl RenderOnce for FolderIcon {
     }
 }
 
+pub(super) const MOTION_DURATION: std::time::Duration = std::time::Duration::from_millis(160);
+
+pub(super) fn motion_transition() -> motion::Transition {
+    motion::Transition::new(MOTION_DURATION).ease(ease_out_quint())
+}
+
 pub(super) fn row() -> Div {
     div().flex().items_center().gap_2()
 }

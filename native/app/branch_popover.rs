@@ -1,5 +1,6 @@
 use super::controls::*;
-use super::{CloseModal, Rev, Submit, decode};
+use super::popover::*;
+use super::{ClosePopover, Rev, Submit, decode};
 use crate::{model::ReviewRequest, theme::*};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -9,19 +10,46 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
+use std::time::Duration;
+
+const BRANCHES_REVEAL_TIMEOUT: Duration = Duration::from_millis(250);
+
+pub(super) struct BranchPopover {
+    pub(super) form: Option<BranchForm>,
+    pub(super) closing: Option<BranchForm>,
+    pub(super) focus: FocusHandle,
+    pub(super) serial: u64,
+}
+
+impl BranchPopover {
+    pub(super) fn new(cx: &mut App) -> Self {
+        Self {
+            form: None,
+            closing: None,
+            focus: cx.focus_handle(),
+            serial: 0,
+        }
+    }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.form.is_some()
+    }
+}
 
 #[derive(Clone)]
-pub(super) struct Modal {
+pub(super) struct BranchForm {
     pub(super) request: ReviewRequest,
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
     pub(super) serial: u64,
+    pub(super) anchor: Option<SharedString>,
     pub(super) local_branches: Vec<String>,
     pub(super) branches_loading: bool,
     pub(super) branches_error: Option<String>,
+    pub(super) ready: bool,
 }
 
-impl Modal {
+impl BranchForm {
     pub(super) fn manual_request(&self, cx: &App) -> ReviewRequest {
         let base = self.base_input.read(cx).value().trim().to_string();
         let head = self.head_input.read(cx).value().trim().to_string();
@@ -46,17 +74,23 @@ impl Modal {
 }
 
 impl Rev {
-    pub(super) fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.modal = None;
+    pub(super) fn close_branch_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let closing = self.branch_popover.is_open();
+        if let Some(form) = self.branch_popover.form.take().filter(|form| form.ready) {
+            self.branch_popover.closing = Some(form);
+        }
 
-        self.modal_serial += 1;
+        self.branch_popover.serial += 1;
         self.diff.update(cx, |diff, cx| diff.clear_selection(cx));
         gpui_kit::base::TextSelection::clear(window, cx);
-        self.focus.focus(window, cx);
+
+        if closing && self.branch_popover.focus.contains_focused(window, cx) {
+            self.focus.focus(window, cx);
+        }
         cx.notify();
     }
 
-    pub(super) fn open_branch_modal(
+    pub(super) fn open_branch_popover(
         &mut self,
         repo: String,
         window: &mut Window,
@@ -65,48 +99,91 @@ impl Rev {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
             return;
         }
-        self.close_modal(window, cx);
+        if self
+            .branch_popover
+            .form
+            .as_ref()
+            .is_some_and(|m| m.request.repo == repo)
+        {
+            self.close_branch_popover(window, cx);
+            return;
+        }
+
+        self.close_branch_popover(window, cx);
         self.error = None;
+
         let request = ReviewRequest {
             repo,
             ..Default::default()
         };
-        let modal = Modal {
+        let form = BranchForm {
             request: request.clone(),
             base_input: cx.new(|cx| InputState::new(window, cx).placeholder("Auto-detect base")),
             head_input: cx.new(|cx| {
                 InputState::new(window, cx).placeholder("Branch, #123 or PR URL (default: HEAD)")
             }),
-            serial: self.modal_serial,
+            serial: self.branch_popover.serial,
+            anchor: Some(format!("add-{}", request.repo).into()),
             local_branches: Vec::new(),
             branches_loading: self.backend.is_some(),
             branches_error: self
                 .backend
                 .is_none()
                 .then(|| "The local service is unavailable. Restart Rev.".into()),
+            ready: false,
         };
-        self.modal = Some(modal);
-        self.modal_focus.focus(window, cx);
+        let serial = form.serial;
+        self.branch_popover.form = Some(form);
+
         if self.backend.is_some() {
-            let serial = self.modal_serial;
             self.rpc(
                 "branches",
                 json!({ "repo": request.repo, "localOnly": true }),
                 window,
                 cx,
-                move |this, result, _, _| {
-                    let Some(modal) = this.modal.as_mut().filter(|modal| modal.serial == serial)
+                move |this, result, _, cx| {
+                    let Some(form) = this
+                        .branch_popover
+                        .form
+                        .as_mut()
+                        .filter(|form| form.serial == serial)
                     else {
                         return;
                     };
-                    modal.branches_loading = false;
+
+                    form.branches_loading = false;
                     match result.and_then(decode::<Vec<String>>) {
-                        Ok(branches) => modal.local_branches = branches,
-                        Err(error) => modal.branches_error = Some(error),
+                        Ok(branches) => form.local_branches = branches,
+                        Err(error) => form.branches_error = Some(error),
                     }
+                    this.reveal_branch_popover(serial, cx);
                 },
             );
+
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(BRANCHES_REVEAL_TIMEOUT)
+                    .await;
+                let _ = this.update(cx, |this, cx| this.reveal_branch_popover(serial, cx));
+            })
+            .detach();
+        } else {
+            self.reveal_branch_popover(serial, cx);
         }
+
+        cx.notify();
+    }
+
+    fn reveal_branch_popover(&mut self, serial: u64, cx: &mut Context<Self>) {
+        let Some(form) = self
+            .branch_popover
+            .form
+            .as_mut()
+            .filter(|form| form.serial == serial && !form.ready)
+        else {
+            return;
+        };
+        form.ready = true;
         cx.notify();
     }
 
@@ -120,13 +197,13 @@ impl Rev {
         if self.submitting || self.loading || self.patch_loading || self.workspace_busy {
             return;
         }
-        let Some(modal) = self.modal.as_ref().filter(|modal| {
-            modal.serial == serial && modal.local_branches.iter().any(|name| name == branch)
+        let Some(form) = self.branch_popover.form.as_ref().filter(|form| {
+            form.serial == serial && form.local_branches.iter().any(|name| name == branch)
         }) else {
             return;
         };
-        let request = modal.local_branch_request(branch);
-        self.close_modal(window, cx);
+        let request = form.local_branch_request(branch);
+        self.close_branch_popover(window, cx);
         self.load_review(request, None, window, cx);
     }
 
@@ -134,11 +211,11 @@ impl Rev {
         if self.submitting {
             return;
         }
-        let Some(modal) = self.modal.clone() else {
+        let Some(form) = self.branch_popover.form.clone() else {
             return;
         };
         self.error = None;
-        let request = modal.manual_request(cx);
+        let request = form.manual_request(cx);
         if request.repo.is_empty() {
             self.error = Some("Choose a repository folder.".into());
             return;
@@ -148,7 +225,7 @@ impl Rev {
             || head.starts_with('#')
             || head.parse::<u64>().is_ok()
         {
-            let serial = modal.serial;
+            let serial = form.serial;
             self.submitting = true;
             self.rpc(
                 "pr",
@@ -161,14 +238,19 @@ impl Rev {
                 cx,
                 move |this, result, window, cx| {
                     this.submitting = false;
-                    if this.modal.as_ref().is_none_or(|open| open.serial != serial) {
+                    if this
+                        .branch_popover
+                        .form
+                        .as_ref()
+                        .is_none_or(|open| open.serial != serial)
+                    {
                         return;
                     }
                     if let Some(value) = this.result(result) {
                         match decode(value) {
                             Ok(request) => {
-                                if this.modal_serial == serial {
-                                    this.close_modal(window, cx);
+                                if this.branch_popover.serial == serial {
+                                    this.close_branch_popover(window, cx);
                                 }
                                 this.load_review(request, None, window, cx);
                             }
@@ -178,7 +260,7 @@ impl Rev {
                 },
             );
         } else {
-            self.close_modal(window, cx);
+            self.close_branch_popover(window, cx);
             self.load_review(request, None, window, cx);
         }
         cx.notify();
@@ -219,18 +301,21 @@ impl Rev {
             .into_any_element()
     }
 
-    pub(super) fn dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(modal) = self.modal.clone() else {
-            return div().into_any_element();
-        };
+    pub(super) fn branch_popover_content(
+        &self,
+        form: &BranchForm,
+        interactive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let title = "Open branch or PR in";
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
         {
             let mut choices = column().gap(px(2.));
-            for (i, branch) in modal.local_branches.iter().enumerate() {
+            for (i, branch) in form.local_branches.iter().enumerate() {
                 let branch = branch.clone();
-                let serial = modal.serial;
+                let serial = form.serial;
                 choices = choices.child(
                     choice_button(("local-branch", i), false)
                         .disabled(self.submitting)
@@ -265,7 +350,7 @@ impl Rev {
                         })),
                 );
             }
-            if modal.branches_loading {
+            if form.branches_loading {
                 choices = choices.child(
                     div()
                         .px(px(CONTROL_PADDING))
@@ -273,7 +358,7 @@ impl Rev {
                         .text_color(rgb(MUTED))
                         .child("Loading local branches…"),
                 );
-            } else if let Some(error) = &modal.branches_error {
+            } else if let Some(error) = &form.branches_error {
                 choices = choices.child(
                     div()
                         .px(px(CONTROL_PADDING))
@@ -281,7 +366,7 @@ impl Rev {
                         .text_color(rgb(DANGER))
                         .child(error.clone()),
                 );
-            } else if modal.local_branches.is_empty() {
+            } else if form.local_branches.is_empty() {
                 choices = choices.child(
                     div()
                         .px(px(CONTROL_PADDING))
@@ -319,12 +404,16 @@ impl Rev {
                             row()
                                 .items_start()
                                 .gap(px(POPOVER_PADDING))
-                                .child(self.form_field(&modal.base_input, "base-input",
+                                .child(self.form_field(
+                                    &form.base_input,
+                                    "base-input",
                                     "Base",
                                     "Base branch; leave blank to detect",
                                 ))
                                 .child(div().flex().w(relative(0.65)).min_w_0().child(
-                                    self.form_field(&modal.head_input, "head-input",
+                                    self.form_field(
+                                        &form.head_input,
+                                        "head-input",
                                         "Branch or PR",
                                         "Branch, PR number or URL; leave blank for HEAD",
                                     ),
@@ -342,112 +431,104 @@ impl Rev {
                 "Open diff"
             };
             footer = footer.child(
-                primary_button("submit-modal", label)
+                primary_button("submit-popover", label)
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
-        let max_height = (window.viewport_size().height - px(110.)).max(px(220.));
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
-            .child(
-                column()
-                    .w(px(650.))
-                    .max_w_full()
-                    .max_h(max_height)
-                    .m_6()
-                    .bg(rgb(SURFACE))
-                    .border_1()
-                    .border_color(rgb(CONTROL_BORDER))
-                    .rounded(px(CONTROL_RADIUS))
-                    .shadow_lg()
-                    .track_focus(&self.modal_focus)
-                    .key_context("PatchModal")
-                    .on_action(
-                        cx.listener(|this, _: &CloseModal, window, cx| {
-                            this.close_modal(window, cx)
-                        }),
-                    )
+        let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
+        popover_surface()
+            .id("review-popover")
+            .debug_selector(|| "review-popover".into())
+            .when(interactive, |d| {
+                d.track_focus(&self.branch_popover.focus)
+                    .key_context("RevPopover")
+                    .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
+                        this.close_branch_popover(window, cx)
+                    }))
                     .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
+            })
+            .w(px(650.))
+            .max_w_full()
+            .max_h(max_height)
+            .child(
+                row()
+                    .h(px(HEADER_HEIGHT))
+                    .flex_shrink_0()
+                    .pl(px(POPOVER_PADDING))
+                    .pr(px(UI_SPACING))
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
-                        row()
-                            .h(px(HEADER_HEIGHT))
+                        div()
                             .flex_shrink_0()
-                            .pl(px(POPOVER_PADDING))
-                            .pr(px(UI_SPACING))
-                            .border_b_1()
-                            .border_color(rgb(BORDER))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .map(|d| {
-                                let name = std::path::Path::new(&modal.request.repo)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| modal.request.repo.clone());
-                                d.child(
-                                    header_pill()
-                                        .max_w(px(200.))
-                                        .text_color(rgb(TEXT))
-                                        .child(
-                                            Icon::new(IconName::Folder)
-                                                .size(px(14.))
-                                                .text_color(rgb(MUTED))
-                                                .flex_shrink_0(),
-                                        )
-                                        .child(div().min_w_0().truncate().child(name)),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .map(|d| {
+                        let name = std::path::Path::new(&form.request.repo)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| form.request.repo.clone());
+                        d.child(
+                            header_pill()
+                                .max_w(px(200.))
+                                .text_color(rgb(TEXT))
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(14.))
+                                        .text_color(rgb(MUTED))
+                                        .flex_shrink_0(),
                                 )
-                            })
-                            .child(div().flex_1().min_w_0())
-                            .child(
-                                icon_button("close-modal", "Close", IconName::Close)
-                                    .flex_shrink_0()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_modal(window, cx)
-                                    })),
-                            ),
-                    )
+                                .child(div().min_w_0().truncate().child(name)),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0())
                     .child(
-                        div()
-                            .id("modal-body")
-                            .min_h_0()
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p(px(POPOVER_PADDING))
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .px(px(POPOVER_PADDING))
-                            .py(px(UI_SPACING))
+                        icon_button("close-popover", "Close", IconName::Close)
                             .flex_shrink_0()
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .child(footer),
-                    )
-                    .focus_trap("modal-trap", &self.modal_focus),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_branch_popover(window, cx)
+                            })),
+                    ),
             )
-            .into_any_element()
+            .child(
+                div()
+                    .id("popover-body")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p(px(POPOVER_PADDING))
+                    .child(body),
+            )
+            .child(
+                div()
+                    .px(px(POPOVER_PADDING))
+                    .py(px(UI_SPACING))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(footer),
+            )
+            .map(|d| {
+                if interactive {
+                    d.focus_trap("popover-trap", &self.branch_popover.focus)
+                        .into_any_element()
+                } else {
+                    d.into_any_element()
+                }
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Modal;
+    use super::BranchForm;
     use crate::model::{CommitRange, ReviewRequest};
     use gpui_kit::{App, AppContext, TestAppContext, Window, component::input::InputState};
 
-    fn repo_modal(window: &mut Window, cx: &mut App) -> Modal {
-        Modal {
+    fn repo_form(window: &mut Window, cx: &mut App) -> BranchForm {
+        BranchForm {
             request: ReviewRequest {
                 repo: "/selected-repo".into(),
                 base: Some("old-base".into()),
@@ -461,9 +542,11 @@ mod tests {
             base_input: cx.new(|cx| InputState::new(window, cx)),
             head_input: cx.new(|cx| InputState::new(window, cx)),
             serial: 1,
+            anchor: None,
             local_branches: vec!["feature".into()],
             branches_loading: false,
             branches_error: None,
+            ready: true,
         }
     }
 
@@ -471,15 +554,13 @@ mod tests {
     fn manual_diff_uses_the_repo_context_and_explicit_comparison(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         cx.add_empty_window().update(|window, cx| {
-            let modal = repo_modal(window, cx);
-            modal
-                .base_input
+            let form = repo_form(window, cx);
+            form.base_input
                 .update(cx, |input, cx| input.set_value(" custom-base ", window, cx));
-            modal
-                .head_input
+            form.head_input
                 .update(cx, |input, cx| input.set_value(" #123 ", window, cx));
 
-            let request = modal.manual_request(cx);
+            let request = form.manual_request(cx);
             assert_eq!(request.repo, "/selected-repo");
             assert_eq!(request.base.as_deref(), Some("custom-base"));
             assert_eq!(request.head.as_deref(), Some("#123"));
@@ -494,19 +575,17 @@ mod tests {
     ) {
         cx.update(gpui_kit::init);
         cx.add_empty_window().update(|window, cx| {
-            let modal = repo_modal(window, cx);
-            let defaults = modal.manual_request(cx);
+            let form = repo_form(window, cx);
+            let defaults = form.manual_request(cx);
             assert_eq!(defaults.base, None);
             assert_eq!(defaults.head, None);
             assert_eq!(defaults.mode.as_deref(), Some("branch"));
 
-            modal
-                .base_input
+            form.base_input
                 .update(cx, |input, cx| input.set_value("custom-base", window, cx));
-            modal
-                .head_input
+            form.head_input
                 .update(cx, |input, cx| input.set_value("#123", window, cx));
-            let request = modal.local_branch_request("feature");
+            let request = form.local_branch_request("feature");
             assert_eq!(
                 request,
                 ReviewRequest {

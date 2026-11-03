@@ -22,7 +22,7 @@ impl Rev {
             && !self.patch_loading
             && !self.submitting
             && !self.workspace_busy
-            && self.modal.is_none()
+            && !self.branch_popover.is_open()
             && !self.commit_picker.open
             && self
                 .workspace

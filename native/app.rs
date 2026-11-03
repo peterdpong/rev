@@ -20,19 +20,20 @@ mod controls;
 mod diff_view;
 mod file_list;
 mod file_tree;
-mod modal;
+mod popover;
+mod branch_popover;
 mod view;
 mod working_tree;
 use diff_view::{DiffView, DiffViewEvent, DiffViewStatus};
 use file_list::{FileList, FileListEvent};
-use modal::Modal;
+use branch_popover::BranchPopover;
 gpui_kit::actions!(
     rev,
     [
         Quit,
         OpenProject,
         Refresh,
-        CloseModal,
+        ClosePopover,
         Submit,
         ToggleSidebar,
         NextFile,
@@ -50,11 +51,11 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
-        KeyBinding::new("escape", CloseModal, Some("Rev")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+        KeyBinding::new("escape", ClosePopover, Some("RevPopover")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
+        KeyBinding::new("escape", ClosePopover, Some("Rev")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover > Input")),
+        KeyBinding::new("escape", ClosePopover, Some("RevPopover > Input")),
     ]);
 }
 
@@ -80,9 +81,7 @@ pub struct Rev {
     pull_request_loading: bool,
     revalidate_pull_request: bool,
     focus: FocusHandle,
-    modal_focus: FocusHandle,
-    modal: Option<Modal>,
-    modal_serial: u64,
+    branch_popover: BranchPopover,
     folder_picker_open: bool,
     loading: bool,
     patch_loading: bool,
@@ -149,9 +148,7 @@ impl Rev {
             revalidate_pull_request: false,
 
             focus: cx.focus_handle(),
-            modal_focus: cx.focus_handle(),
-            modal: None,
-            modal_serial: 0,
+            branch_popover: BranchPopover::new(cx),
             folder_picker_open: false,
 
             loading: false,
@@ -481,6 +478,9 @@ impl Rev {
     }
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.branch_popover.is_open() {
+            self.close_branch_popover(window, cx);
+        }
         self.sidebar_collapsed = !self.sidebar_collapsed;
         if self.sidebar_collapsed && self.sidebar_focus.contains_focused(window, cx) {
             self.focus.focus(window, cx);
@@ -563,7 +563,7 @@ impl Rev {
     }
 
     fn navigate_file(&mut self, direction: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.modal.is_some() || self.loading {
+        if self.branch_popover.is_open() || self.loading {
             return;
         }
         let next = self.file_list.update(cx, |list, _| {
@@ -602,8 +602,8 @@ impl Rev {
         {
             return;
         }
-        if self.modal.is_some() {
-            self.close_modal(window, cx);
+        if self.branch_popover.is_open() {
+            self.close_branch_popover(window, cx);
         }
         self.folder_picker_open = true;
         let paths = cx.prompt_for_paths(PathPromptOptions {
