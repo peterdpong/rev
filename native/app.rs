@@ -25,6 +25,7 @@ mod view;
 mod working_tree;
 use file_tree::{EntryKind, FileTreeCache, TreeEntry};
 mod commits;
+mod motion;
 mod review;
 use commits::CommitPicker;
 gpui_kit::actions!(
