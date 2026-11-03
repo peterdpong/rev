@@ -7,6 +7,18 @@ use model::{CommitRange, ReviewRequest};
 
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|arg| arg != "open" && !arg.starts_with('-'))
+    {
+        let status = std::process::Command::new(backend::node_binary())
+            .arg(backend::resource_dir().join("cli.mjs"))
+            .env("PATH", backend::host_path())
+            .env("REV_DESKTOP_BINARY", std::env::current_exe()?)
+            .args(args)
+            .status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
     let explicit_open = args.first().is_some_and(|a| a == "open");
     if explicit_open {
         args.remove(0);
@@ -37,7 +49,7 @@ fn main() -> anyhow::Result<()> {
             "--working" => request.mode = Some("working".into()),
             "--help" | "-h" => {
                 println!(
-                    "Rev\n\n  rev open [repo] [--base main] [--head feature] [--working]\n  rev open [repo] --commit <ref> | --from <oldest> --to <newest>"
+                    "Rev\n\n  rev open [repo] [--base main] [--head feature] [--working]\n  rev open [repo] --commit <ref> | --from <oldest> --to <newest>\n  rev diff | commits | ask | comment | comments | apply | fetch | pr | doctor | demo\n\nRun rev help for CLI options."
                 );
                 return Ok(());
             }

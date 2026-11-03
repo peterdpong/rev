@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, copyFile, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdir, copyFile, writeFile, chmod } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -94,8 +94,9 @@ if (!isPortable(node)) {
   );
 }
 await copyFile(node, path.join(resources, 'node'));
-await copyFile('dist/host.mjs', path.join(resources, 'host.mjs'));
-await rm(path.join(resources, 'cli.mjs'), { force: true });
+for (const file of ['host.mjs', 'cli.mjs']) {
+  await copyFile(path.join('dist', file), path.join(resources, file));
+}
 await copyRuntimeDependencies(resources);
 await chmod(path.join(macos, 'rev'), 0o755);
 await chmod(path.join(resources, 'node'), 0o755);
