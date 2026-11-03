@@ -1179,6 +1179,11 @@ fn render_file_header(
     let foreground = cx.theme().muted_foreground;
     let border = cx.theme().border;
     let collapsed = code.state.read(cx).is_file_collapsed(document.path());
+    let follows_collapsed = file.checked_sub(1).is_some_and(|previous| {
+        code.state
+            .read(cx)
+            .is_file_collapsed(code.files[previous].path())
+    });
     let header_width = code.state.read(cx).horizontal_scroll().bounds().size.width;
     let header_offset = if code.soft_wrap || sticky {
         px(0.)
@@ -1245,7 +1250,9 @@ fn render_file_header(
     v_flex()
         .id("file-header")
         .w_full()
-        .when(file > 0 && !sticky, |this| this.border_t_1())
+        .when(file > 0 && !sticky && !follows_collapsed, |this| {
+            this.border_t_1()
+        })
         .bg(cx.theme().list_head)
         .border_b_1()
         .border_color(border)
