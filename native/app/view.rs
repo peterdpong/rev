@@ -689,10 +689,19 @@ impl Rev {
             .child(
                 div()
                     .id("diff-surface")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(content),
+                    .child(content)
+                    .child({
+                        let bounds = self.navigation.diff_bounds.clone();
+                        canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                    }),
             )
             .child(
                 div()
@@ -706,6 +715,7 @@ impl Rev {
                         this.hover_file_sheet(1, *hovered, window, cx);
                     })),
             )
+            .when_some(self.navigation_hint(), |d, hint| d.child(hint))
             .when(self.file_sheet.open || sheet > 0., |d| {
                 d.child(
                     div()
@@ -1040,6 +1050,25 @@ impl Render for Rev {
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
             .key_context("Rev")
+            .child(self.navigation_events(cx))
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(NavigationDirection::Back, window, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(NavigationDirection::Forward, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| {
+                this.navigate_history(NavigationDirection::Back, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoForward, window, cx| {
+                this.navigate_history(NavigationDirection::Forward, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &OpenProject, window, cx| {
                 let anchor = if !this.sidebar_collapsed {
                     "add-project"
