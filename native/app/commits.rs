@@ -55,11 +55,21 @@ impl Rev {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
             return;
         }
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Commits)
+        {
+            self.close_modal(window, cx);
+            return;
+        }
         self.close_modal(window, cx);
         self.modal = Some(Modal {
             kind: ModalKind::Commits,
             request: review.request.clone(),
             serial: self.modal_serial,
+            anchor: Some("choose-commits".into()),
+            anchor_bounds: Default::default(),
             local_branches: Vec::new(),
             branches_loading: false,
             branches_error: None,

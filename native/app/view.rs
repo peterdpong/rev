@@ -407,6 +407,31 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
 }
 
 impl Rev {
+    fn popover_button(
+        &self,
+        id: &str,
+        trigger: impl IntoElement,
+        corner: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bounds = self
+            .modal
+            .as_ref()
+            .filter(|modal| modal.anchor.as_deref() == Some(id))
+            .map(|modal| modal.anchor_bounds.clone());
+        gpui_kit::base::Popup::new(SharedString::from(format!("popover-{id}")), trigger)
+            .flex_shrink_0()
+            .anchor(corner)
+            .offset(px(UI_SPACING))
+            .when_some(bounds, |popup, bounds| {
+                popup
+                    .on_position(move |_, trigger| bounds.set(trigger))
+                    .content(self.popover(window, cx))
+            })
+            .into_any_element()
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
         icon_button(
             "toggle-sidebar",
@@ -424,7 +449,7 @@ impl Rev {
         .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
     }
 
-    fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
+    fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
@@ -524,15 +549,23 @@ impl Rev {
                             icon_actions()
                                 .id("review-header-actions")
                                 .child(
-                                    icon_button(
+                                    self.popover_button(
                                         "choose-commits",
-                                        "Choose commits",
-                                        IconName::GitCommitHorizontal,
-                                    )
-                                    .disabled(busy)
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| this.open_commit_picker(window, cx),
-                                    )),
+                                        icon_button(
+                                            "choose-commits",
+                                            "Choose commits",
+                                            IconName::GitCommitHorizontal,
+                                        )
+                                        .disabled(busy)
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_commit_picker(window, cx)
+                                            }),
+                                        ),
+                                        Anchor::TopRight,
+                                        window,
+                                        cx,
+                                    ),
                                 )
                                 .debug_selector(|| "review-header-actions".into())
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -557,7 +590,7 @@ impl Rev {
             )
     }
 
-    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_1();
         for project in self.workspace.projects.clone() {
@@ -611,6 +644,7 @@ impl Rev {
                                 })),
                             )
                             .child(
+                                self.popover_button(&format!("add-{repo}"),
                                 icon_button(
                                     SharedString::from(format!("add-{repo}")),
                                     format!("Open a branch or PR in {}", project.name),
@@ -619,7 +653,8 @@ impl Rev {
                                 .disabled(blocked)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_branch_modal(repo.clone(), window, cx)
-                                })),
+                                }))
+, Anchor::TopLeft, window, cx),
                             ),
                     ),
             );
@@ -1220,7 +1255,7 @@ impl Rev {
             .into_any_element()
     }
 
-    fn dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn popover(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
@@ -1361,95 +1396,85 @@ impl Rev {
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
-        let max_height = (window.viewport_size().height - px(110.)).max(px(220.));
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
+        let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
+        let serial = modal.serial;
+        column()
+            .id("review-popover")
+            .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
+                this.dismiss_popover(serial, event, window, cx)
+            }))
+            .w(px(650.))
+            .max_w_full()
+            .max_h(max_height)
+            .bg(rgb(SURFACE))
+            .border_1()
+            .border_color(rgb(CONTROL_BORDER))
+            .rounded(px(CONTROL_RADIUS))
+            .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context("RevPopover")
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
+            .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .child(
-                column()
-                    .w(px(650.))
-                    .max_w_full()
-                    .max_h(max_height)
-                    .m_6()
-                    .bg(rgb(SURFACE))
-                    .border_1()
-                    .border_color(rgb(CONTROL_BORDER))
-                    .rounded(px(CONTROL_RADIUS))
-                    .shadow_lg()
-                    .track_focus(&self.modal_focus)
-                    .key_context("PatchModal")
-                    .on_action(
-                        cx.listener(|this, _: &CloseModal, window, cx| {
-                            this.close_modal(window, cx)
-                        }),
-                    )
-                    .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
+                row()
+                    .h(px(HEADER_HEIGHT))
+                    .flex_shrink_0()
+                    .pl(px(POPOVER_PADDING))
+                    .pr(px(UI_SPACING))
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
-                        row()
-                            .h(px(HEADER_HEIGHT))
+                        div()
                             .flex_shrink_0()
-                            .pl(px(POPOVER_PADDING))
-                            .pr(px(UI_SPACING))
-                            .border_b_1()
-                            .border_color(rgb(BORDER))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .map(|d| {
-                                let name = std::path::Path::new(&modal.request.repo)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| modal.request.repo.clone());
-                                d.child(
-                                    header_pill()
-                                        .max_w(px(200.))
-                                        .text_color(rgb(TEXT))
-                                        .child(
-                                            Icon::new(IconName::Folder)
-                                                .size(px(14.))
-                                                .text_color(rgb(MUTED))
-                                                .flex_shrink_0(),
-                                        )
-                                        .child(div().min_w_0().truncate().child(name)),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .map(|d| {
+                        let name = std::path::Path::new(&modal.request.repo)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| modal.request.repo.clone());
+                        d.child(
+                            header_pill()
+                                .max_w(px(200.))
+                                .text_color(rgb(TEXT))
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(14.))
+                                        .text_color(rgb(MUTED))
+                                        .flex_shrink_0(),
                                 )
-                            })
-                            .child(div().flex_1().min_w_0())
-                            .child(
-                                icon_button("close-modal", "Close", IconName::Close)
-                                    .flex_shrink_0()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_modal(window, cx)
-                                    })),
-                            ),
-                    )
+                                .child(div().min_w_0().truncate().child(name)),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0())
                     .child(
-                        div()
-                            .id("modal-body")
-                            .min_h_0()
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p(px(POPOVER_PADDING))
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .px(px(POPOVER_PADDING))
-                            .py(px(UI_SPACING))
+                        icon_button("close-modal", "Close", IconName::Close)
                             .flex_shrink_0()
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .child(footer),
-                    )
-                    .focus_trap("modal-trap", &self.modal_focus),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                            ),
+                    ),
             )
+            .child(
+                div()
+                    .id("modal-body")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p(px(POPOVER_PADDING))
+                    .child(body),
+            )
+            .child(
+                div()
+                    .px(px(POPOVER_PADDING))
+                    .py(px(UI_SPACING))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(footer),
+            )
+            .focus_trap("modal-trap", &self.modal_focus)
             .into_any_element()
     }
 }
@@ -1528,14 +1553,16 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(cx))
+            .child(self.review_header(window, cx))
             .child(
                 row()
                     .items_start()
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| row.child(self.sidebar(cx)))
+                    .when(!self.sidebar_collapsed, |row| {
+                        row.child(self.sidebar(window, cx))
+                    })
                     .child(content),
             )
             .when_some(status, |d, error| {
@@ -1565,7 +1592,6 @@ impl Render for Rev {
                     ))
                 },
             )
-            .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
     }
 }
 
@@ -1592,8 +1618,10 @@ mod performance_tests {
     }
 
     impl Render for HeaderHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = self.view.update(cx, |view, cx| view.review_header(cx));
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self
+                .view
+                .update(cx, |view, cx| view.review_header(window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }

@@ -14,8 +14,10 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     path::PathBuf,
+    rc::Rc,
 };
 
 mod file_tree;
@@ -48,11 +50,11 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("escape", CloseModal, Some("RevPopover")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", CloseModal, Some("Rev")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover > Input")),
+        KeyBinding::new("escape", CloseModal, Some("RevPopover > Input")),
     ]);
 }
 
@@ -66,6 +68,8 @@ struct Modal {
     kind: ModalKind,
     request: ReviewRequest,
     serial: u64,
+    anchor: Option<SharedString>,
+    anchor_bounds: Rc<Cell<Bounds<Pixels>>>,
     local_branches: Vec<String>,
     branches_loading: bool,
     branches_error: Option<String>,
@@ -162,6 +166,8 @@ mod modal_tests {
                 }),
             },
             serial: 1,
+            anchor: None,
+            anchor_bounds: Default::default(),
             local_branches: vec!["feature".into()],
             branches_loading: false,
             branches_error: None,
@@ -573,6 +579,9 @@ impl Rev {
     }
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.is_some() {
+            self.close_modal(window, cx);
+        }
         self.sidebar_collapsed = !self.sidebar_collapsed;
         if self.sidebar_collapsed && self.sidebar_focus.contains_focused(window, cx) {
             self.focus.focus(window, cx);
@@ -738,6 +747,24 @@ impl Rev {
         cx.notify();
     }
 
+    fn dismiss_popover(
+        &mut self,
+        serial: u64,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(modal) = &self.modal else {
+            return;
+        };
+        if modal.serial != serial
+            || (modal.anchor.is_some() && modal.anchor_bounds.get().contains(&event.position))
+        {
+            return;
+        }
+        self.close_modal(window, cx);
+    }
+
     fn accept_selection(
         &mut self,
         range: &DiffLineRange,
@@ -751,6 +778,14 @@ impl Rev {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
             return;
         }
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Review && m.request.repo == repo)
+        {
+            self.close_modal(window, cx);
+            return;
+        }
         self.close_modal(window, cx);
         self.error = None;
         let request = ReviewRequest {
@@ -761,6 +796,8 @@ impl Rev {
             kind: ModalKind::Review,
             request: request.clone(),
             serial: self.modal_serial,
+            anchor: Some(format!("add-{}", request.repo).into()),
+            anchor_bounds: Default::default(),
             local_branches: Vec::new(),
             branches_loading: self.backend.is_some(),
             branches_error: self
