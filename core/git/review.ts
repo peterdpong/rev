@@ -7,7 +7,8 @@ import type {
   ReviewMode,
   ReviewRequest,
 } from './types';
-import { runGitText } from './command';
+import { runGitText, runGitText as git } from './command';
+import { readPullRequest } from './pull-requests';
 import {
   assertCommitId,
   CommitIdLabel,
@@ -155,65 +156,162 @@ async function refNames(repo: string) {
 
 /**
  * Resolve the requested comparison and assemble its Review metadata.
+ * The viewer uses the changed paths, counts, ignore flags, refs, and checkout
+ * status to populate its review surface. Working mode also lists untracked
+ * files; patch text is loaded separately by filePatch() or reviewPatches().
  */
 export async function inspect(input: ReviewRequest): Promise<Review> {
   const repo = await rootOf(input.repo);
+  const base = input.base || (await defaultBase(repo)).base;
+  const head = input.head || 'HEAD';
   const mode = input.mode || 'branch';
-  if (!REVIEW_MODES.includes(mode)) {
+  if (!['branch', 'working'].includes(mode)) {
     throw new Error('Unknown comparison mode.');
   }
-
-  const requestedBase = input.base;
-  const head = input.head || 'HEAD';
-  const [{ base, baseSha }, headSha, current, branches, status] =
-    await Promise.all([
-      requestedBase
-        ? resolveRef(repo, requestedBase).then((baseSha) => ({
-            base: requestedBase,
-            baseSha,
-          }))
-        : defaultBase(repo),
-      resolveRef(repo, mode === 'working' ? 'HEAD' : head),
-      runGitText(repo, ['branch', '--show-current']).then((out) => out.trim()),
-      refNames(repo),
-      runGitText(repo, ['status', '--porcelain=v1', '-z']),
-    ]);
-
+  if (
+    input.commitRange &&
+    (mode === 'working' ||
+      typeof input.commitRange.start !== 'string' ||
+      typeof input.commitRange.end !== 'string')
+  ) {
+    throw new Error('Choose a valid commit range in committed mode.');
+  }
+  const [baseSha, branchHeadSha, branch, refs, status] = await Promise.all([
+    resolveRef(repo, base),
+    resolveRef(repo, mode === 'working' ? 'HEAD' : head),
+    git(repo, ['branch', '--show-current']),
+    git(repo, [
+      'for-each-ref',
+      '--format=%(if)%(symref)%(then)%(else)%(refname:short)%(end)',
+      'refs/heads',
+      'refs/remotes',
+      'refs/revue',
+    ]),
+    git(repo, ['status', '--porcelain=v1', '-z']),
+  ]);
   if (
     mode === 'working' &&
     head !== 'HEAD' &&
-    (await resolveRef(repo, head)) !== headSha
+    (await resolveRef(repo, head)) !== branchHeadSha
   ) {
     throw new Error(
-      `The working tree belongs to ${current || 'a detached HEAD'}. Open that branch to review local changes.`,
+      `The working tree belongs to ${branch.trim() || 'a detached HEAD'}. Open that branch to review local changes.`,
     );
   }
-
-  const mergeBase = (
-    await runGitText(repo, ['merge-base', baseSha, headSha])
-  ).trim();
-
+  let mergeBase = input.commitRange
+    ? ''
+    : (await git(repo, ['merge-base', baseSha, branchHeadSha])).trim();
+  let headSha = branchHeadSha;
+  let commitRange;
+  let commitCount = 0;
+  if (input.commitRange) {
+    const [start, end, history] = await Promise.all([
+      resolveRef(repo, input.commitRange.start),
+      resolveRef(repo, input.commitRange.end),
+      git(repo, ['rev-list', '--first-parent', branchHeadSha, '--']),
+    ]);
+    const shas = history.trim().split('\n');
+    const first = shas.indexOf(start);
+    const last = shas.indexOf(end);
+    if (first < 0 || last < 0) {
+      throw new Error(
+        'Selected commits are not in this branch’s first-parent history. Choose Full branch diff or select commits from the current branch.',
+      );
+    }
+    if (first < last) {
+      throw new Error(
+        'The start commit must be older than or equal to the end commit.',
+      );
+    }
+    // Read the stored header: rev-list hides parents at shallow boundaries,
+    // which must not be mistaken for a root commit and diffed from empty.
+    const header = (await git(repo, ['cat-file', 'commit', start])).split(
+      '\n\n',
+      1,
+    )[0];
+    const parent = header
+      .split('\n')
+      .find((line) => line.startsWith('parent '))
+      ?.slice(7);
+    if (parent) {
+      try {
+        mergeBase = await resolveRef(repo, parent);
+      } catch {
+        throw new Error(
+          'The parent commit is unavailable locally. Fetch more history before reviewing this commit.',
+        );
+      }
+    } else {
+      mergeBase = (
+        await git(repo, ['hash-object', '-t', 'tree', '--stdin'])
+      ).trim();
+    }
+    headSha = end;
+    commitRange = { start, end };
+    commitCount = first - last + 1;
+  }
+  const key = reviewKey(
+    repo,
+    mode,
+    base,
+    head === 'HEAD' ? branch.trim() || branchHeadSha : head,
+  );
+  const scopeKey = commitRange
+    ? hash(`${key}\0${commitRange.start}\0${commitRange.end}`).slice(0, 24)
+    : key;
   const review: Review = {
     repo,
     name: path.basename(repo),
     base,
     head,
     mode,
-    branch: current || 'detached HEAD',
+    branch: branch.trim() || 'detached HEAD',
     baseSha,
     headSha,
+    branchHeadSha,
     mergeBase,
-    branches,
+    commitRange,
+    commitCount,
+    scopeKey,
+    branches: refs.trim().split('\n').filter(Boolean),
     files: [],
     dirty: Boolean(status),
-    key: reviewKey(
-      repo,
-      mode,
-      base,
-      head === 'HEAD' ? current || headSha : head,
-    ),
+    key,
   };
-
+  const [commit, pullRequest] = await Promise.all([
+    git(repo, [
+      'log',
+      '-1',
+      '--format=%H%x00%P%x00%s%x00%b%x00%an%x00%aI',
+      headSha,
+      '--',
+    ]),
+    readPullRequest(repo, head),
+  ]);
+  const [sha, parents, subject, body, author, date] = commit
+    .trimEnd()
+    .split('\0');
+  review.headCommit = {
+    sha,
+    parents: parents.split(' ').filter(Boolean),
+    subject,
+    body: body.trim(),
+    author,
+    date,
+  };
+  review.pullRequest = pullRequest;
+  if (!commitRange) {
+    review.commitCount = Number(
+      (
+        await git(repo, [
+          'rev-list',
+          '--count',
+          `${mergeBase}..${headSha}`,
+          '--',
+        ])
+      ).trim(),
+    );
+  }
   const [summary, untracked] = await Promise.all([
     runGitText(repo, diffArgs(review, ['--raw', '--numstat', '-z'])),
     mode === 'working' ? runGitText(repo, ['ls-files', '--others', '-z']) : '',

@@ -37,3 +37,15 @@ export {
 } from './review';
 export { filePatch, reviewPatches } from './patch';
 export { ignoredPaths } from './ignored';
+
+export { runGitText as git, runCommandText as command } from './command';
+export { listBranches } from './refs';
+export { listCommits } from './commits';
+export { fetchRepo, importPR } from './pull-requests';
+export type {
+  Commit,
+  CommitRange,
+  CommitPage,
+  CommitDetails,
+  PullRequest,
+} from './types';
