@@ -41,7 +41,12 @@ export type Review = Required<Omit<ReviewRequest, 'commitRange'>> & {
 };
 
 /** When `tooLarge` is true, `patch` and `digest` are empty. */
-export type FilePatch = { patch: string; digest: string; tooLarge: boolean };
+export type FilePatch = {
+  patch: string;
+  digest: string;
+  tooLarge: boolean;
+  deferred?: boolean;
+};
 
 export type ReviewPatch = FilePatch & { path: string; error?: string };
 

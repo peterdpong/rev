@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::{Icon, IconName, text::TextView};
+use gpui_kit::component::{Icon, IconName};
 
 pub(super) const BG: u32 = 0x17191d;
 pub(super) const PANEL: u32 = 0x131519;
@@ -209,7 +209,7 @@ impl Rev {
                                 navigation_button(
                                     SharedString::from(format!("tab-{id}")),
                                     tab.label,
-                                    { div().child("⑂").into_any_element() },
+                                    div().child("⑂").into_any_element(),
                                 )
                                 .disabled(blocked || collapsed)
                                 .on_click(cx.listener(
@@ -328,87 +328,120 @@ impl Rev {
             .into_any_element()
     }
 
-    fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let files = self.visible_files(cx);
-        let mut list = column().gap(px(2.)).p_2().min_w_0();
-        let mut last_folder = String::new();
-        for (index, file) in files.iter().enumerate() {
-            let path = file.path.clone();
-            let (folder, name) = path.rsplit_once('/').unwrap_or(("", &path));
-            if folder != last_folder && !folder.is_empty() {
-                list = list.child(
-                    row()
-                        .gap_1()
-                        .pt_2()
-                        .pb_1()
-                        .px_2()
-                        .text_size(px(11.))
-                        .text_color(rgb(MUTED))
-                        .child(div().min_w_0().truncate().child(folder.to_string())),
-                );
-            }
-            last_folder = folder.to_string();
-            let selected = self.file.as_ref() == Some(&path);
-            let viewed = self.state.viewed.contains_key(&path);
+    fn file_row(&self, index: usize, file: &File, cx: &mut Context<Self>) -> AnyElement {
+        let path = file.path.clone();
+        let name = path
+            .rsplit_once('/')
+            .map_or(path.as_str(), |(_, name)| name);
+        let selected = self.file.as_ref() == Some(&path);
+        let viewed = self.is_file_viewed(&path);
 
-            let mut item = row()
-                .id(("file", index))
-                .cursor_pointer()
-                .rounded_md()
-                .px_2()
-                .h(px(28.))
-                .min_w_0()
-                .gap_1()
-                .when(selected, |d| d.bg(rgb(SELECTED)))
-                .hover(|d| d.bg(rgb(0x252a33)))
-                .child(
-                    div()
-                        .w(px(14.))
-                        .flex_shrink_0()
-                        .text_size(px(11.))
-                        .text_center()
-                        .text_color(if viewed { rgb(0x8fd3a5) } else { rgb(MUTED) })
-                        .child(if viewed {
-                            "✓".into()
-                        } else {
-                            file.status.clone()
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(12.))
-                        .truncate()
-                        .child(name.to_string()),
-                )
-                .when(file.ignored, |d| {
-                    d.child(
-                        div()
-                            .id(SharedString::from(format!("ignored-file-{path}")))
-                            .flex_shrink_0()
-                            .text_size(px(10.))
-                            .text_color(rgb(MUTED))
-                            .child("Ignored"),
-                    )
-                });
-
-            list = list.child(item.on_click(cx.listener(move |this, _, window, cx| {
-                if !this.loading {
-                    this.jump_file(path.clone(), window, cx);
-                }
-            })));
-        }
-        if files.is_empty() {
-            list = list.child(
+        let item = row()
+            .id(("file", index))
+            .cursor_pointer()
+            .rounded_md()
+            .px_2()
+            .h(px(28.))
+            .min_w_0()
+            .gap_1()
+            .when(selected, |d| d.bg(rgb(SELECTED)))
+            .hover(|d| d.bg(rgb(0x252a33)))
+            .child(
                 div()
-                    .px_2()
-                    .py_2()
+                    .w(px(14.))
+                    .flex_shrink_0()
+                    .text_size(px(11.))
+                    .text_center()
+                    .text_color(if viewed { rgb(0x8fd3a5) } else { rgb(MUTED) })
+                    .child(if viewed {
+                        "✓".into()
+                    } else {
+                        file.status.clone()
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
                     .text_size(px(12.))
-                    .text_color(rgb(MUTED))
-                    .child("No files found"),
-            );
+                    .truncate()
+                    .child(name.to_string()),
+            )
+            .when(file.ignored, |d| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("ignored-file-{path}")))
+                        .flex_shrink_0()
+                        .text_size(px(10.))
+                        .text_color(rgb(MUTED))
+                        .child("Ignored"),
+                )
+            });
+
+        item.on_click(cx.listener(move |this, _, window, cx| {
+            if !this.loading {
+                this.jump_file(path.clone(), window, cx);
+            }
+        }))
+        .into_any_element()
+    }
+
+    pub(super) fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let files = self.visible_files(cx);
+        let query = self.filter.read(cx).value().to_string();
+        if self.file_sheet.query != query {
+            self.file_sheet.query = query;
+            self.file_sheet
+                .scroll
+                .scroll_to_item(0, ScrollStrategy::Top);
         }
+        let mut rows = Vec::new();
+        let mut last_folder = String::new();
+        for (index, file) in files.into_iter().enumerate() {
+            let folder = file.path.rsplit_once('/').map_or("", |(folder, _)| folder);
+            if !folder.is_empty() && folder != last_folder {
+                rows.push(file_sheet::FileRow::Folder(folder.to_owned()));
+            }
+            last_folder = folder.to_owned();
+            rows.push(file_sheet::FileRow::File(index, file));
+        }
+        let owner = cx.weak_entity();
+        let list = uniform_list("file-rows", rows.len().max(1), move |range, _, cx| {
+            owner
+                .update(cx, |this, cx| {
+                    range
+                        .map(|index| {
+                            let content = match rows.get(index) {
+                                Some(file_sheet::FileRow::File(index, file)) => {
+                                    this.file_row(*index, file, cx)
+                                }
+                                Some(file_sheet::FileRow::Folder(folder)) => row()
+                                    .px_2()
+                                    .h_full()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(MUTED))
+                                    .child(div().truncate().child(folder.clone()))
+                                    .into_any_element(),
+                                None => div()
+                                    .px_2()
+                                    .text_size(px(12.))
+                                    .text_color(rgb(MUTED))
+                                    .child("No files found")
+                                    .into_any_element(),
+                            };
+                            div()
+                                .h(px(30.))
+                                .px_2()
+                                .pb(px(2.))
+                                .child(content)
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .size_full()
+        .track_scroll(&self.file_sheet.scroll);
         let total = self.review.as_ref().map(|r| r.files.len()).unwrap_or(0);
         let viewed = self
             .review
@@ -416,7 +449,7 @@ impl Rev {
             .map(|r| {
                 r.files
                     .iter()
-                    .filter(|f| self.state.viewed.contains_key(&f.path))
+                    .filter(|f| self.is_file_viewed(&f.path))
                     .count()
             })
             .unwrap_or(0);
@@ -445,7 +478,8 @@ impl Rev {
                     .id("files-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_hidden()
+                    .py_2()
                     .child(list),
             )
             .into_any_element()
@@ -561,8 +595,9 @@ impl Rev {
     fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
         let path = file.path().to_string();
         let patch = self.patches.get(&path);
-        let viewed = patch.is_some_and(|patch| self.state.viewed.get(&path) == Some(&patch.digest));
+        let viewed = self.is_file_viewed(&path);
 
+        let load_path = path.clone();
         let counts = self
             .review
             .as_ref()
@@ -582,6 +617,31 @@ impl Rev {
                     .text_size(px(12.))
                     .child(path.clone()),
             )
+            .when(patch.is_some_and(|patch| patch.deferred), |d| {
+                d.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(MUTED))
+                        .child("Large diff"),
+                )
+                .child(
+                    button(
+                        SharedString::from(format!("load-diff-{path}")),
+                        if self.loading_patches.contains(&path) {
+                            "Loading…"
+                        } else {
+                            "Load diff"
+                        },
+                    )
+                    .disabled(self.loading_patches.contains(&path))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.diff.update(cx, |diff, cx| {
+                            diff.set_file_collapsed(&load_path, false, cx)
+                        });
+                        this.load_file_patch(load_path.clone(), window, cx);
+                    })),
+                )
+            })
             .when(ignored, |d| {
                 d.child(
                     div()
@@ -627,10 +687,47 @@ impl Rev {
             .into_any_element()
     }
 
-    fn diff_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn diff_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let owner = cx.weak_entity();
         let add_owner = owner.clone();
         let header_owner = owner.clone();
+        if self.loading || self.patch_loading {
+            div()
+                .p_6()
+                .text_color(rgb(MUTED))
+                .child("Loading…")
+                .into_any_element()
+        } else if self.file.is_none() {
+            div()
+                .p_6()
+                .text_color(rgb(MUTED))
+                .child("No changes")
+                .into_any_element()
+        } else {
+            Diff::new(&self.diff)
+                .size_full()
+                .render_header(move |file, _, cx| {
+                    header_owner
+                        .update(cx, |this, cx| this.diff_file_header(file, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
+                .soft_wrap(self.wrap)
+                .text_size(px(12.))
+                .on_add_annotation(move |range, window, cx| {
+                    let _ = add_owner.update(cx, |this, cx| {
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(range, window, cx);
+                        this.diff.update(cx, |diff, cx| {
+                            diff.set_selected_lines(Some(range.clone()), cx)
+                        });
+                        cx.notify();
+                    });
+                })
+                .into_any_element()
+        }
+    }
+
+    fn diff_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let header = row()
             .h(px(34.))
             .px_3()
@@ -675,54 +772,34 @@ impl Rev {
                         cx.notify();
                     })),
             );
-        let content = if self.loading || self.patch_loading {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child("Loading…")
-                .into_any_element()
-        } else if self.file.is_none() {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child("No changes")
-                .into_any_element()
-        } else {
-            Diff::new(&self.diff)
-                .size_full()
-                .render_header(move |file, _, cx| {
-                    header_owner
-                        .update(cx, |this, cx| this.diff_file_header(file, cx))
-                        .unwrap_or_else(|_| div().into_any_element())
-                })
-                .soft_wrap(self.wrap)
-                .text_size(px(12.))
-                .on_add_annotation(move |range, window, cx| {
-                    let _ = add_owner.update(cx, |this, cx| {
-                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(range, window, cx);
-                        this.diff.update(cx, |diff, cx| {
-                            diff.set_selected_lines(Some(range.clone()), cx)
-                        });
-                        cx.notify();
-                    });
-                })
-                .into_any_element()
-        };
+        let content = self
+            .diff_pane
+            .clone()
+            .cached(StyleRefinement::default().size_full());
         let sheet = motion::reveal("file-sheet-reveal", self.file_sheet.open, window, cx);
-        let files = self.visible_files(cx);
+        // The sheet caps out after 15 rows. Do not clone or scan the full review
+        // on every diff scroll just to size this overlay.
+        let query = self.filter.read(cx).value().to_lowercase();
+        let mut sheet_height: f32 = 84.;
         let mut last_folder = "";
-        let folders = files
-            .iter()
-            .filter(|file| {
+        if sheet > 0.001
+            && let Some(review) = &self.review
+        {
+            for file in review
+                .files
+                .iter()
+                .filter(|file| query.is_empty() || file.path.to_lowercase().contains(&query))
+                .take(15)
+            {
                 let folder = file.path.rsplit_once('/').map_or("", |(folder, _)| folder);
-                let shown = !folder.is_empty() && folder != last_folder;
+                if !folder.is_empty() && folder != last_folder {
+                    sheet_height += 30.;
+                }
+                sheet_height += 30.;
                 last_folder = folder;
-                shown
-            })
-            .count();
-        let sheet_height =
-            (84. + files.len() as f32 * 30. + folders as f32 * 32.).clamp(140., 520.);
+            }
+        }
+        let sheet_height = sheet_height.clamp(140., 520.);
         column()
             .id("diff-review")
             .relative()
@@ -785,7 +862,11 @@ impl Rev {
                         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                             this.hide_file_sheet(window, cx);
                         }))
-                        .child(self.file_list(cx)),
+                        .child(
+                            self.files_pane
+                                .clone()
+                                .cached(StyleRefinement::default().size_full()),
+                        ),
                 )
             })
             .into_any_element()

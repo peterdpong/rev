@@ -86,3 +86,33 @@ fn test_diff_builder(cx: &mut TestAppContext) {
     );
     assert_eq!(annotation_calls.borrow().as_slice(), &[position]);
 }
+
+#[gpui::test]
+fn replacing_a_placeholder_keeps_other_files_and_folds(cx: &mut TestAppContext) {
+    cx.update(super::test_init);
+    let first = fixture::modified("first.rs", "old\n", "new\n");
+    let state = cx.new(|cx| {
+        DiffState::new(
+            [
+                first.clone(),
+                DiffFile::placeholder("large.rs", "Large diff"),
+            ],
+            cx,
+        )
+    });
+    state.update(cx, |state, cx| {
+        state.set_file_collapsed("first.rs", true, cx);
+        state.set_file_collapsed("large.rs", true, cx);
+        let loaded = fixture::modified("large.rs", "before\n", "after\n");
+        assert!(state.replace_file(loaded, cx));
+        assert!(state.is_file_collapsed("first.rs"));
+        assert!(state.is_file_collapsed("large.rs"));
+        assert_eq!(state.files()[0].path().as_str(), "first.rs");
+        assert_eq!(state.files()[1].additions(), 1);
+        // A collapsed file can finish loading without reopening itself.
+        state.set_file_collapsed("large.rs", false, cx);
+        assert!(!state.is_file_collapsed("large.rs"));
+        assert!(!state.replace_file(DiffFile::placeholder("missing", "Missing"), cx));
+        assert_eq!(state.files().len(), 2);
+    });
+}

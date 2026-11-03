@@ -3,8 +3,15 @@ use super::*;
 #[derive(Default)]
 pub(super) struct FileSheet {
     pub(super) open: bool,
+    pub(super) scroll: UniformListScrollHandle,
+    pub(super) query: String,
     hovered: [bool; 3],
     epoch: u64,
+}
+
+pub(super) enum FileRow {
+    Folder(String),
+    File(usize, File),
 }
 
 impl Rev {
