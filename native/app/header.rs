@@ -389,6 +389,21 @@ impl Rev {
         row()
             .id("diff-view-header")
             .debug_selector(|| "diff-view-header".into())
+            .child(
+                div()
+                    .id("file-sheet-trigger")
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(0, *hovered, window, cx);
+                    }))
+                    .child(
+                        icon_button("browse-files", "Browse files (⌘P)", IconName::Folder)
+                            .selected(self.file_sheet.open)
+                            .when(self.file_sheet.open, selected_surface)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_file_sheet(window, cx);
+                            })),
+                    ),
+            )
             .bg(rgb(SUBPANEL))
             .flex_shrink_0()
             .p(px(UI_SPACING))

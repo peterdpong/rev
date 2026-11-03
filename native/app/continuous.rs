@@ -142,6 +142,7 @@ impl Rev {
 
         self.file_list.update(cx, |list, cx| list.select_file(&path, cx));
 
+        self.hide_file_sheet(window, cx);
         self.set_active_file(path.clone(), cx);
         gpui_kit::base::TextSelection::clear(window, cx);
         self.diff.update(cx, |diff, cx| diff.focus_file(&path, cx));

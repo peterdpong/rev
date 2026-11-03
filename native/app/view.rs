@@ -273,7 +273,6 @@ impl Rev {
             )
             .into_any_element()
     }
-
 }
 
 impl Render for Rev {
@@ -307,8 +306,7 @@ impl Render for Rev {
                             .gap_0()
                             .flex_1()
                             .min_h_0()
-                            .child(self.file_list.clone())
-                            .child(self.diff.clone()),
+                            .child(self.diff_panel(window, cx)),
                     )
                     .into_any_element()
             } else {
@@ -366,6 +364,16 @@ impl Render for Rev {
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.pick_folder(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &BrowseFiles, window, cx| {
+                this.show_file_sheet(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ChooseFile, window, cx| {
+                if this.file_sheet.open
+                    && let Some(path) = this.file_list.update(cx, |list, _| list.adjacent_file(None, 1))
+                {
+                    this.jump_file(path, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -492,6 +500,7 @@ mod tests {
             review_snapshot_id: None,
             state: ReviewState::default(),
             file: None,
+            file_sheet: Default::default(),
             patch: FilePatch::default(),
             patches: Default::default(),
             diff,
@@ -848,8 +857,8 @@ mod tests {
         let counts = cx.debug_bounds("diff-line-counts").unwrap();
         assert_eq!(
             base.left() - header.left(),
-            px(crate::theme::UI_SPACING),
-            "start the base pill at the header's inset, like the boxes around it"
+            px(crate::theme::UI_SPACING * 2. + crate::app::controls::ICON_BUTTON_SIZE),
+            "start the base pill one gap after the file list button"
         );
         assert_eq!(
             counts.top() - base.bottom(),
@@ -1265,5 +1274,72 @@ mod tests {
             cx.debug_bounds("pr-description-content").is_none(),
             "unmount after the fade finishes"
         );
+    }
+}
+
+impl Rev {
+    fn diff_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let sheet = motion::transition(
+            "file-sheet-reveal",
+            if self.file_sheet.open { 1.0_f32 } else { 0.0_f32 },
+            motion_transition(),
+            window,
+            cx,
+        );
+        let sheet_height = (40. + self.file_list.update(cx, |list, _| list.row_count()) as f32 * (LIST_ROW_HEIGHT + 2.))
+            .clamp(140., 520.);
+        column()
+            .id("diff-review")
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                div()
+                    .id("diff-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.diff.clone()),
+            )
+            .child(
+                div()
+                    .id("file-sheet-edge")
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(8.))
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(1, *hovered, window, cx);
+                    })),
+            )
+            .when(self.file_sheet.open || sheet > 0., |d| {
+                d.child(
+                    popover_surface()
+                        .id("file-sheet")
+                        .absolute()
+                        .left(px(UI_SPACING * sheet))
+                        .top(px(UI_SPACING))
+                        .bottom(px(UI_SPACING))
+                        .w(px(272.))
+                        .max_h(px(sheet_height))
+                        .opacity(sheet)
+                        .overflow_hidden()
+                        .occlude()
+                        .key_context("RevFiles")
+                        .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
+                            this.hide_file_sheet(window, cx);
+                        }))
+                        .on_hover(cx.listener(|this, hovered, window, cx| {
+                            this.hover_file_sheet(2, *hovered, window, cx);
+                        }))
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                            this.hide_file_sheet(window, cx);
+                        }))
+                        .child(self.file_list.clone()),
+                )
+            })
+            .into_any_element()
     }
 }
