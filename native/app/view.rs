@@ -333,6 +333,23 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
 }
 
 impl Rev {
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
+        icon_button(
+            "toggle-sidebar",
+            if self.sidebar_collapsed {
+                "Show sidebar (⌘B)"
+            } else {
+                "Hide sidebar (⌘B)"
+            },
+            if self.sidebar_collapsed {
+                IconName::PanelLeftOpen
+            } else {
+                IconName::PanelLeftClose
+            },
+        )
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
+    }
+
     fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
         TitleBar::new()
@@ -343,12 +360,21 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 div()
-                    .w(px(SIDEBAR_WIDTH))
+                    .w(px(if self.sidebar_collapsed {
+                        112.
+                    } else {
+                        SIDEBAR_WIDTH
+                    }))
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(PANEL))
                     .border_r_1()
-                    .border_color(rgb(BORDER)),
+                    .border_color(rgb(BORDER))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .pr(px(UI_SPACING))
+                    .child(self.sidebar_toggle(cx)),
             )
             .child(
                 row()
@@ -590,6 +616,8 @@ impl Rev {
             projects = projects.child(group);
         }
         column()
+            .id("project-sidebar")
+            .track_focus(&self.sidebar_focus)
             .w(px(SIDEBAR_WIDTH))
             .h_full()
             .flex_shrink_0()
@@ -1433,6 +1461,9 @@ impl Render for Rev {
             .track_focus(&self.focus)
             .key_context("Rev")
             .on_action(
+                cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
+            .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.pick_folder(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
@@ -1456,7 +1487,7 @@ impl Render for Rev {
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .child(self.sidebar(cx))
+                    .when(!self.sidebar_collapsed, |row| row.child(self.sidebar(cx)))
                     .child(content),
             )
             .when_some(status, |d, error| {
@@ -1538,6 +1569,8 @@ mod performance_tests {
         let mut tree = FileTreeCache::default();
         tree.set_files(&files);
         Rev {
+            sidebar_collapsed: false,
+            sidebar_focus: cx.focus_handle(),
             backend: None,
             workspace: WorkspaceState::default(),
             data_dir: Default::default(),
