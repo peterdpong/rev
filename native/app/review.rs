@@ -184,10 +184,7 @@ impl Rev {
             .map(|p| p.head_ref_name.clone())
             .or_else(|| review.request.head.clone())
             .unwrap_or_default();
-        let base = pr
-            .map(|p| p.base_ref_name.clone())
-            .or_else(|| review.request.base.clone())
-            .unwrap_or_default();
+        let base = review.base_label();
         let author = pr
             .map(|p| p.author.as_str())
             .or_else(|| commit.map(|c| c.author.as_str()))

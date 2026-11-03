@@ -82,3 +82,47 @@ fn the_wheel_scrolls_past_the_rows_rendered_so_far(cx: &mut TestAppContext) {
     // 2000 px of wheel travel crosses far more than the first screen of rows.
     assert!(top > 40, "scrolled to row {top}");
 }
+
+#[gpui::test]
+fn loading_a_file_above_the_viewport_keeps_the_reading_position(cx: &mut TestAppContext) {
+    use super::{DiffFile, DiffLinePosition, DiffLineRange, DiffSide};
+    let (state, cx) = long_patch(cx);
+    cx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            let long = state.files()[0].clone();
+            state.set_files([DiffFile::placeholder("large.txt", "Loading…"), long], cx);
+            state.scroll_to_line(
+                DiffLinePosition::new("long.txt", DiffSide::Modified, 200),
+                cx,
+            );
+            state.set_selected_lines(
+                Some(DiffLineRange::new("long.txt", DiffSide::Modified, 200, 201)),
+                cx,
+            );
+        })
+    });
+    draw(cx);
+    cx.update(|_, cx| {
+        let list = state.read(cx).list();
+        list.scroll_to(gpui::ListOffset {
+            offset_in_item: px(7.),
+            ..list.logical_scroll_top()
+        });
+    });
+    draw(cx);
+    let before = cx.update(|_, cx| state.read(cx).scroll_position().unwrap());
+    cx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            let old = "before\n".repeat(100);
+            let new = "after\n".repeat(100);
+            assert!(state.replace_file(fixture::modified("large.txt", &old, &new), cx));
+        })
+    });
+    draw(cx);
+    cx.update(|_, cx| {
+        let state = state.read(cx);
+        let after = state.scroll_position().unwrap();
+        assert_eq!(after, before);
+        assert_eq!(state.selected_lines().unwrap().start(), 200);
+    });
+}

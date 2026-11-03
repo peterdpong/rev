@@ -75,7 +75,7 @@ export class HostService {
         // Revalidating every marker here would eagerly read deferred diffs.
         result = {
           review,
-          ...(p.remember === undefined
+          ...(p.remember === undefined && p.preview !== true
             ? { patches: await reviewPatches(review) }
             : {}),
           state: await readState(review, p.preview !== true),
@@ -103,7 +103,7 @@ export class HostService {
             'The comparison changed while loading. Refresh the review.',
           );
         }
-        result = await reviewPatches(review);
+        result = await reviewPatches(review, p.preview === true);
         break;
       }
       case 'viewed': {

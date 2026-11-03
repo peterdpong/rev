@@ -71,6 +71,26 @@ pub struct Review {
     pub pull_request: Option<PullRequest>,
 }
 impl Review {
+    pub fn base_label(&self) -> &str {
+        let base = self.request.base.as_deref().unwrap_or_default();
+        let automatic_pr = self.request.head.as_ref().is_some_and(|head| {
+            head.strip_suffix("/head")
+                .is_some_and(|prefix| base == format!("{prefix}/base"))
+        });
+        if automatic_pr && let Some(pr) = &self.pull_request {
+            return pr
+                .comparison_base_ref_name
+                .as_deref()
+                .unwrap_or(&pr.base_ref_name);
+        }
+        let base = base
+            .strip_prefix("refs/revue/bases/")
+            .and_then(|value| value.split_once('/'))
+            .map_or(base, |(_, branch)| branch);
+        base.trim_start_matches("refs/heads/")
+            .trim_start_matches("refs/remotes/")
+    }
+
     pub fn pin_current_request(&mut self) {
         if self
             .request
@@ -106,6 +126,8 @@ pub struct PullRequest {
     pub is_draft: bool,
     pub head_ref_name: String,
     pub base_ref_name: String,
+    #[serde(default)]
+    pub comparison_base_ref_name: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Selection {
@@ -135,22 +157,6 @@ impl Selection {
             end: range.start().max(range.end()),
         })
     }
-    pub fn diff_side(&self) -> DiffSide {
-        if self.side == "deletions" {
-            DiffSide::Original
-        } else {
-            DiffSide::Modified
-        }
-    }
-    pub fn label(&self) -> String {
-        if self.scope.as_deref() == Some("review") {
-            return "Entire review".into();
-        }
-        if self.scope.as_deref() == Some("file") {
-            return self.path.clone();
-        }
-        format!("{}:{}–{} · {}", self.path, self.start, self.end, self.side)
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -160,8 +166,6 @@ pub struct ReviewState {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReviewTab {
     pub id: String,
-    #[serde(rename = "scopeKey", default)]
-    pub scope_key: Option<String>,
     pub label: String,
     #[serde(default)]
     pub kind: String,
@@ -202,6 +206,8 @@ pub struct FilePatch {
     pub patch: String,
     pub digest: String,
     pub too_large: bool,
+    #[serde(default)]
+    pub deferred: bool,
 }
 #[derive(Deserialize)]
 pub struct ReviewPatch {

@@ -582,15 +582,30 @@ impl DiffState {
         if let Some(line) = &position.line {
             self.scroll_to_line(line.clone(), cx);
         }
-        let header = self.file_ix(&position.path).and_then(|ix| self.header_rows.get(ix).copied());
+        self.restore_viewport(position);
+        cx.notify();
+    }
+
+    fn restore_viewport(&self, position: &DiffScrollPosition) {
+        let header = self
+            .file_ix(&position.path)
+            .and_then(|ix| self.header_rows.get(ix).copied());
         if let Some(header) = header {
-            let item_ix = position.line.as_ref().and_then(|line| self.source_row(line))
-                .map(|row| row.saturating_sub(position.leading_rows).max(header)).unwrap_or(header);
-            self.list.scroll_to(ListOffset { item_ix, offset_in_item: position.offset });
-            self.horizontal_scroll.set_offset(point(position.horizontal, px(0.)));
-            cx.notify();
+            let item_ix = position
+                .line
+                .as_ref()
+                .and_then(|line| self.source_row(line))
+                .map(|row| row.saturating_sub(position.leading_rows).max(header))
+                .unwrap_or(header);
+            self.list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: position.offset,
+            });
+            self.horizontal_scroll
+                .set_offset(point(position.horizontal, px(0.)));
         }
     }
+
     pub(crate) fn selection(&self) -> &TextSelectionHandle {
         &self.selection
     }
@@ -651,6 +666,31 @@ impl DiffState {
         self.horizontal_scroll.set_offset(point(px(0.), px(0.)));
         self.ensure_presentation(cx);
         cx.notify();
+    }
+
+    /// Replaces a loaded placeholder without resetting other files or the viewport.
+    pub fn replace_file(&mut self, file: DiffFile, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = self.file_ix(file.path()) else {
+            return false;
+        };
+        let position = self.scroll_position();
+        self.resolutions.retain(|(path, _), _| path != file.path());
+        self.files[ix] = file;
+        self.expanded[ix].clear();
+        self.presentations[ix] = None;
+        // Cancel stale preparation, retaining completed work for other files.
+        self.presentation_generation += 1;
+        self.preparing = None;
+        self._presentation = Task::ready(());
+        self.geometry.borrow_mut().clear();
+        self.rebuild(false);
+        if let Some(position) = position {
+            self.restore_viewport(&position);
+        }
+        self.list.remeasure();
+        self.ensure_presentation(cx);
+        cx.notify();
+        true
     }
 
     /// Changes the display mode while preserving source-line selection and a

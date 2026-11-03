@@ -7,7 +7,6 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     diff::*,
     input::{Input, InputState},
-    tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -25,6 +24,7 @@ mod continuous;
 mod file_sheet;
 mod motion;
 mod navigation;
+mod panes;
 mod projects;
 mod review;
 
@@ -86,9 +86,6 @@ enum ModalKind {
 struct Modal {
     kind: ModalKind,
     request: ReviewRequest,
-    tab: String,
-    selection: Option<Selection>,
-    digest: String,
     serial: u64,
     anchor: Option<SharedString>,
     anchor_bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -106,7 +103,11 @@ pub struct Rev {
     file_sheet: file_sheet::FileSheet,
     patch: FilePatch,
     patches: HashMap<String, FilePatch>,
+    loading_patches: HashSet<String>,
+    pending_file_navigation: Option<continuous::PendingFileNavigation>,
     diff: Entity<DiffState>,
+    diff_pane: Entity<panes::Pane>,
+    files_pane: Entity<panes::Pane>,
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
@@ -161,6 +162,11 @@ impl Rev {
             .collect();
 
         let diff = cx.new(|cx| DiffState::new([], cx));
+        let owner = cx.entity();
+        let diff_pane =
+            cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Diff, &diff, cx));
+        let files_pane =
+            cx.new(|cx| panes::Pane::new(owner.clone(), panes::PaneKind::Files, &diff, cx));
 
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
@@ -173,7 +179,10 @@ impl Rev {
                 let selecting = state.is_selecting_text(cx);
                 let range = state.selected_text_lines(cx);
                 if selecting {
-                    this.selecting = true;
+                    if !this.selecting {
+                        this.selecting = true;
+                        cx.notify();
+                    }
                 } else if let Some(range) = range {
                     this.selecting = false;
                     if this.selection != Selection::from_range(&range) {
@@ -183,13 +192,17 @@ impl Rev {
                 } else if this.selecting {
                     this.selecting = false;
                     this.selection = None;
+
+                    cx.notify();
                 }
-                cx.notify();
             }),
             cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, window, cx| {
                 match event {
                     DiffEvent::VisibleFileChanged(path) => {
                         this.set_active_file(path.to_string(), cx)
+                    }
+                    DiffEvent::FileExpanded(path) => {
+                        this.load_file_patch(path.to_string(), window, cx);
                     }
                     DiffEvent::SelectionStarted(_) => this.selecting = true,
                     DiffEvent::SelectionEnded(range) => {
@@ -215,7 +228,11 @@ impl Rev {
             file_sheet: file_sheet::FileSheet::default(),
             patch: FilePatch::default(),
             patches: HashMap::new(),
+            loading_patches: HashSet::new(),
+            pending_file_navigation: None,
             diff,
+            diff_pane,
+            files_pane,
             selection: None,
             selecting: false,
             selection_menu: Point::default(),
@@ -325,9 +342,12 @@ impl Rev {
         self.error = None;
         self.review_epoch += 1;
         self.file_epoch += 1;
+        self.loading_patches.clear();
+        self.pending_file_navigation = None;
         let epoch = self.review_epoch;
         let mut params = json!(request);
         params["remember"] = json!(true);
+        params["preview"] = json!(true);
         params["current"] = json!(request.head.as_deref().is_none_or(|head| head == "HEAD"));
         let modal_serial = self.modal_serial;
         self.rpc(
@@ -447,6 +467,8 @@ impl Rev {
                                 this.patch = FilePatch::default();
                                 this.patches.clear();
                                 this.file_epoch += 1;
+                                this.loading_patches.clear();
+                                this.pending_file_navigation = None;
                                 this.diff.update(cx, |diff, cx| diff.set_files([], cx));
                             }
                         }
@@ -529,8 +551,8 @@ impl Rev {
     fn accept_selection(
         &mut self,
         range: &DiffLineRange,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
         self.selection = Selection::from_range(range);
     }
@@ -572,30 +594,19 @@ impl Rev {
                 ..Default::default()
             };
         }
-        let tab = self
-            .review
-            .as_ref()
-            .map(|r| r.scope_key.clone())
-            .unwrap_or_default();
+
         let modal = Modal {
             kind,
             request: request.clone(),
-            tab,
             anchor: selection
                 .as_ref()
                 .is_none_or(|s| s.start == 0)
                 .then(|| SharedString::from(anchor.to_owned())),
             anchor_bounds: Default::default(),
-            selection,
-            digest: self.patch.digest.clone(),
             serial: self.modal_serial,
         };
         let values: Vec<String> = match kind {
-            ModalKind::Review => vec![
-                request.repo.clone(),
-                request.base.clone().unwrap_or_default(),
-                String::new(),
-            ],
+            ModalKind::Review => vec![request.repo.clone(), String::new(), String::new()],
             _ => vec![String::new(); 3],
         };
         for (input, value) in self.fields.iter().zip(values) {
@@ -728,7 +739,7 @@ impl Rev {
                     self.submitting = true;
                     self.rpc(
                         "pr",
-                        json!({ "repo": request.repo, "value": values[2].trim_start_matches('#') }),
+                        json!({ "repo": request.repo, "value": values[2].trim_start_matches('#'), "base": request.base }),
                         window,
                         cx,
                         move |this, result, window, cx| {
