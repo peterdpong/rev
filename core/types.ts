@@ -27,3 +27,5 @@ export type WorkspaceAction =
   | { type: 'collapseProject'; repo: string; collapsed: boolean }
   | { type: 'removeProject'; repo: string }
   | { type: 'setFile'; id: string; file: string };
+
+export type * from './agent-types';

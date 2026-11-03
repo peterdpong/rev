@@ -15,7 +15,8 @@
     "demo": "node --import tsx scripts/demo.ts",
     "build": "npm run build:host && cargo build --release --locked",
     "bundle": "npm run build:host && node scripts/bundle.mjs",
-    "test:native": "cargo test --locked"
+    "test:native": "cargo test --locked",
+    "agent:example": "node --import tsx scripts/agent-example.ts"
   },
   "engines": {
     "node": ">=22"
