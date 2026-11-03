@@ -11,7 +11,7 @@ async function statePath(review: Review) {
   const gitDir = (
     await git(review.repo, ['rev-parse', '--absolute-git-dir'])
   ).trim();
-  
+
   const dir = path.join(gitDir, 'rev');
   await mkdir(dir, { recursive: true });
 
@@ -53,16 +53,18 @@ async function dropStaleMarkers(
   return state;
 }
 
-export async function readState(review: Review): Promise<ReviewState> {
-  return dropStaleMarkers(
-    review,
-    await readStoredState(await statePath(review)),
-  );
+export async function readState(
+  review: Review,
+  validateViewed = true,
+): Promise<ReviewState> {
+  const state = await readStoredState(await statePath(review));
+  return validateViewed ? dropStaleMarkers(review, state) : state;
 }
 
 export async function mutateState(
   review: Review,
   change: (state: ReviewState) => void,
+  validateViewed = true,
 ) {
   // Take the queue position synchronously so updates apply in call order.
   // `review.repo` is the repo root, so it identifies the state file with `scopeKey`.
@@ -97,5 +99,5 @@ export async function mutateState(
   }
 
   // Check markers after the write so the git diffs don't hold up the queue.
-  return dropStaleMarkers(review, state);
+  return validateViewed ? dropStaleMarkers(review, state) : state;
 }

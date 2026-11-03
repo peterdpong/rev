@@ -13,7 +13,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { importPR, inspect, resolveRef, runGitText } from '../../core/git';
+import {
+  importPR,
+  inspect,
+  refreshPR,
+  resolveRef,
+  runGitText,
+} from '../../core/git';
 import { readPullRequest } from '../../core/git/pull-requests';
 
 test('PR imports use the rev namespace and metadata without changing the checkout', async (t) => {
@@ -115,6 +121,21 @@ test('PR imports use the rev namespace and metadata without changing the checkou
     JSON.parse(await readFile(path.join(metadataDir, files[0]), 'utf8')),
     metadata,
   );
+
+  // Refreshing keeps the review's mode and commit range, and recovers the PR
+  // from its refs when the cached metadata is gone.
+  const imported = await importPR(repo, '42');
+  const scope = { start: head, end: head };
+  const expected = { ...imported, commitRange: scope };
+  assert.deepEqual(
+    await refreshPR(await inspect({ ...imported, commitRange: scope })),
+    expected,
+  );
+  await rm(path.join(metadataDir, files[0]));
+  const uncached = await inspect({ ...imported, commitRange: scope });
+  assert.equal(uncached.pullRequest, undefined);
+  assert.deepEqual(await refreshPR(uncached), expected);
+  assert.equal(await refreshPR(await inspect({ repo })), undefined);
 
   assert.equal(
     (await runGitText(repo, ['branch', '--show-current'])).trim(),

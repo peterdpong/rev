@@ -25,7 +25,7 @@ lines.on('line', (line) => {
     ) {
       throw new Error('Invalid request.');
     }
-    
+
     id = request.id;
     void host.call(request.method, request.params).then(
       (result) => respond(id, result),

@@ -1,5 +1,6 @@
 export { hash } from './util';
 export type {
+  Checkout,
   ReviewMode,
   ReviewRequest,
   ChangeStatus,
@@ -25,6 +26,7 @@ export {
 } from './command';
 export {
   assertCommitId,
+  checkouts,
   CommitIdLabel,
   defaultBase,
   isCommitId,
@@ -43,4 +45,4 @@ export {
 export { filePatch, reviewPatches } from './patch';
 export { ignoredPaths } from './ignored';
 export { listCommits } from './commits';
-export { fetchRepo, importPR } from './pull-requests';
+export { fetchRepo, importPR, refreshPR } from './pull-requests';

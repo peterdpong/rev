@@ -1,5 +1,7 @@
 export type ReviewMode = 'branch' | 'working';
 
+export type Checkout = { repo: string; branch: string; sha: string };
+
 export type ReviewRequest = {
   repo: string;
   base?: string;

@@ -14,6 +14,7 @@ test('the host requires an explicit local repository folder', async (t) => {
   t.after(() => host.close());
   for (const repo of [undefined, '', '   ']) {
     await assert.rejects(
+      // @ts-expect-error Untyped callers can still omit the folder.
       host.call('review', { repo }),
       /Pass a repository folder/,
     );
@@ -75,7 +76,7 @@ test(
         JSON.stringify({
           id: 2,
           method: 'patch',
-          params: { repo, base: 'main', path: 'file.txt' },
+          params: { review: { repo, base: 'main' }, path: 'file.txt' },
         }),
       ),
       call(null, 'not json'),
@@ -88,6 +89,24 @@ test(
       JSON.stringify({ id: 3, method: 'unknown', params: { repo } }),
     );
     assert.match(unknown.error, /Unknown action/);
+    const malformed = await call(
+      4,
+      JSON.stringify({
+        id: 4,
+        method: 'checkouts',
+        params: { repos: [repo, 42] },
+      }),
+    );
+    assert.match(malformed.error, /Pass a list of repository folders/);
+    const malformedReview = await call(
+      5,
+      JSON.stringify({
+        id: 5,
+        method: 'patch',
+        params: { review: { repo, mode: 42 }, path: 'file.txt' },
+      }),
+    );
+    assert.match(malformedReview.error, /Unknown comparison mode/);
     child.stdin.end();
     const [code] = await exited;
     assert.equal(code, 0);
