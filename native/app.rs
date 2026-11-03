@@ -21,6 +21,7 @@ use std::{
 };
 
 mod commits;
+mod continuous;
 mod motion;
 mod projects;
 mod review;
@@ -85,9 +86,9 @@ pub struct Rev {
     sidebar_focus: FocusHandle,
     review: Option<Review>,
     state: ReviewState,
-    thread_target: Option<(Selection, String)>,
     file: Option<String>,
     patch: FilePatch,
+    patches: HashMap<String, FilePatch>,
     diff: Entity<DiffState>,
     selection: Option<Selection>,
     selecting: bool,
@@ -109,7 +110,6 @@ pub struct Rev {
     review_epoch: u64,
     file_epoch: u64,
     error: Option<String>,
-    notice: Option<String>,
     split: bool,
     wrap: bool,
     _subscriptions: Vec<Subscription>,
@@ -171,6 +171,9 @@ impl Rev {
             }),
             cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, window, cx| {
                 match event {
+                    DiffEvent::VisibleFileChanged(path) => {
+                        this.set_active_file(path.to_string(), cx)
+                    }
                     DiffEvent::SelectionStarted(_) => this.selecting = true,
                     DiffEvent::SelectionEnded(range) => {
                         this.selecting = false;
@@ -190,9 +193,9 @@ impl Rev {
             sidebar_focus: cx.focus_handle(),
             review: None,
             state: ReviewState::default(),
-            thread_target: None,
             file: None,
             patch: FilePatch::default(),
+            patches: HashMap::new(),
             diff,
             selection: None,
             selecting: false,
@@ -214,7 +217,6 @@ impl Rev {
             review_epoch: 0,
             file_epoch: 0,
             error,
-            notice: None,
             split: false,
             wrap: false,
             _subscriptions: subscriptions,
@@ -292,13 +294,13 @@ impl Rev {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.loading || self.workspace_busy || self.patch_loading {
+        if self.loading || self.workspace_busy {
             return;
         }
 
         self.loading = true;
+        self.patch_loading = false;
         self.error = None;
-        self.notice = None;
         self.review_epoch += 1;
         self.file_epoch += 1;
         let epoch = self.review_epoch;
@@ -345,73 +347,19 @@ impl Rev {
                         this.workspace = workspace;
                         this.state = state;
                         this.review = Some(review);
-                        this.file = None;
-                        this.thread_target = None;
+                        this.file = selected;
                         this.patch = FilePatch::default();
+                        this.patches.clear();
                         this.selection = None;
                         this.diff.update(cx, |diff, cx| diff.set_files([], cx));
                         this.filter
                             .update(cx, |input, cx| input.set_value("", window, cx));
-                        if let Some(path) = selected {
-                            this.load_file(path, window, cx);
-                        }
+                        this.load_patches(window, cx);
                     }
                     Err(e) => this.error = Some(e),
                 }
             },
         );
-        cx.notify();
-    }
-
-    fn load_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
-            return;
-        };
-        let tab_id = self
-            .workspace
-            .active_tab_id
-            .clone()
-            .unwrap_or_else(|| review.key.clone());
-
-        self.thread_target = self
-            .thread_target
-            .take()
-            .filter(|(selection, _)| selection.path == path);
-        self.file_epoch += 1;
-        let epoch = self.file_epoch;
-        self.file = Some(path.clone());
-        self.patch_loading = true;
-        self.selection = None;
-        self.selecting = false;
-        self.patch = FilePatch::default();
-        self.error = None;
-        self.notice = None;
-        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
-        self.rpc("patch", json!({ "review": review.request, "path": path }), window, cx, move |this, result, window, cx| {
-            if this.file_epoch != epoch { return; }
-            this.patch_loading = false;
-            let Some(value) = this.result(result) else { return };
-            match decode::<FilePatch>(value) {
-                Ok(patch) => {
-                    if patch.too_large { this.notice = Some("This patch exceeds the 2 MB inline limit. Use patch diff in the terminal.".into()); }
-                    else if patch.patch == "Binary file (untracked)" { this.notice = Some("Binary file".into()); }
-                    else {
-                        match DiffFile::parse(&patch.patch) {
-                            Ok(files) => this.diff.update(cx, |diff, cx| diff.set_files(files, cx)),
-                            Err(e) => this.error = Some(format!("Could not display this patch: {e}")),
-                        }
-                    }
-                    this.patch = patch;
-                    if let Some((selection, digest)) = this.thread_target.take() {
-                        if digest == this.patch.digest {
-                            this.diff.update(cx, |diff, cx| diff.scroll_to_line(DiffLinePosition::new(selection.path.clone(), selection.diff_side(), selection.start), cx));
-                        } else { this.error = Some("This conversation refers to an earlier version of the file.".into()); }
-                    }
-                    this.rpc("workspaceAction", json!({ "type": "setFile", "id": tab_id, "file": path }), window, cx, |this, result, _, _| { this.result(result); });
-                }
-                Err(e) => this.error = Some(e),
-            }
-        });
         cx.notify();
     }
 
@@ -466,6 +414,7 @@ impl Rev {
                                 this.file = None;
                                 this.selection = None;
                                 this.patch = FilePatch::default();
+                                this.patches.clear();
                                 this.file_epoch += 1;
                                 this.diff.update(cx, |diff, cx| diff.set_files([], cx));
                             }
@@ -491,7 +440,7 @@ impl Rev {
             .position(|f| Some(&f.path) == self.file.as_ref())
             .unwrap_or(0);
         let next = (index as isize + direction).clamp(0, files.len() as isize - 1) as usize;
-        self.load_file(files[next].path.clone(), window, cx);
+        self.jump_file(files[next].path.clone(), window, cx);
     }
 
     fn visible_files(&self, cx: &App) -> Vec<File> {
@@ -509,19 +458,9 @@ impl Rev {
     }
 
     fn mark_viewed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.patch_loading || self.loading || self.patch.digest.is_empty() {
-            return;
+        if let Some(path) = self.file.clone() {
+            self.mark_file_viewed(path, window, cx);
         }
-        let (Some(review), Some(path)) = (self.review.clone(), self.file.clone()) else {
-            return;
-        };
-        let epoch = self.review_epoch;
-        let viewed = !self.state.viewed.contains_key(&path);
-        self.rpc("viewed", json!({ "review": review.request, "path": path, "viewed": viewed, "digest": self.patch.digest }), window, cx,
-            move |this, result, _, _| {
-                if this.review_epoch != epoch { return; }
-                if let Some(value) = this.result(result) { match decode(value) { Ok(state) => this.state = state, Err(e) => this.error = Some(e) } }
-            });
     }
 
     fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {

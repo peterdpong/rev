@@ -715,6 +715,7 @@ fn render_diff(
                                 let painted = state.geometry().borrow().painted_width();
                                 code_width(painted, gutter_width, rem, mode)
                             };
+                            state.notify_visible_file(cx);
                             if state.record_paint(bounds.size, painted) || rehinted {
                                 cx.notify();
                             }
@@ -1137,6 +1138,8 @@ fn render_file_header(
     let foreground = cx.theme().muted_foreground;
     let border = cx.theme().border;
     let collapsed = code.state.read(cx).is_file_collapsed(document.path());
+    let header_width = code.state.read(cx).viewport().width;
+    let header_offset = if code.soft_wrap { px(0.) } else { -code.state.read(cx).horizontal_scroll().offset().x };
     let content = if let Some(render) = &code.header.content {
         render(document, window, cx)
     } else {
@@ -1202,7 +1205,7 @@ fn render_file_header(
         .border_color(border)
         .child(
             h_flex()
-                .w_full()
+                .relative().left(header_offset).w(header_width)
                 .min_w_0()
                 .pl_1()
                 .pr_3()
@@ -1253,6 +1256,10 @@ fn file_annotations(
 
 /// Summarizes a file without source rows: binary, metadata-only or empty.
 fn render_notice(file: &DiffFile, cx: &App) -> AnyElement {
+    if let Some(message) = file.notice() {
+        return div().w_full().px_3().py_3().text_sm()
+            .text_color(cx.theme().muted_foreground).child(message.clone()).into_any_element();
+    }
     let message = if !file.has_changes() {
         t!("Diff.NoChanges")
     } else if file.is_binary() {

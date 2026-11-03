@@ -192,6 +192,13 @@ pub struct FilePatch {
     pub digest: String,
     pub too_large: bool,
 }
+#[derive(Deserialize)]
+pub struct ReviewPatch {
+    pub path: String,
+    #[serde(flatten)]
+    pub patch: FilePatch,
+    pub error: Option<String>,
+}
 
 #[cfg(test)]
 mod tests {
