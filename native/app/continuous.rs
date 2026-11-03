@@ -135,6 +135,7 @@ impl Rev {
             .clone()
             .unwrap_or_else(|| review.key.clone());
 
+        self.hide_file_sheet(window, cx);
         self.set_active_file(path.clone(), cx);
         self.selection = None;
         self.selecting = false;
