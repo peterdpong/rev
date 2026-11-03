@@ -310,6 +310,24 @@ impl Rev {
                                 .id("review-header-actions")
                                 .child(
                                     self.popover_button(
+                                        "review-details",
+                                        icon_button(
+                                            "review-details",
+                                            "Review details",
+                                            IconName::Info,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_review_details(window, cx)
+                                            }),
+                                        ),
+                                        Anchor::TopRight,
+                                        window,
+                                        cx,
+                                    ),
+                                )
+                                .child(
+                                    self.popover_button(
                                         "choose-commits",
                                         icon_button(
                                             "choose-commits",
@@ -1094,6 +1112,7 @@ mod tests {
                     head_ref_name: "feature".into(),
                     base_ref_name: "main".into(),
                     comparison_base_ref_name: None,
+                    ..Default::default()
                 });
                 app
             }),

@@ -81,10 +81,25 @@ pub struct Review {
     pub scope_key: String,
     #[serde(default)]
     pub commit_count: usize,
+    #[serde(default)]
+    pub head_sha: String,
+    #[serde(default)]
+    pub merge_base: String,
+    #[serde(default)]
+    pub head_commit: Option<CommitDetails>,
     pub pull_request: Option<PullRequest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct CommitDetails {
+    pub sha: String,
+    pub subject: String,
+    pub body: String,
+    pub author: String,
+    pub date: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {
     pub number: usize,
@@ -93,6 +108,14 @@ pub struct PullRequest {
     pub head_ref_name: String,
     pub base_ref_name: String,
     pub comparison_base_ref_name: Option<String>,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub is_draft: bool,
 }
 
 impl Review {
