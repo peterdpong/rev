@@ -388,9 +388,20 @@ struct DocumentInner {
 pub struct DiffFile {
     inner: Arc<DocumentInner>,
     language: Option<SharedString>,
+    notice: Option<SharedString>,
 }
 
 impl DiffFile {
+    /// A file-sized placeholder for unavailable contents, without fabricated source lines.
+    pub fn placeholder(path: impl Into<SharedString>, message: impl Into<SharedString>) -> Self {
+        let mut file = Self::unchanged(path, "");
+        file.notice = Some(message.into());
+        file
+    }
+
+    pub(crate) fn notice(&self) -> Option<&SharedString> {
+        self.notice.as_ref()
+    }
     /// Parses every file in a unified or Git diff, in patch order, without
     /// computing differences. Syntax emphasis is prepared later by
     /// [`super::DiffState`] on a background thread.
@@ -451,6 +462,7 @@ impl DiffFile {
                 conflicts: Vec::new(),
             }),
             language: None,
+            notice: None,
         }
     }
 
