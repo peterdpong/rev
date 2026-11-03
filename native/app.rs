@@ -44,7 +44,6 @@ pub struct Rev {
     title: SharedString,
     pub(crate) error: Option<String>,
 }
-
 impl Rev {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
@@ -149,7 +148,6 @@ impl Rev {
                 }
             },
         };
-
         self.loading = true;
         self.error = None;
         let task = cx.background_executor().spawn(async move {
@@ -157,23 +155,21 @@ impl Rev {
                 serde_json::from_value::<ReviewResponse>(value).map_err(|error| error.to_string())
             })
         });
-
         cx.spawn_in(window, async move |this, cx| {
             let response = task.await;
             let _ = this.update_in(cx, |this, _, cx| {
                 this.loading = false;
-
                 match response {
                     Ok(response) => {
                         this.title = format!(
                             "{} · {} → {}",
-                            response.review.name, response.review.head, response.review.base
+                            response.review.name,
+                            response.review.request.head.as_deref().unwrap_or("HEAD"),
+                            response.review.request.base.as_deref().unwrap_or("main")
                         )
                         .into();
-
                         let mut files = Vec::new();
                         this.notices.clear();
-
                         for patch in response.patches {
                             let parsed = if let Some(error) = patch.error {
                                 Err(error)
@@ -182,7 +178,6 @@ impl Rev {
                             } else {
                                 DiffFile::parse(&patch.patch).map_err(|error| error.to_string())
                             };
-
                             match parsed {
                                 Ok(parsed) if !parsed.is_empty() => files.extend(parsed),
                                 Ok(_) => this
@@ -193,7 +188,6 @@ impl Rev {
                                 }
                             }
                         }
-
                         this.diff.update(cx, |diff, cx| diff.set_files(files, cx));
                     }
                     Err(error) => this.error = Some(error),
@@ -206,7 +200,6 @@ impl Rev {
         cx.notify();
     }
 }
-
 impl Render for Rev {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
