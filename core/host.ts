@@ -35,7 +35,10 @@ export class HostService {
       process.env.REV_DATA_DIR ||
       process.env.REVUE_DATA_DIR ||
       path.join(homedir(), '.revue');
-    this.runner = new AgentRunner();
+    this.runner = new AgentRunner(
+      undefined,
+      path.join(this.dataDir, 'worktrees'),
+    );
   }
   async call(method: string, p: any = {}): Promise<unknown> {
     if (this.closed) {

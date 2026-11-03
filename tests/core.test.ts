@@ -152,20 +152,22 @@ test('feedback persists, concurrent mutations do not lose comments, and stale fe
   );
 });
 
-test('blocks edits against another checkout and against unseen dirty changes', async (t) => {
+test('prepares branch edits despite local changes or a different checked-out branch', async (t) => {
   const r = await fixture(t);
   await addComment(await inspect(r), selection, 'Change this.');
   await writeFile(path.join(r.repo, 'app.ts'), 'dirty\n');
-  await assert.rejects(
-    preparePrompt({ review: r, provider: 'codex', mode: 'apply' }),
-    /local changes/,
+  assert.match(
+    (await preparePrompt({ review: r, provider: 'codex', mode: 'apply' }))
+      .prompt,
+    /Change this/,
   );
   await git(r.repo, ['restore', 'app.ts']);
   await git(r.repo, ['switch', 'main']);
   const other = { ...r, head: 'feature' };
-  await assert.rejects(
-    preparePrompt({ review: other, provider: 'codex', mode: 'apply' }),
-    /checkout of the reviewed branch/,
+  assert.match(
+    (await preparePrompt({ review: other, provider: 'codex', mode: 'apply' }))
+      .prompt,
+    /Change this/,
   );
 });
 
@@ -236,7 +238,10 @@ test('real child-process transport sends all feedback and marks sent only on exp
       delete process.env.REVUE_CODEX_PATH;
     }
   });
-  const runner = new AgentRunner();
+  const runner = new AgentRunner(
+    undefined,
+    path.join(r.repo, '.git', 'agent-worktrees'),
+  );
   const run = await runner.start({
     review: r,
     provider: 'codex',
@@ -321,7 +326,10 @@ test('questions against a committed snapshot read an isolated checkout when the 
       delete process.env.REVUE_CODEX_PATH;
     }
   });
-  const runner = new AgentRunner();
+  const runner = new AgentRunner(
+    undefined,
+    path.join(r.repo, '.git', 'agent-worktrees'),
+  );
   const run = await runner.start({
     review: r,
     provider: 'codex',
@@ -370,7 +378,10 @@ test('cancellation stops the provider and preserves queued comments', async (t) 
       delete process.env.REVUE_CODEX_PATH;
     }
   });
-  const runner = new AgentRunner();
+  const runner = new AgentRunner(
+    undefined,
+    path.join(r.repo, '.git', 'agent-worktrees'),
+  );
   const run = await runner.start({
     review: r,
     provider: 'codex',

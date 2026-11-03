@@ -55,8 +55,8 @@ function shutdown() {
     if (
       (!pending &&
         !hasPendingHistories() &&
-        ![...host.runner.runs.values()].some(
-          (run) => run.status === 'running',
+        ![...host.runner.runs.values()].some((run) =>
+          ['running', 'queued'].includes(run.status),
         )) ||
       Date.now() > deadline
     ) {

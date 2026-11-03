@@ -59,18 +59,33 @@ async function fixture(
 
 test('Codex resumes saved conversations across runners, resets on request and on new commits', async (t) => {
   const { repo, request } = await fixture(t);
-  const run = await new AgentRunner().start(request);
+  const run = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start(request);
   await until(() => run.status !== 'running');
   assert.equal(run.status, 'completed');
   assert.ok(run.sessionId);
-  const resumed = await new AgentRunner().start(request);
+  const resumed = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start({
+    ...request,
+    threadId: run.thread!.id,
+  });
   await until(() => resumed.status !== 'running');
   assert.equal(resumed.sessionId, run.sessionId);
-  const fresh = await new AgentRunner().start({ ...request, newSession: true });
+  const fresh = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start({ ...request, newSession: true });
   await until(() => fresh.status !== 'running');
   assert.equal(fresh.status, 'completed');
   assert.notEqual(fresh.sessionId, run.sessionId);
-  const working = await new AgentRunner().start({
+  const working = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start({
     ...request,
     review: { ...request.review, mode: 'working' },
   });
@@ -86,7 +101,10 @@ test('Codex resumes saved conversations across runners, resets on request and on
     '-m',
     'new revision',
   ]);
-  const moved = await new AgentRunner().start(request);
+  const moved = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start(request);
   await until(() => moved.status !== 'running');
   assert.notEqual(moved.sessionId, fresh.sessionId);
 });
@@ -101,7 +119,10 @@ test('Codex handles early deltas, ignores other turns, and replaces partial mess
     text('Hello!'); complete();`,
     'globalThis.early = true;',
   );
-  const run = await new AgentRunner().start(request);
+  const run = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start(request);
   await until(() => run.status !== 'running');
   assert.equal(run.status, 'completed');
   assert.deepEqual(
@@ -120,7 +141,10 @@ test('Ask denies permission escalation, and unknown interactions receive an erro
     };
     send({ id: 'approval', method: 'item/commandExecution/requestApproval', params: { threadId, turnId, command: 'touch forbidden' } });`,
   );
-  const run = await new AgentRunner().start(request);
+  const run = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start(request);
   await until(() => run.status !== 'running');
   assert.equal(run.status, 'completed');
   assert.equal(run.approvals.length, 0);
@@ -140,7 +164,10 @@ test('Apply approvals are scoped to their run, wait for a decision, and cancel c
     { path: 'src/lib/retry.ts', side: 'additions', start: 4, end: 6 },
     'Handle cancellation',
   );
-  const runner = new AgentRunner();
+  const runner = new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  );
   const run = await runner.start({ ...request, mode: 'apply' });
   await until(() => run.approvals.length > 0);
   assert.equal(run.status, 'running');
@@ -150,6 +177,8 @@ test('Apply approvals are scoped to their run, wait for a decision, and cancel c
   );
   const id = run.approvals[0].id;
   runner.respondToApproval(run.id, id, true);
+  assert.match(run.events.at(-1)!.text, /Approved/);
+  assert.equal(run.approvals.length, 0);
   assert.throws(
     () => runner.respondToApproval(run.id, id, true),
     /no longer pending/,
@@ -177,7 +206,10 @@ test('Apply approvals are scoped to their run, wait for a decision, and cancel c
 
 test('provider exit without completion fails the turn', async (t) => {
   const { request } = await fixture(t, "text('Partial'); process.exit(0);");
-  const run = await new AgentRunner().start(request);
+  const run = await new AgentRunner(
+    undefined,
+    path.join(request.review.repo, '.git', 'agent-worktrees'),
+  ).start(request);
   await until(() => run.status !== 'running');
   assert.equal(run.status, 'failed');
   assert.ok(run.events.some((e) => e.kind === 'error'));
