@@ -339,9 +339,10 @@ impl Rev {
                 .header_visible(false)
                 .soft_wrap(self.wrap)
                 .text_size(px(12.))
-                .on_add_annotation(move |range, _, cx| {
+                .on_add_annotation(move |range, window, cx| {
                     let _ = add_owner.update(cx, |this, cx| {
                         this.selection = Selection::from_range(range);
+                        this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
                         this.diff.update(cx, |diff, cx| {
                             diff.set_selected_lines(Some(range.clone()), cx)
                         });
@@ -355,7 +356,14 @@ impl Rev {
             .min_w_0()
             .h_full()
             .child(header)
-            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
+            .child(
+                div()
+                    .id("diff-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(content),
+            )
             .into_any_element()
     }
 
@@ -610,6 +618,16 @@ impl Render for Rev {
                         ))),
                 )
             })
+            .when(
+                self.modal.is_none() && self.selection.is_some() && !self.selecting,
+                |d| {
+                    d.child(deferred(
+                        anchored()
+                            .position(self.selection_menu)
+                            .snap_to_window_with_margin(px(8.)),
+                    ))
+                },
+            )
             .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
     }
 }

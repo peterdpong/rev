@@ -588,14 +588,27 @@ fn render_diff(
                     this.child(Scrollbar::horizontal(&horizontal))
                 })
         })
+        // Keep the gesture when the pointer leaves the number column or the
+        // add-comment control and travels across the code.
+        .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+            if event.pressed_button == Some(MouseButton::Left) {
+                this.drag_line_selection_at(event.position, cx);
+            }
+        }))
         // A line-number drag may finish anywhere, including outside the body.
         .on_mouse_up(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| this.end_line_selection(cx)),
+            cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                this.drag_line_selection_at(event.position, cx);
+                this.end_line_selection(cx);
+            }),
         )
         .on_mouse_up_out(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| this.end_line_selection(cx)),
+            cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                this.drag_line_selection_at(event.position, cx);
+                this.end_line_selection(cx);
+            }),
         )
         .on_action(cx.listener(|this, _: &ScrollUp, window, cx| {
             if !body_focused(this, window, cx) {
@@ -1531,6 +1544,8 @@ fn add_annotation_button(
         .selected
         .as_ref()
         .is_some_and(|selected| selected.is_last(&code.files, file, side, ix));
+    let state = code.state.clone();
+    let clicked = state.clone();
     Some(
         div()
             .id(("add-annotation", ix))
@@ -1552,8 +1567,19 @@ fn add_annotation_button(
             .role(gpui::accesskit::Role::Button)
             .aria_label(t!("Diff.AddAnnotation", line = position.line()).to_string())
             .child(Icon::new(IconName::Plus).xsmall())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| handler(&range, window, cx))
+            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                state.update(cx, |state, cx| {
+                    state.begin_line_selection(position.clone(), event.modifiers.shift, window, cx);
+                });
+                cx.stop_propagation();
+            })
+            .on_click(move |_, window, cx| {
+                let range = clicked
+                    .read(cx)
+                    .selected_lines()
+                    .unwrap_or_else(|| range.clone());
+                handler(&range, window, cx);
+            })
             .into_any_element(),
     )
 }
