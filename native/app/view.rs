@@ -229,6 +229,10 @@ fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Base
         .child(label)
 }
 
+fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
+    button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
+}
+
 fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
     button_base(id, label)
         .bg(rgb(TEXT))
@@ -256,6 +260,16 @@ fn choice_button(id: impl Into<ElementId>, selected: bool) -> BaseButton {
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .aria_selected(selected)
+}
+
+fn commit_selection_mark(selected: bool) -> Div {
+    div().size(px(14.)).flex_shrink_0().when(selected, |d| {
+        d.child(
+            Icon::new(IconName::Check)
+                .size(px(14.))
+                .text_color(rgb(TEXT)),
+        )
+    })
 }
 
 fn sidebar_item(
@@ -483,6 +497,17 @@ impl Rev {
                         .child(
                             icon_actions()
                                 .id("review-header-actions")
+                                .child(
+                                    icon_button(
+                                        "choose-commits",
+                                        "Choose commits",
+                                        IconName::GitCommitHorizontal,
+                                    )
+                                    .disabled(busy)
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| this.open_commit_picker(window, cx),
+                                    )),
+                                )
                                 .debug_selector(|| "review-header-actions".into())
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -935,6 +960,112 @@ impl Rev {
             .into_any_element()
     }
 
+    fn commit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let commit = &self.commit_picker.commits[index];
+        let selected = self.commit_picker.selected(index);
+        let label = format!("{} {}", &commit.sha[..8], commit.subject);
+        div()
+            .h(px(CHOICE_ROW_HEIGHT + 2.))
+            .pb(px(2.))
+            .child(
+                choice_button(("commit", index), selected)
+                    .accessibility_label(label)
+                    .child(commit_selection_mark(selected))
+                    .child(
+                        column()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .line_height(px(16.))
+                                    .child(commit.subject.clone()),
+                            )
+                            .child(
+                                row()
+                                    .gap(px(UI_SPACING))
+                                    .text_size(px(11.))
+                                    .line_height(px(14.))
+                                    .text_color(rgb(MUTED))
+                                    .child(
+                                        div()
+                                            .font_family("Menlo")
+                                            .child(commit.sha[..8].to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(commit.author.clone()),
+                                    )
+                                    .child(
+                                        commit.date.get(..10).unwrap_or(&commit.date).to_owned(),
+                                    ),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                        this.choose_commit(index, event.modifiers().shift, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn commit_choices(&self, cx: &mut Context<Self>) -> AnyElement {
+        let all = self.commit_picker.range.is_none();
+        column()
+            .gap(px(UI_SPACING))
+            .child(
+                choice_button("all-commits", all)
+                    .h(px(CONTROL_HEIGHT))
+                    .accessibility_label("All commits — full branch diff")
+                    .child(commit_selection_mark(all))
+                    .child("All commits")
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_all_commits(cx))),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(MUTED))
+                    .child("Click a commit. Shift-click to select a range."),
+            )
+            .when(!self.commit_picker.commits.is_empty(), |body| {
+                body.child(
+                    uniform_list(
+                        "commit-list",
+                        self.commit_picker.commits.len(),
+                        cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                            range
+                                .map(|index| this.commit_row(index, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .h(px(
+                        self.commit_picker.commits.len().min(7) as f32 * (CHOICE_ROW_HEIGHT + 2.)
+                    ))
+                    .w_full(),
+                )
+            })
+            .when(self.commit_picker.loading, |body| {
+                body.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(MUTED))
+                        .child("Loading commits…"),
+                )
+            })
+            .when(
+                self.commit_picker.has_more && !self.commit_picker.loading,
+                |body| {
+                    body.child(button("older-commits", "Load older commits").on_click(
+                        cx.listener(|this, _, window, cx| this.load_more_commits(window, cx)),
+                    ))
+                },
+            )
+            .into_any_element()
+    }
+
     fn diff_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let owner = cx.weak_entity();
         let add_owner = owner.clone();
@@ -1065,112 +1196,124 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
-        let title = "Open branch or PR in";
+        let is_commits = modal.kind == ModalKind::Commits;
+        let title = if is_commits {
+            "Review commits in"
+        } else {
+            "Open branch or PR in"
+        };
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
-        let mut choices = column().gap(px(2.));
-        for (i, branch) in modal.local_branches.iter().enumerate() {
-            let branch = branch.clone();
-            let serial = modal.serial;
-            choices = choices.child(
-                choice_button(("local-branch", i), false)
-                    .disabled(self.submitting)
-                    .accessibility_label(format!("Open local branch {branch}"))
-                    .child(
-                        Icon::new(IconName::GitBranch)
-                            .size(px(14.))
-                            .flex_shrink_0()
-                            .text_color(rgb(MUTED)),
-                    )
-                    .child(
-                        column()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_0()
-                            .line_height(px(16.))
-                            .child(div().truncate().child(branch.clone()))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(MUTED))
-                                    .child("Local branch"),
-                            ),
-                    )
-                    .child(
-                        Icon::new(IconName::ChevronRight)
-                            .size(px(12.))
-                            .text_color(rgb(MUTED)),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_local_branch(&branch, serial, window, cx)
-                    })),
-            );
-        }
-        if modal.branches_loading {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(MUTED))
-                    .child("Loading local branches…"),
-            );
-        } else if let Some(error) = &modal.branches_error {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(DANGER))
-                    .child(error.clone()),
-            );
-        } else if modal.local_branches.is_empty() {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(MUTED))
-                    .child("No local branches yet."),
-            );
-        }
-        body = body
-            .child(
-                column()
-                    .gap(px(UI_SPACING))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Branches"),
-                    )
-                    .child(
-                        div()
-                            .id("branch-options")
-                            .max_h(px(220.))
-                            .overflow_y_scroll()
-                            .child(choices),
-                    ),
-            )
-            .child(
-                column()
-                    .gap(px(POPOVER_PADDING))
-                    .pt(px(POPOVER_PADDING))
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
-                    .child(
-                        row()
-                            .items_start()
-                            .gap(px(POPOVER_PADDING))
-                            .child(self.form_field(0, "Base", "Base branch; leave blank to detect"))
-                            .child(div().flex().w(relative(0.65)).min_w_0().child(
-                                self.form_field(
-                                    1,
-                                    "Branch or PR",
-                                    "Branch, PR number or URL; leave blank for HEAD",
+        if is_commits {
+            body = body.child(self.commit_choices(cx));
+        } else {
+            let mut choices = column().gap(px(2.));
+            for (i, branch) in modal.local_branches.iter().enumerate() {
+                let branch = branch.clone();
+                let serial = modal.serial;
+                choices = choices.child(
+                    choice_button(("local-branch", i), false)
+                        .disabled(self.submitting)
+                        .accessibility_label(format!("Open local branch {branch}"))
+                        .child(
+                            Icon::new(IconName::GitBranch)
+                                .size(px(14.))
+                                .flex_shrink_0()
+                                .text_color(rgb(MUTED)),
+                        )
+                        .child(
+                            column()
+                                .flex_1()
+                                .min_w_0()
+                                .gap_0()
+                                .line_height(px(16.))
+                                .child(div().truncate().child(branch.clone()))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(MUTED))
+                                        .child("Local branch"),
                                 ),
-                            )),
-                    ),
-            );
-
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronRight)
+                                .size(px(12.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_local_branch(&branch, serial, window, cx)
+                        })),
+                );
+            }
+            if modal.branches_loading {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(MUTED))
+                        .child("Loading local branches…"),
+                );
+            } else if let Some(error) = &modal.branches_error {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(DANGER))
+                        .child(error.clone()),
+                );
+            } else if modal.local_branches.is_empty() {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(MUTED))
+                        .child("No local branches yet."),
+                );
+            }
+            body = body
+                .child(
+                    column()
+                        .gap(px(UI_SPACING))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Branches"),
+                        )
+                        .child(
+                            div()
+                                .id("branch-options")
+                                .max_h(px(220.))
+                                .overflow_y_scroll()
+                                .child(choices),
+                        ),
+                )
+                .child(
+                    column()
+                        .gap(px(POPOVER_PADDING))
+                        .pt(px(POPOVER_PADDING))
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
+                        .child(
+                            row()
+                                .items_start()
+                                .gap(px(POPOVER_PADDING))
+                                .child(self.form_field(
+                                    0,
+                                    "Base",
+                                    "Base branch; leave blank to detect",
+                                ))
+                                .child(div().flex().w(relative(0.65)).min_w_0().child(
+                                    self.form_field(
+                                        1,
+                                        "Branch or PR",
+                                        "Branch, PR number or URL; leave blank for HEAD",
+                                    ),
+                                )),
+                        ),
+                );
+        }
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
@@ -1178,7 +1321,11 @@ impl Rev {
             let label = if self.submitting {
                 "Working…"
             } else {
-                "Open diff"
+                if is_commits {
+                    "Review selection"
+                } else {
+                    "Open diff"
+                }
             };
             footer = footer.child(
                 primary_button("submit-modal", label)
@@ -1455,6 +1602,7 @@ mod performance_tests {
             selection: None,
             selecting: false,
             selection_menu: Default::default(),
+            commit_picker: Default::default(),
             filter: cx.new(|cx| InputState::new(window, cx)),
             collapsed_file_folders: Default::default(),
             filtered_file_folders: Default::default(),

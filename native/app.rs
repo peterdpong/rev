@@ -22,6 +22,8 @@ mod file_tree;
 mod view;
 mod working_tree;
 use file_tree::{EntryKind, FileTreeCache, TreeEntry};
+mod commits;
+use commits::CommitPicker;
 gpui_kit::actions!(
     rev,
     [
@@ -36,8 +38,30 @@ gpui_kit::actions!(
     ]
 );
 
+pub fn bind_shortcuts(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
+        KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+        KeyBinding::new("alt-down", NextFile, Some("Rev")),
+        KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
+        KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("escape", CloseModal, Some("Rev")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+    ]);
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ModalKind {
+    Review,
+    Commits,
+}
 #[derive(Clone)]
 struct Modal {
+    kind: ModalKind,
     request: ReviewRequest,
     serial: u64,
     local_branches: Vec<String>,
@@ -79,6 +103,7 @@ pub struct Rev {
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
+    commit_picker: CommitPicker,
     filter: Entity<InputState>,
     collapsed_file_folders: HashMap<String, HashSet<String>>,
     filtered_file_folders: HashSet<String>,
@@ -116,11 +141,12 @@ fn decode<T: DeserializeOwned>(value: Value) -> Result<T, String> {
 
 #[cfg(test)]
 mod modal_tests {
-    use super::Modal;
+    use super::{Modal, ModalKind};
     use crate::model::{CommitRange, ReviewRequest};
 
     fn repo_modal() -> Modal {
         Modal {
+            kind: ModalKind::Review,
             request: ReviewRequest {
                 repo: "/selected-repo".into(),
                 base: Some("old-base".into()),
@@ -222,7 +248,7 @@ impl Rev {
                     this.selecting = false;
                     if this.selection != Selection::from_range(&range) {
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(&range);
+                        this.accept_selection(&range, window, cx);
                     }
                 } else if this.selecting {
                     this.selecting = false;
@@ -238,7 +264,7 @@ impl Rev {
                     DiffEvent::SelectionEnded(range) => {
                         this.selecting = false;
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(range);
+                        this.accept_selection(range, window, cx);
                     }
                     DiffEvent::SelectionChanged(None) if !this.selecting => this.selection = None,
                     _ => {}
@@ -257,7 +283,6 @@ impl Rev {
             patch: FilePatch::default(),
             diff,
             selection: None,
-            filter,
             collapsed_file_folders: HashMap::new(),
             filtered_file_folders: HashSet::new(),
             file_tree_filter: String::new(),
@@ -267,6 +292,8 @@ impl Rev {
             file_rows_rendered: Default::default(),
             selecting: false,
             selection_menu: Point::default(),
+            commit_picker: CommitPicker::default(),
+            filter,
             fields,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
@@ -492,9 +519,9 @@ impl Rev {
         self.file = Some(path.clone());
         self.patch_loading = true;
         self.selection = None;
+        self.selecting = false;
         self.patch = FilePatch::default();
         self.error = None;
-        self.selecting = false;
         self.notice = None;
         self.diff.update(cx, |diff, cx| diff.set_files([], cx));
         self.rpc(
@@ -689,15 +716,20 @@ impl Rev {
 
         self.modal_serial += 1;
         self.selection = None;
-        self.diff
-            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.selecting = false;
         gpui_kit::base::TextSelection::clear(window, cx);
+        self.diff
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.focus.focus(window, cx);
         cx.notify();
     }
 
-    fn accept_selection(&mut self, range: &DiffLineRange) {
+    fn accept_selection(
+        &mut self,
+        range: &DiffLineRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selection = Selection::from_range(range);
     }
 
@@ -712,6 +744,7 @@ impl Rev {
             ..Default::default()
         };
         let modal = Modal {
+            kind: ModalKind::Review,
             request: request.clone(),
             serial: self.modal_serial,
             local_branches: Vec::new(),
@@ -840,6 +873,15 @@ impl Rev {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Commits)
+        {
+            self.apply_commit_selection(window, cx);
+            return;
+        }
+        cx.notify();
         if self.submitting {
             return;
         }

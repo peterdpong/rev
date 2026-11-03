@@ -49,6 +49,19 @@ pub struct CommitRange {
     pub end: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct Commit {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitPage {
+    pub commits: Vec<Commit>,
+    pub has_more: bool,
+}
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct File {
     pub path: String,
@@ -67,6 +80,8 @@ pub struct Review {
     pub branch: String,
     pub branch_head_sha: String,
     pub scope_key: String,
+    #[serde(default)]
+    pub commit_count: usize,
     pub pull_request: Option<PullRequest>,
 }
 
