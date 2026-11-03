@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use gpui_kit::component::diff::{DiffLineRange, DiffSide};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
