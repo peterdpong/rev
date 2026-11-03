@@ -3,7 +3,7 @@ use crate::{
     model::*,
 };
 use gpui_kit::component::{
-    Disableable, FocusTrapElement, Selectable, Sizable,
+    Disableable, Selectable, Sizable,
     button::{Button, ButtonVariants},
     diff::*,
     input::{Input, InputState},
@@ -14,7 +14,9 @@ use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
+    rc::Rc,
     time::Duration,
 };
 
@@ -45,11 +47,11 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("escape", CloseModal, Some("RevPopover")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", CloseModal, Some("Rev")),
-        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
-        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+        KeyBinding::new("cmd-enter", Submit, Some("RevPopover > Input")),
+        KeyBinding::new("escape", CloseModal, Some("RevPopover > Input")),
     ]);
 }
 
@@ -67,6 +69,8 @@ struct Modal {
     selection: Option<Selection>,
     digest: String,
     serial: u64,
+    anchor: Option<SharedString>,
+    anchor_bounds: Rc<Cell<Bounds<Pixels>>>,
 }
 
 pub struct Rev {
@@ -365,6 +369,9 @@ impl Rev {
     }
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.is_some() {
+            self.close_modal(window, cx);
+        }
         self.sidebar_collapsed = !self.sidebar_collapsed;
         if self.sidebar_collapsed && self.sidebar_focus.contains_focused(window, cx) {
             self.focus.focus(window, cx);
@@ -482,6 +489,24 @@ impl Rev {
         cx.notify();
     }
 
+    fn dismiss_popover(
+        &mut self,
+        serial: u64,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(modal) = &self.modal else {
+            return;
+        };
+        if modal.serial != serial
+            || (modal.anchor.is_some() && modal.anchor_bounds.get().contains(&event.position))
+        {
+            return;
+        }
+        self.close_modal(window, cx);
+    }
+
     fn accept_selection(
         &mut self,
         range: &DiffLineRange,
@@ -496,10 +521,19 @@ impl Rev {
         kind: ModalKind,
         selection: Option<Selection>,
         repo: Option<String>,
+        anchor: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.loading || self.patch_loading || self.submitting {
+            return;
+        }
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == kind && m.anchor.as_deref() == Some(anchor))
+        {
+            self.close_modal(window, cx);
             return;
         }
         self.close_modal(window, cx);
@@ -524,6 +558,10 @@ impl Rev {
             kind,
             request: request.clone(),
             tab,
+            anchor: selection
+                .is_none()
+                .then(|| SharedString::from(anchor.to_owned())),
+            anchor_bounds: Default::default(),
             selection,
             digest: self.patch.digest.clone(),
             serial: self.modal_serial,

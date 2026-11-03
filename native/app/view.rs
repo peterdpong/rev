@@ -75,13 +75,38 @@ fn navigation_action(id: impl Into<ElementId>, icon: IconName, label: &'static s
 }
 
 impl Rev {
-    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> Button {
+    fn popover_button(
+        &mut self,
+        id: &str,
+        trigger: impl IntoElement,
+        corner: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bounds = self
+            .modal
+            .as_ref()
+            .filter(|modal| modal.anchor.as_deref() == Some(id))
+            .map(|modal| modal.anchor_bounds.clone());
+        gpui_kit::base::Popup::new(SharedString::from(format!("popover-{id}")), trigger)
+            .flex_shrink_0()
+            .anchor(corner)
+            .offset(px(6.))
+            .when_some(bounds, |popup, bounds| {
+                popup
+                    .on_position(move |_, trigger| bounds.set(trigger))
+                    .content(self.popover(window, cx))
+            })
+            .into_any_element()
+    }
+
+    fn sidebar_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let label = if self.sidebar_collapsed {
             "Show sidebar"
         } else {
             "Hide sidebar"
         };
-        navigation_action(
+        let trigger = navigation_action(
             "toggle-sidebar",
             if self.sidebar_collapsed {
                 IconName::PanelLeftOpen
@@ -91,10 +116,11 @@ impl Rev {
             label,
         )
         .tooltip(format!("{label} (⌘B)"))
-        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)));
+        self.popover_button("toggle-sidebar", trigger, Anchor::TopLeft, window, cx)
     }
 
-    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_3().min_w_0();
         for project in self.workspace.projects.clone() {
@@ -116,6 +142,7 @@ impl Rev {
                     cx,
                 )
             }));
+            let review_anchor = format!("add-{repo}");
             let add_review = navigation_action(
                 SharedString::from(format!("add-{repo}")),
                 IconName::Plus,
@@ -123,8 +150,17 @@ impl Rev {
             )
             .disabled(blocked)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_modal(ModalKind::Review, None, Some(repo.clone()), window, cx)
+                this.open_modal(
+                    ModalKind::Review,
+                    None,
+                    Some(repo.clone()),
+                    &format!("add-{repo}"),
+                    window,
+                    cx,
+                )
             }));
+            let add_review =
+                self.popover_button(&review_anchor, add_review, Anchor::TopLeft, window, cx);
             let mut group = column().gap_1().min_w_0().child(
                 row()
                     .mx_2()
@@ -208,10 +244,23 @@ impl Rev {
                             .child("Rev"),
                     )
                     .child(
-                        navigation_action("add-project", IconName::Plus, "Open repository")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_modal(ModalKind::Open, None, None, window, cx)
-                            })),
+                        self.popover_button(
+                            "add-project",
+                            navigation_action("add-project", IconName::Plus, "Open repository")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_modal(
+                                        ModalKind::Open,
+                                        None,
+                                        None,
+                                        "add-project",
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                            Anchor::TopLeft,
+                            window,
+                            cx,
+                        ),
                     ),
             )
             .child(
@@ -223,15 +272,34 @@ impl Rev {
                     .py_2()
                     .child(projects),
             )
-            .child(row().p_3().border_t_1().border_color(rgb(BORDER)).child(
-                button("open-project", "Open folder").on_click(cx.listener(
-                    |this, _, window, cx| this.open_modal(ModalKind::Open, None, None, window, cx),
-                )),
-            ))
+            .child(
+                row()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(self.popover_button(
+                        "open-project",
+                        button("open-project", "Open folder").on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.open_modal(
+                                    ModalKind::Open,
+                                    None,
+                                    None,
+                                    "open-project",
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )),
+                        Anchor::BottomLeft,
+                        window,
+                        cx,
+                    )),
+            )
             .into_any_element()
     }
 
-    fn toolbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(review) = self.review.clone() else {
             return div().into_any_element();
         };
@@ -251,7 +319,7 @@ impl Rev {
                     .px_4()
                     .border_b_1()
                     .border_color(rgb(BORDER))
-                    .child(self.sidebar_toggle(cx))
+                    .child(self.sidebar_toggle(window, cx))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(review.name))
                     .child(
                         div()
@@ -288,23 +356,29 @@ impl Rev {
                     )
                     .child(div().flex_1())
                     .child(
-                        button(
+                        self.popover_button(
                             "choose-commits",
-                            if let Some(range) = &review.request.commit_range {
-                                if review.commit_count == 1 {
-                                    range.end[..8].to_string()
+                            button(
+                                "choose-commits",
+                                if let Some(range) = &review.request.commit_range {
+                                    if review.commit_count == 1 {
+                                        range.end[..8].to_string()
+                                    } else {
+                                        format!("{} commits", review.commit_count)
+                                    }
                                 } else {
-                                    format!("{} commits", review.commit_count)
-                                }
-                            } else {
-                                "All commits".into()
-                            },
-                        )
-                        .dropdown_caret(true)
-                        .disabled(busy || self.patch_loading)
-                        .tooltip("Review one commit or a range of commits")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_commit_picker(window, cx)),
+                                    "All commits".into()
+                                },
+                            )
+                            .dropdown_caret(true)
+                            .disabled(busy || self.patch_loading)
+                            .tooltip("Review one commit or a range of commits")
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.open_commit_picker(window, cx),
+                            )),
+                            Anchor::TopRight,
+                            window,
+                            cx,
                         ),
                     )
                     .child(
@@ -631,7 +705,7 @@ impl Rev {
             .into_any_element()
     }
 
-    fn dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn popover(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
@@ -642,7 +716,7 @@ impl Rev {
 
             ModalKind::Commits => "Commits",
         };
-        let mut body = column().gap_4();
+        let mut body = column().gap_3();
         let mut footer = row().justify_end().gap_2();
         if modal.kind == ModalKind::Commits {
             body = body.child(self.commit_choices(cx));
@@ -724,66 +798,65 @@ impl Rev {
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
-        let max_height = (window.viewport_size().height - px(110.)).max(px(220.));
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
+        let max_height = (window.viewport_size().height - px(110.)).clamp(px(120.), px(620.));
+        let width = px(match modal.kind {
+            ModalKind::Open | ModalKind::Review => 420.,
+            ModalKind::Commits => 480.,
+        })
+        .min((window.viewport_size().width - px(16.)).max(px(120.)));
+        let serial = modal.serial;
+        column()
+            .id("review-popover")
+            .role(Role::Dialog)
+            .w(width)
+            .max_h(max_height)
+            .bg(rgb(PANEL))
+            .border_1()
+            .border_color(rgb(BORDER))
+            .rounded_lg()
+            .shadow_lg()
             .occlude()
+            .tab_group()
+            .track_focus(&self.modal_focus)
+            .key_context("RevPopover")
+            .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
+                this.dismiss_popover(serial, event, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
+            .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .child(
-                column()
-                    .w(px(650.))
-                    .max_w_full()
-                    .max_h(max_height)
-                    .m_6()
-                    .bg(rgb(BG))
-                    .border_1()
+                row()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
                     .border_color(rgb(BORDER))
-                    .rounded_lg()
-                    .shadow_lg()
-                    .track_focus(&self.modal_focus)
-                    .key_context("PatchModal")
-                    .on_action(
-                        cx.listener(|this, _: &CloseModal, window, cx| {
-                            this.close_modal(window, cx)
-                        }),
-                    )
-                    .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
-                    .child(
-                        row()
-                            .p_4()
-                            .border_b_1()
-                            .border_color(rgb(BORDER))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .child(button("close-modal", "×").on_click(
-                                cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
-                            )),
-                    )
                     .child(
                         div()
-                            .id("modal-body")
-                            .min_h_0()
                             .flex_1()
-                            .overflow_y_scroll()
-                            .p_4()
-                            .child(body),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
                     )
                     .child(
-                        div()
-                            .p_4()
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .child(footer),
-                    )
-                    .focus_trap("modal-trap", &self.modal_focus),
+                        button("close-modal", "×").on_click(
+                            cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("modal-body")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .child(body),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(footer),
             )
             .into_any_element()
     }
@@ -796,7 +869,7 @@ impl Render for Rev {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .child(self.toolbar(cx))
+                .child(self.toolbar(window, cx))
                 .child(
                     row()
                         .items_start()
@@ -820,7 +893,7 @@ impl Render for Rev {
                         .absolute()
                         .top(px(12.))
                         .left(px(16.))
-                        .child(self.sidebar_toggle(cx)),
+                        .child(self.sidebar_toggle(window, cx)),
                 )
                 .child(
                     div()
@@ -830,11 +903,26 @@ impl Render for Rev {
                 )
                 .child(
                     row()
-                        .child(Button::new("welcome-open").label("Open folder").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.open_modal(ModalKind::Open, None, None, window, cx)
-                            }),
-                        ))
+                        .child(
+                            self.popover_button(
+                                "welcome-open",
+                                Button::new("welcome-open").label("Open folder").on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.open_modal(
+                                            ModalKind::Open,
+                                            None,
+                                            None,
+                                            "welcome-open",
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                                ),
+                                Anchor::TopLeft,
+                                window,
+                                cx,
+                            ),
+                        )
                         .child(
                             button("welcome-demo", "Try a sample")
                                 .disabled(self.submitting)
@@ -859,7 +947,14 @@ impl Render for Rev {
             .track_focus(&self.focus)
             .key_context("Rev")
             .on_action(cx.listener(|this, _: &OpenProject, window, cx| {
-                this.open_modal(ModalKind::Open, None, None, window, cx)
+                let anchor = if !this.sidebar_collapsed {
+                    "add-project"
+                } else if this.review.is_some() {
+                    "toggle-sidebar"
+                } else {
+                    "welcome-open"
+                };
+                this.open_modal(ModalKind::Open, None, None, anchor, window, cx)
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
@@ -886,7 +981,9 @@ impl Render for Rev {
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| row.child(self.sidebar(cx)))
+                    .when(!self.sidebar_collapsed, |row| {
+                        row.child(self.sidebar(window, cx))
+                    })
                     .child(content),
             )
             .when_some(status, |d, error| {
@@ -905,6 +1002,22 @@ impl Render for Rev {
                         ))),
                 )
             })
-            .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
+            .when(
+                self.modal.as_ref().is_some_and(|m| m.anchor.is_none()),
+                |d| {
+                    let selection_prompt = false;
+                    let panel = self.popover(window, cx);
+                    if selection_prompt {
+                        d.child(panel)
+                    } else {
+                        d.child(deferred(
+                            anchored()
+                                .position(self.selection_menu)
+                                .snap_to_window_with_margin(px(8.))
+                                .child(panel),
+                        ))
+                    }
+                },
+            )
     }
 }
