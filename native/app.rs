@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 use crate::diff::*;
 use crate::{
     backend::{Backend, Reply},
@@ -472,29 +471,6 @@ impl Rev {
             self.fields[0].update(cx, |input, cx| input.focus(window, cx));
         }
         cx.notify();
-    }
-
-    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open repository".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = paths.await
-                && let Some(path) = paths.first()
-            {
-                let request = ReviewRequest {
-                    repo: path.to_string_lossy().into_owned(),
-                    ..Default::default()
-                };
-                let _ = this.update_in(cx, |this, window, cx| {
-                    this.load_review(request, None, window, cx);
-                });
-            }
-        })
-        .detach();
     }
 
     fn pick_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
