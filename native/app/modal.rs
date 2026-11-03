@@ -390,7 +390,9 @@ impl Rev {
         }
         let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
         let serial = modal.serial;
+        let reveal = super::motion::enter("review-popover-enter", window, cx);
         column()
+            .opacity(reveal)
             .id("review-popover")
             .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
                 this.dismiss_popover(serial, event, window, cx)
