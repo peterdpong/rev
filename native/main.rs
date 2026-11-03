@@ -51,7 +51,6 @@ fn main() -> anyhow::Result<()> {
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
             cx.bind_keys([KeyBinding::new("cmd-q", app::Quit, None)]);
             cx.on_action(|_: &app::Quit, cx| cx.quit());
-
             if let Some(service) = backend.clone() {
                 cx.on_app_quit(move |_| {
                     service.close();
@@ -59,14 +58,12 @@ fn main() -> anyhow::Result<()> {
                 })
                 .detach();
             }
-            
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
             })
             .detach();
-            
             gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
                 cx.new(|cx| match initial {
                     Some(request) => app::Rev::from_repo(backend.unwrap(), request, window, cx),
