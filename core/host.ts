@@ -146,7 +146,7 @@ export class HostService {
                 : undefined;
             result = {
               request: {
-                ...(await importPR(review.repo, url)),
+                ...(await importPR(review.repo, url, base)),
                 mode: p.review.mode || 'branch',
                 commitRange: p.review.commitRange,
               },
@@ -159,7 +159,7 @@ export class HostService {
         break;
       }
       case 'pr':
-        result = await importPR(p.repo, p.value);
+        result = await importPR(p.repo, p.value, p.base);
         break;
       case 'demo':
         this.sample ||= await createDemo();

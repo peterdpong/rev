@@ -9,6 +9,7 @@ import type {
 } from './types';
 import { runGitText, runGitText as git } from './command';
 import { readPullRequest } from './pull-requests';
+import { resolveReviewRef, stackBase, prNamespace } from './refs';
 import {
   assertCommitId,
   CommitIdLabel,
@@ -162,8 +163,7 @@ async function refNames(repo: string) {
  */
 export async function inspect(input: ReviewRequest): Promise<Review> {
   const repo = await rootOf(input.repo);
-  const base = input.base || (await defaultBase(repo)).base;
-  const head = input.head || 'HEAD';
+  const head = input.head?.trim() || 'HEAD';
   const mode = input.mode || 'branch';
   if (!['branch', 'working'].includes(mode)) {
     throw new Error('Unknown comparison mode.');
@@ -176,9 +176,36 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
   ) {
     throw new Error('Choose a valid commit range in committed mode.');
   }
-  const [baseSha, branchHeadSha, branch, refs, status] = await Promise.all([
-    resolveRef(repo, base),
-    resolveRef(repo, mode === 'working' ? 'HEAD' : head),
+  const imported = prNamespace(head);
+  const remote = imported ? `https://github.com/${imported[1]}.git` : undefined;
+  const resolvedHead = await resolveReviewRef(
+    repo,
+    mode === 'working' ? 'HEAD' : head,
+    'head',
+    remote,
+  );
+  const branchHeadSha = resolvedHead.sha;
+  const requestedBase =
+    input.base?.trim() ||
+    (imported
+      ? head.replace(/\/head$/, '/base')
+      : (await defaultBase(repo)).base);
+  let resolvedBase = await resolveReviewRef(
+    repo,
+    requestedBase,
+    'base',
+    remote,
+  );
+  if (!input.base?.trim() && !imported && mode === 'branch') {
+    const parent = await stackBase(repo, branchHeadSha, resolvedBase.sha);
+    if (parent) {
+      resolvedBase = parent;
+    }
+  }
+  const base = resolvedBase.ref,
+    baseSha = resolvedBase.sha;
+  const resolvedHeadRef = mode === 'working' ? head : resolvedHead.ref;
+  const [branch, refs, status] = await Promise.all([
     git(repo, ['branch', '--show-current']),
     git(repo, [
       'for-each-ref',
@@ -192,7 +219,7 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
   if (
     mode === 'working' &&
     head !== 'HEAD' &&
-    (await resolveRef(repo, head)) !== branchHeadSha
+    (await resolveReviewRef(repo, head, 'head', remote)).sha !== branchHeadSha
   ) {
     throw new Error(
       `The working tree belongs to ${branch.trim() || 'a detached HEAD'}. Open that branch to review local changes.`,
@@ -254,7 +281,9 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
     repo,
     mode,
     base,
-    head === 'HEAD' ? branch.trim() || branchHeadSha : head,
+    resolvedHeadRef === 'HEAD'
+      ? branch.trim() || branchHeadSha
+      : resolvedHeadRef,
   );
   const scopeKey = commitRange
     ? hash(`${key}\0${commitRange.start}\0${commitRange.end}`).slice(0, 24)
@@ -263,7 +292,7 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
     repo,
     name: path.basename(repo),
     base,
-    head,
+    head: resolvedHeadRef,
     mode,
     branch: branch.trim() || 'detached HEAD',
     baseSha,

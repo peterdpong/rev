@@ -49,3 +49,4 @@ export type {
   CommitDetails,
   PullRequest,
 } from './types';
+export { resolveReviewRef } from './refs';
