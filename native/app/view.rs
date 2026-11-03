@@ -375,7 +375,7 @@ impl Rev {
         .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
     }
 
-    fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+    fn review_header(&self, sidebar: f32, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
@@ -385,11 +385,7 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 div()
-                    .w(px(if self.sidebar_collapsed {
-                        112.
-                    } else {
-                        SIDEBAR_WIDTH
-                    }))
+                    .w(px(112. + (SIDEBAR_WIDTH - 112.) * sidebar))
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(PANEL))
@@ -1365,7 +1361,9 @@ impl Rev {
         }
         let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
         let serial = modal.serial;
+        let reveal = super::motion::enter("review-popover-enter", window, cx);
         column()
+            .opacity(reveal)
             .id("review-popover")
             .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
                 this.dismiss_popover(serial, event, window, cx)
@@ -1456,6 +1454,8 @@ impl Rev {
 
 impl Render for Rev {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar =
+            super::motion::reveal("sidebar-visibility", !self.sidebar_collapsed, window, cx);
         let content =
             if self.review.is_some() {
                 column()
@@ -1528,15 +1528,23 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(window, cx))
+            .child(self.review_header(sidebar, window, cx))
             .child(
                 row()
                     .items_start()
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| {
-                        row.child(self.sidebar(window, cx))
+                    .when(sidebar > 0., |row| {
+                        row.child(
+                            div()
+                                .w(px(SIDEBAR_WIDTH * sidebar))
+                                .h_full()
+                                .flex_shrink_0()
+                                .overflow_hidden()
+                                .opacity(sidebar)
+                                .child(self.sidebar(window, cx)),
+                        )
                     })
                     .child(content),
             )
@@ -1595,7 +1603,7 @@ mod performance_tests {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let header = self
                 .view
-                .update(cx, |view, cx| view.review_header(window, cx));
+                .update(cx, |view, cx| view.review_header(1.0, window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }
