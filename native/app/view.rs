@@ -1,20 +1,20 @@
 use super::*;
 use gpui_kit::component::{Icon, IconName, text::TextView};
 
-const BG: u32 = 0x17181b;
-const PANEL: u32 = 0x111215;
-const BORDER: u32 = 0x2c2e33;
-const MUTED: u32 = 0x9298a3;
-const BLUE: u32 = 0x8ab4ff;
-const SELECTED: u32 = 0x253148;
+pub(super) const BG: u32 = 0x17191d;
+pub(super) const PANEL: u32 = 0x131519;
+pub(super) const BORDER: u32 = 0x2b2e34;
+pub(super) const MUTED: u32 = 0x929aa7;
+pub(super) const BLUE: u32 = 0x92b8ff;
+pub(super) const SELECTED: u32 = 0x263449;
 
-fn row() -> Div {
+pub(super) fn row() -> Div {
     div().flex().items_center().gap_2()
 }
-fn column() -> Div {
+pub(super) fn column() -> Div {
     div().flex().flex_col()
 }
-fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
+pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
     Button::new(id).label(label).small().ghost()
 }
 
@@ -75,7 +75,7 @@ fn navigation_action(id: impl Into<ElementId>, icon: IconName, label: &'static s
 }
 
 impl Rev {
-    fn popover_button(
+    pub(super) fn popover_button(
         &mut self,
         id: &str,
         trigger: impl IntoElement,
@@ -100,7 +100,11 @@ impl Rev {
             .into_any_element()
     }
 
-    fn sidebar_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn sidebar_toggle(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let label = if self.sidebar_collapsed {
             "Show sidebar"
         } else {
@@ -233,15 +237,16 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(52.))
+                    .h(px(36.))
                     .px_2()
                     .justify_between()
                     .child(
                         div()
                             .pl_2()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(16.))
-                            .child("Rev"),
+                            .text_size(px(11.))
+                            .text_color(rgb(MUTED))
+                            .child("Projects"),
                     )
                     .child(
                         self.popover_button(
@@ -299,177 +304,100 @@ impl Rev {
             .into_any_element()
     }
 
-    fn toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(review) = self.review.clone() else {
-            return div().into_any_element();
-        };
-
-        let total_added: usize = review.files.iter().map(|f| f.added).sum();
-        let total_removed: usize = review.files.iter().map(|f| f.removed).sum();
-        let working = review.request.mode.as_deref() == Some("working");
-        let mut request = review.request.clone();
-        request.mode = Some(if working { "branch" } else { "working" }.into());
-        request.commit_range = None;
-        let busy = self.loading || self.submitting;
-
-        column()
-            .child(
-                row()
-                    .h(px(52.))
-                    .px_4()
-                    .border_b_1()
-                    .border_color(rgb(BORDER))
-                    .child(self.sidebar_toggle(window, cx))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(review.name))
-                    .child(
-                        div()
-                            .text_color(rgb(MUTED))
-                            .flex_1()
-                            .truncate()
-                            .child(format!(
-                                "{}  →  {}",
-                                review.request.base.as_deref().unwrap_or("main"),
-                                review.request.head.as_deref().unwrap_or("HEAD")
-                            )),
-                    ),
-            )
-            .child(
-                row()
-                    .h(px(42.))
-                    .px_3()
-                    .border_b_1()
-                    .border_color(rgb(BORDER))
-                    .child(
-                        div()
-                            .text_color(rgb(MUTED))
-                            .child(format!("{} files", review.files.len())),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0x88c99b))
-                            .child(format!("+{total_added}")),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0xe29595))
-                            .child(format!("−{total_removed}")),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        self.popover_button(
-                            "choose-commits",
-                            button(
-                                "choose-commits",
-                                if let Some(range) = &review.request.commit_range {
-                                    if review.commit_count == 1 {
-                                        range.end[..8].to_string()
-                                    } else {
-                                        format!("{} commits", review.commit_count)
-                                    }
-                                } else {
-                                    "All commits".into()
-                                },
-                            )
-                            .dropdown_caret(true)
-                            .disabled(busy || self.patch_loading)
-                            .tooltip("Review one commit or a range of commits")
-                            .on_click(cx.listener(
-                                |this, _, window, cx| this.open_commit_picker(window, cx),
-                            )),
-                            Anchor::TopRight,
-                            window,
-                            cx,
-                        ),
-                    )
-                    .child(
-                        button(
-                            "scope",
-                            if working {
-                                "Working tree"
-                            } else if review.dirty {
-                                "Committed · local edits"
-                            } else {
-                                "Committed"
-                            },
-                        )
-                        .disabled(busy)
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.load_review(request.clone(), this.file.clone(), window, cx)
-                            },
-                        )),
-                    )
-                    .child(
-                        button("refresh", "Refresh")
-                            .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
-                    )
-                    .child(
-                        button("fetch", "Fetch")
-                            .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.fetch(window, cx))),
-                    ),
-            )
-            .into_any_element()
-    }
-
     fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let files = self.visible_files(cx);
-        let mut list = column().gap_1().p_2().min_w_0();
+        let mut list = column().gap(px(2.)).p_2().min_w_0();
+        let mut last_folder = String::new();
         for (index, file) in files.iter().enumerate() {
             let path = file.path.clone();
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", &path));
+            if folder != last_folder && !folder.is_empty() {
+                list = list.child(
+                    row()
+                        .gap_1()
+                        .pt_2()
+                        .pb_1()
+                        .px_2()
+                        .text_size(px(11.))
+                        .text_color(rgb(MUTED))
+                        .child(div().min_w_0().truncate().child(folder.to_string())),
+                );
+            }
+            last_folder = folder.to_string();
             let selected = self.file.as_ref() == Some(&path);
             let viewed = self.state.viewed.contains_key(&path);
-            list = list.child(
-                div()
-                    .id(("file", index))
-                    .cursor_pointer()
-                    .rounded_md()
-                    .px_2()
-                    .h(px(32.))
-                    .min_w_0()
-                    .flex()
-                    .gap_2()
-                    .items_center()
-                    .when(selected, |d| d.bg(rgb(SELECTED)))
-                    .hover(|d| d.bg(rgb(0x25272d)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if !this.loading {
-                            this.load_file(path.clone(), window, cx);
-                        }
-                    }))
-                    .child(
-                        div()
-                            .w(px(16.))
-                            .flex_shrink_0()
-                            .text_size(px(12.))
-                            .text_center()
-                            .text_color(if viewed { rgb(0x88c99b) } else { rgb(MUTED) })
-                            .child(if viewed {
-                                "✓".into()
-                            } else {
-                                file.status.clone()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(px(12.))
-                            .truncate()
-                            .child(file.path.clone()),
-                    ),
-            );
+
+            let mut item = row()
+                .id(("file", index))
+                .cursor_pointer()
+                .rounded_md()
+                .px_2()
+                .h(px(28.))
+                .min_w_0()
+                .gap_1()
+                .when(selected, |d| d.bg(rgb(SELECTED)))
+                .hover(|d| d.bg(rgb(0x252a33)))
+                .child(
+                    div()
+                        .w(px(14.))
+                        .flex_shrink_0()
+                        .text_size(px(11.))
+                        .text_center()
+                        .text_color(if viewed { rgb(0x8fd3a5) } else { rgb(MUTED) })
+                        .child(if viewed {
+                            "✓".into()
+                        } else {
+                            file.status.clone()
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(12.))
+                        .truncate()
+                        .child(name.to_string()),
+                );
+
+            list = list.child(item.on_click(cx.listener(move |this, _, window, cx| {
+                if !this.loading {
+                    this.load_file(path.clone(), window, cx);
+                }
+            })));
         }
+        let total = self.review.as_ref().map(|r| r.files.len()).unwrap_or(0);
+        let viewed = self
+            .review
+            .as_ref()
+            .map(|r| {
+                r.files
+                    .iter()
+                    .filter(|f| self.state.viewed.contains_key(&f.path))
+                    .count()
+            })
+            .unwrap_or(0);
         column()
-            .w(px(210.))
+            .w(px(200.))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
             .border_color(rgb(BORDER))
+            .bg(rgb(PANEL))
+            .child(
+                row()
+                    .h(px(34.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
+                    .text_size(px(11.))
+                    .text_color(rgb(MUTED))
+                    .child(div().flex_1().child("Changed files"))
+                    .child(format!("{viewed}/{total} viewed")),
+            )
             .child(
                 div()
-                    .p_2()
+                    .px_2()
+                    .pt_2()
                     .child(Input::new(&self.filter).id("filter-files").small()),
             )
             .child(
@@ -598,7 +526,7 @@ impl Rev {
             .as_ref()
             .is_some_and(|p| self.state.viewed.contains_key(p));
         let header = row()
-            .h(px(40.))
+            .h(px(34.))
             .px_3()
             .border_b_1()
             .border_color(rgb(BORDER))
@@ -715,10 +643,13 @@ impl Rev {
             ModalKind::Review => "Open branch or PR",
 
             ModalKind::Commits => "Commits",
+            ModalKind::Details => "Review details",
         };
         let mut body = column().gap_3();
         let mut footer = row().justify_end().gap_2();
-        if modal.kind == ModalKind::Commits {
+        if modal.kind == ModalKind::Details {
+            body = body.child(self.review_details());
+        } else if modal.kind == ModalKind::Commits {
             body = body.child(self.commit_choices(cx));
             footer = footer.child(
                 div()
@@ -778,7 +709,7 @@ impl Rev {
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(0xe29595)).child(error.clone()));
         }
-        {
+        if modal.kind != ModalKind::Details {
             let label = if self.submitting {
                 "Working…"
             } else {
@@ -802,6 +733,8 @@ impl Rev {
         let width = px(match modal.kind {
             ModalKind::Open | ModalKind::Review => 420.,
             ModalKind::Commits => 480.,
+
+            ModalKind::Details => 560.,
         })
         .min((window.viewport_size().width - px(16.)).max(px(120.)));
         let serial = modal.serial;
@@ -851,13 +784,15 @@ impl Rev {
                     .p_3()
                     .child(body),
             )
-            .child(
-                div()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(footer),
-            )
+            .when(modal.kind != ModalKind::Details, |d| {
+                d.child(
+                    div()
+                        .p_3()
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(footer),
+                )
+            })
             .into_any_element()
     }
 }
@@ -865,20 +800,22 @@ impl Rev {
 impl Render for Rev {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = if self.review.is_some() {
+            let body = {
+                row()
+                    .items_start()
+                    .gap_0()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.file_list(cx))
+                    .child(self.diff_view(cx))
+                    .into_any_element()
+            };
             column()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .child(self.toolbar(window, cx))
-                .child(
-                    row()
-                        .items_start()
-                        .gap_0()
-                        .flex_1()
-                        .min_h_0()
-                        .child(self.file_list(cx))
-                        .child(self.diff_view(cx)),
-                )
+                .child(body)
                 .into_any_element()
         } else {
             column()
@@ -888,13 +825,6 @@ impl Render for Rev {
                 .items_center()
                 .justify_center()
                 .gap_4()
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(12.))
-                        .left(px(16.))
-                        .child(self.sidebar_toggle(window, cx)),
-                )
                 .child(
                     div()
                         .text_size(px(24.))
@@ -975,6 +905,7 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
+            .child(self.top_nav(window, cx))
             .child(
                 row()
                     .items_start()

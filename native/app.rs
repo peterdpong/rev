@@ -21,6 +21,8 @@ use std::{
 };
 
 mod commits;
+mod review;
+
 mod view;
 use commits::CommitPicker;
 gpui_kit::actions!(
@@ -60,6 +62,7 @@ enum ModalKind {
     Open,
     Review,
     Commits,
+    Details,
 }
 #[derive(Clone)]
 struct Modal {
@@ -80,6 +83,7 @@ pub struct Rev {
     sidebar_focus: FocusHandle,
     review: Option<Review>,
     state: ReviewState,
+    thread_target: Option<(Selection, String)>,
     file: Option<String>,
     patch: FilePatch,
     diff: Entity<DiffState>,
@@ -127,6 +131,7 @@ impl Rev {
             .collect();
 
         let diff = cx.new(|cx| DiffState::new([], cx));
+
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
             cx.observe_in(&diff, window, |this, diff, window, cx| {
@@ -171,6 +176,7 @@ impl Rev {
             sidebar_focus: cx.focus_handle(),
             review: None,
             state: ReviewState::default(),
+            thread_target: None,
             file: None,
             patch: FilePatch::default(),
             diff,
@@ -310,10 +316,12 @@ impl Rev {
                             .or_else(|| workspace.active().and_then(|t| t.file.clone()))
                             .filter(|file| review.files.iter().any(|f| &f.path == file))
                             .or_else(|| review.files.first().map(|f| f.path.clone()));
+
                         this.workspace = workspace;
                         this.state = state;
                         this.review = Some(review);
                         this.file = None;
+                        this.thread_target = None;
                         this.patch = FilePatch::default();
                         this.selection = None;
                         this.diff.update(cx, |diff, cx| diff.set_files([], cx));
@@ -335,6 +343,10 @@ impl Rev {
             return;
         };
 
+        self.thread_target = self
+            .thread_target
+            .take()
+            .filter(|(selection, _)| selection.path == path);
         self.file_epoch += 1;
         let epoch = self.file_epoch;
         self.file = Some(path.clone());
@@ -360,6 +372,11 @@ impl Rev {
                         }
                     }
                     this.patch = patch;
+                    if let Some((selection, digest)) = this.thread_target.take() {
+                        if digest == this.patch.digest {
+                            this.diff.update(cx, |diff, cx| diff.scroll_to_line(DiffLinePosition::new(selection.path.clone(), selection.diff_side(), selection.start), cx));
+                        } else { this.error = Some("This conversation refers to an earlier version of the file.".into()); }
+                    }
                     this.rpc("workspaceAction", json!({ "type": "setFile", "id": review.key, "file": path }), window, cx, |this, result, _, _| { this.result(result); });
                 }
                 Err(e) => this.error = Some(e),
@@ -629,13 +646,22 @@ impl Rev {
         self.submitting = true;
         self.rpc(
             "fetch",
-            json!({ "repo": request.repo }),
+            json!({ "repo": request.repo, "review": request }),
             window,
             cx,
             move |this, result, window, cx| {
                 this.submitting = false;
-                if this.result(result).is_some() && this.review_epoch == epoch {
-                    this.refresh(window, cx);
+                if let Some(value) = this.result(result)
+                    && this.review_epoch == epoch
+                {
+                    if value.get("request").is_some() {
+                        match decode(value["request"].clone()) {
+                            Ok(request) => this.load_review(request, this.file.clone(), window, cx),
+                            Err(error) => this.error = Some(error),
+                        }
+                    } else {
+                        this.refresh(window, cx);
+                    }
                 }
             },
         );
@@ -701,6 +727,7 @@ impl Rev {
             }
 
             ModalKind::Commits => self.apply_commit_selection(window, cx),
+            ModalKind::Details => {}
         }
         cx.notify();
     }
