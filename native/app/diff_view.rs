@@ -171,7 +171,7 @@ impl Render for DiffView {
             .min_w_0()
             .h_full()
             .child(file_header)
-            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
+            .child(div().id("diff-surface").flex_1().min_h_0().overflow_hidden().child(content))
             .into_any_element()
     }
 }
