@@ -83,7 +83,11 @@ test('PR imports use the rev namespace and metadata without changing the checkou
   await writeFile(path.join(repo, 'untracked.txt'), 'keep this too\n');
   const status = await runGitText(repo, ['status', '--porcelain=v1', '-z']);
 
-  const metadata = { ...details, author: details.author.login };
+  const metadata = {
+    ...details,
+    author: details.author.login,
+    comparisonBaseRefName: 'main',
+  };
   for (const value of ['42', details.url]) {
     const request = await importPR(repo, value);
 
