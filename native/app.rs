@@ -26,6 +26,7 @@ mod view;
 mod working_tree;
 use file_tree::{EntryKind, FileTreeCache, TreeEntry};
 mod commits;
+mod review;
 use commits::CommitPicker;
 gpui_kit::actions!(
     rev,
@@ -63,6 +64,7 @@ pub fn bind_shortcuts(cx: &mut App) {
 enum ModalKind {
     Review,
     Commits,
+    Details,
 }
 #[derive(Clone)]
 struct Modal {
@@ -912,19 +914,35 @@ impl Rev {
         self.submitting = true;
         self.rpc(
             "fetch",
-            json!({ "repo": request.repo }),
+            json!({ "repo": request.repo, "review": request }),
             window,
             cx,
             move |this, result, window, cx| {
                 this.submitting = false;
-                if this.result(result).is_some() && this.review_epoch == epoch {
-                    this.refresh(window, cx);
+                if let Some(value) = this.result(result)
+                    && this.review_epoch == epoch
+                {
+                    if value.get("request").is_some() {
+                        match decode(value["request"].clone()) {
+                            Ok(request) => this.load_review(request, this.file.clone(), window, cx),
+                            Err(error) => this.error = Some(error),
+                        }
+                    } else {
+                        this.refresh(window, cx);
+                    }
                 }
             },
         );
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|m| m.kind == ModalKind::Details)
+        {
+            return;
+        }
         if self
             .modal
             .as_ref()

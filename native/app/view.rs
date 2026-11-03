@@ -170,7 +170,7 @@ impl RenderOnce for PrDescription {
 fn row() -> Div {
     div().flex().items_center().gap_2()
 }
-fn column() -> Div {
+pub(super) fn column() -> Div {
     div().flex().flex_col()
 }
 fn header_pill() -> Div {
@@ -194,7 +194,7 @@ fn selected_surface<T: Styled>(element: T) -> T {
         .text_color(rgb(TEXT))
         .shadow_sm()
 }
-fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
+pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
     Button::new(id).label(label).small().ghost()
 }
 
@@ -474,6 +474,24 @@ impl Rev {
                         .child(
                             row()
                                 .id("review-header-actions")
+                                .child(
+                                    self.popover_button(
+                                        "review-details",
+                                        icon_button(
+                                            "review-details",
+                                            "Review details",
+                                            IconName::Info,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_review_details(window, cx)
+                                            }),
+                                        ),
+                                        Anchor::TopRight,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                                 .child(
                                     self.popover_button(
                                         "choose-commits",
@@ -1189,7 +1207,10 @@ impl Rev {
             return div().into_any_element();
         };
         let is_commits = modal.kind == ModalKind::Commits;
-        let title = if is_commits {
+        let is_details = modal.kind == ModalKind::Details;
+        let title = if is_details {
+            "Review details in"
+        } else if is_commits {
             "Review commits in"
         } else {
             "Open branch or PR in"
@@ -1198,6 +1219,8 @@ impl Rev {
         let mut footer = row().justify_end().gap_2();
         if is_commits {
             body = body.child(self.commit_choices(cx));
+        } else if is_details {
+            body = body.child(self.review_details());
         } else {
             let mut choices = column().gap(px(2.));
             for (i, branch) in modal.local_branches.iter().enumerate() {
@@ -1322,7 +1345,7 @@ impl Rev {
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
-        {
+        if !is_details {
             let label = if self.submitting {
                 "Working…"
             } else {
@@ -1835,6 +1858,7 @@ mod performance_tests {
                     head_ref_name: "feature".into(),
                     base_ref_name: "main".into(),
                     comparison_base_ref_name: None,
+                    ..Default::default()
                 });
                 app
             }),
