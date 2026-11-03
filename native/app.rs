@@ -7,6 +7,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     diff::*,
     input::{Input, InputState},
+    tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -17,7 +18,9 @@ use std::{
     time::Duration,
 };
 
+mod commits;
 mod view;
+use commits::CommitPicker;
 gpui_kit::actions!(
     rev,
     [
@@ -32,10 +35,27 @@ gpui_kit::actions!(
     ]
 );
 
+pub fn bind_shortcuts(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
+        KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+        KeyBinding::new("alt-down", NextFile, Some("Rev")),
+        KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
+        KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("escape", CloseModal, Some("Rev")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+    ]);
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum ModalKind {
     Open,
     Review,
+    Commits,
 }
 #[derive(Clone)]
 struct Modal {
@@ -58,6 +78,7 @@ pub struct Rev {
     selection: Option<Selection>,
     selecting: bool,
     selection_menu: Point<Pixels>,
+    commit_picker: CommitPicker,
     filter: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     focus: FocusHandle,
@@ -113,7 +134,7 @@ impl Rev {
                     this.selecting = false;
                     if this.selection != Selection::from_range(&range) {
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(&range);
+                        this.accept_selection(&range, window, cx);
                     }
                 } else if this.selecting {
                     this.selecting = false;
@@ -127,7 +148,7 @@ impl Rev {
                     DiffEvent::SelectionEnded(range) => {
                         this.selecting = false;
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
-                        this.accept_selection(range);
+                        this.accept_selection(range, window, cx);
                     }
                     DiffEvent::SelectionChanged(None) if !this.selecting => this.selection = None,
                     _ => {}
@@ -144,9 +165,10 @@ impl Rev {
             patch: FilePatch::default(),
             diff,
             selection: None,
-            filter,
             selecting: false,
             selection_menu: Point::default(),
+            commit_picker: CommitPicker::default(),
+            filter,
             fields,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
@@ -239,6 +261,7 @@ impl Rev {
         if self.loading || self.workspace_busy || self.patch_loading {
             return;
         }
+
         self.loading = true;
         self.error = None;
         self.notice = None;
@@ -301,14 +324,15 @@ impl Rev {
         let Some(review) = self.review.clone() else {
             return;
         };
+
         self.file_epoch += 1;
         let epoch = self.file_epoch;
         self.file = Some(path.clone());
         self.patch_loading = true;
         self.selection = None;
+        self.selecting = false;
         self.patch = FilePatch::default();
         self.error = None;
-        self.selecting = false;
         self.notice = None;
         self.diff.update(cx, |diff, cx| diff.set_files([], cx));
         self.rpc("patch", json!({ "review": review.request, "path": path }), window, cx, move |this, result, window, cx| {
@@ -436,15 +460,20 @@ impl Rev {
 
         self.modal_serial += 1;
         self.selection = None;
-        self.diff
-            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.selecting = false;
         gpui_kit::base::TextSelection::clear(window, cx);
+        self.diff
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.focus.focus(window, cx);
         cx.notify();
     }
 
-    fn accept_selection(&mut self, range: &DiffLineRange) {
+    fn accept_selection(
+        &mut self,
+        range: &DiffLineRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selection = Selection::from_range(range);
     }
 
@@ -475,7 +504,7 @@ impl Rev {
         let tab = self
             .review
             .as_ref()
-            .map(|r| r.key.clone())
+            .map(|r| r.scope_key.clone())
             .unwrap_or_default();
         let modal = Modal {
             kind,
@@ -561,6 +590,7 @@ impl Rev {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.notify();
         if self.submitting {
             return;
         }
@@ -585,6 +615,7 @@ impl Rev {
                     base: (!values[1].is_empty()).then(|| values[1].clone()),
                     head: (!values[2].is_empty()).then(|| values[2].clone()),
                     mode: Some("branch".into()),
+                    commit_range: None,
                 };
                 if values[2].starts_with("https://github.com/")
                     || values[2].starts_with('#')
@@ -616,6 +647,8 @@ impl Rev {
                     self.load_review(request, None, window, cx);
                 }
             }
+
+            ModalKind::Commits => self.apply_commit_selection(window, cx),
         }
         cx.notify();
     }
