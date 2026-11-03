@@ -14,6 +14,8 @@ use std::{
     path::PathBuf,
 };
 
+mod commits;
+use commits::CommitPicker;
 mod controls;
 mod diff_view;
 mod file_list;
@@ -23,7 +25,7 @@ mod view;
 mod working_tree;
 use diff_view::{DiffView, DiffViewEvent, DiffViewStatus};
 use file_list::{FileList, FileListEvent};
-use modal::Modal;
+use modal::{Modal, ModalKind};
 gpui_kit::actions!(
     rev,
     [
@@ -38,6 +40,22 @@ gpui_kit::actions!(
     ]
 );
 
+pub fn bind_shortcuts(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
+        KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+        KeyBinding::new("alt-down", NextFile, Some("Rev")),
+        KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
+        KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
+        KeyBinding::new("escape", CloseModal, Some("Rev")),
+        KeyBinding::new("cmd-enter", Submit, Some("PatchModal > Input")),
+        KeyBinding::new("escape", CloseModal, Some("PatchModal > Input")),
+    ]);
+}
+
 pub struct Rev {
     backend: Option<Backend>,
     workspace: WorkspaceState,
@@ -49,6 +67,7 @@ pub struct Rev {
     patch: FilePatch,
     diff: Entity<DiffView>,
     file_list: Entity<FileList>,
+    commit_picker: CommitPicker,
     focus: FocusHandle,
     modal_focus: FocusHandle,
     modal: Option<Modal>,
@@ -111,6 +130,7 @@ impl Rev {
             patch: FilePatch::default(),
             diff,
             file_list,
+            commit_picker: CommitPicker::default(),
 
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),

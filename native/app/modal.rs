@@ -10,15 +10,22 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
 
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ModalKind {
+    Review,
+    Commits,
+}
+
 #[derive(Clone)]
 pub(super) struct Modal {
-    request: ReviewRequest,
+    pub(super) kind: ModalKind,
+    pub(super) request: ReviewRequest,
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
-    serial: u64,
-    local_branches: Vec<String>,
-    branches_loading: bool,
-    branches_error: Option<String>,
+    pub(super) serial: u64,
+    pub(super) local_branches: Vec<String>,
+    pub(super) branches_loading: bool,
+    pub(super) branches_error: Option<String>,
 }
 
 impl Modal {
@@ -72,6 +79,7 @@ impl Rev {
             ..Default::default()
         };
         let modal = Modal {
+            kind: ModalKind::Review,
             request: request.clone(),
             base_input: cx.new(|cx| InputState::new(window, cx).placeholder("Auto-detect base")),
             head_input: cx.new(|cx| {
@@ -131,6 +139,10 @@ impl Rev {
     }
 
     pub(super) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Commits) {
+            self.apply_commit_selection(window, cx);
+            return;
+        }
         if self.submitting {
             return;
         }
@@ -223,118 +235,122 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
-        let title = "Open branch or PR in";
+        let is_commits = modal.kind == ModalKind::Commits;
+        let title = if is_commits {
+            "Review commits in"
+        } else {
+            "Open branch or PR in"
+        };
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
-        let mut choices = column().gap(px(2.));
-        for (i, branch) in modal.local_branches.iter().enumerate() {
-            let branch = branch.clone();
-            let serial = modal.serial;
-            choices = choices.child(
-                choice_button(("local-branch", i), false)
-                    .disabled(self.submitting)
-                    .accessibility_label(format!("Open local branch {branch}"))
-                    .child(
-                        Icon::new(IconName::GitBranch)
-                            .size(px(14.))
-                            .flex_shrink_0()
-                            .text_color(rgb(MUTED)),
-                    )
-                    .child(
-                        column()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_0()
-                            .line_height(px(16.))
-                            .child(div().truncate().child(branch.clone()))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(MUTED))
-                                    .child("Local branch"),
-                            ),
-                    )
-                    .child(
-                        Icon::new(IconName::ChevronRight)
-                            .size(px(12.))
-                            .text_color(rgb(MUTED)),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_local_branch(&branch, serial, window, cx)
-                    })),
-            );
-        }
-        if modal.branches_loading {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(MUTED))
-                    .child("Loading local branches…"),
-            );
-        } else if let Some(error) = &modal.branches_error {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(DANGER))
-                    .child(error.clone()),
-            );
-        } else if modal.local_branches.is_empty() {
-            choices = choices.child(
-                div()
-                    .px(px(CONTROL_PADDING))
-                    .py(px(UI_SPACING))
-                    .text_color(rgb(MUTED))
-                    .child("No local branches yet."),
-            );
-        }
-        body = body
-            .child(
-                column()
-                    .gap(px(UI_SPACING))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Branches"),
-                    )
-                    .child(
-                        div()
-                            .id("branch-options")
-                            .max_h(px(220.))
-                            .overflow_y_scroll()
-                            .child(choices),
-                    ),
-            )
-            .child(
-                column()
-                    .gap(px(POPOVER_PADDING))
-                    .pt(px(POPOVER_PADDING))
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
-                    .child(
-                        row()
-                            .items_start()
-                            .gap(px(POPOVER_PADDING))
-                            .child(self.form_field(
-                                &modal.base_input,
-                                "base-input",
-                                "Base",
-                                "Base branch; leave blank to detect",
-                            ))
-                            .child(div().flex().w(relative(0.65)).min_w_0().child(
-                                self.form_field(
-                                    &modal.head_input,
-                                    "head-input",
-                                    "Branch or PR",
-                                    "Branch, PR number or URL; leave blank for HEAD",
+        if is_commits {
+            body = body.child(self.commit_choices(cx));
+        } else {
+            let mut choices = column().gap(px(2.));
+            for (i, branch) in modal.local_branches.iter().enumerate() {
+                let branch = branch.clone();
+                let serial = modal.serial;
+                choices = choices.child(
+                    choice_button(("local-branch", i), false)
+                        .disabled(self.submitting)
+                        .accessibility_label(format!("Open local branch {branch}"))
+                        .child(
+                            Icon::new(IconName::GitBranch)
+                                .size(px(14.))
+                                .flex_shrink_0()
+                                .text_color(rgb(MUTED)),
+                        )
+                        .child(
+                            column()
+                                .flex_1()
+                                .min_w_0()
+                                .gap_0()
+                                .line_height(px(16.))
+                                .child(div().truncate().child(branch.clone()))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(MUTED))
+                                        .child("Local branch"),
                                 ),
-                            )),
-                    ),
-            );
-
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronRight)
+                                .size(px(12.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_local_branch(&branch, serial, window, cx)
+                        })),
+                );
+            }
+            if modal.branches_loading {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(MUTED))
+                        .child("Loading local branches…"),
+                );
+            } else if let Some(error) = &modal.branches_error {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(DANGER))
+                        .child(error.clone()),
+                );
+            } else if modal.local_branches.is_empty() {
+                choices = choices.child(
+                    div()
+                        .px(px(CONTROL_PADDING))
+                        .py(px(UI_SPACING))
+                        .text_color(rgb(MUTED))
+                        .child("No local branches yet."),
+                );
+            }
+            body = body
+                .child(
+                    column()
+                        .gap(px(UI_SPACING))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Branches"),
+                        )
+                        .child(
+                            div()
+                                .id("branch-options")
+                                .max_h(px(220.))
+                                .overflow_y_scroll()
+                                .child(choices),
+                        ),
+                )
+                .child(
+                    column()
+                        .gap(px(POPOVER_PADDING))
+                        .pt(px(POPOVER_PADDING))
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
+                        .child(
+                            row()
+                                .items_start()
+                                .gap(px(POPOVER_PADDING))
+                                .child(self.form_field(&modal.base_input, "base-input",
+                                    "Base",
+                                    "Base branch; leave blank to detect",
+                                ))
+                                .child(div().flex().w(relative(0.65)).min_w_0().child(
+                                    self.form_field(&modal.head_input, "head-input",
+                                        "Branch or PR",
+                                        "Branch, PR number or URL; leave blank for HEAD",
+                                    ),
+                                )),
+                        ),
+                );
+        }
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
@@ -342,7 +358,11 @@ impl Rev {
             let label = if self.submitting {
                 "Working…"
             } else {
-                "Open diff"
+                if is_commits {
+                    "Review selection"
+                } else {
+                    "Open diff"
+                }
             };
             footer = footer.child(
                 primary_button("submit-modal", label)
@@ -445,12 +465,13 @@ impl Rev {
 
 #[cfg(test)]
 mod tests {
-    use super::Modal;
+    use super::{Modal, ModalKind};
     use crate::model::{CommitRange, ReviewRequest};
     use gpui_kit::{App, AppContext, TestAppContext, Window, component::input::InputState};
 
     fn repo_modal(window: &mut Window, cx: &mut App) -> Modal {
         Modal {
+            kind: ModalKind::Review,
             request: ReviewRequest {
                 repo: "/selected-repo".into(),
                 base: Some("old-base".into()),
