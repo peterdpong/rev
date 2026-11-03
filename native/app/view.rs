@@ -8,6 +8,8 @@ use gpui_kit::{
 };
 
 const SIDEBAR_WIDTH: f32 = 225.;
+const COLLAPSED_HEADER_WIDTH: f32 = 112.;
+const SIDEBAR_TRANSITION: std::time::Duration = std::time::Duration::from_millis(200);
 // Match the spacing between header pills.
 const PR_DESCRIPTION_GAP: f32 = UI_SPACING;
 
@@ -189,7 +191,29 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool) -> Stateful<Div> {
 }
 
 impl Rev {
-    fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
+        icon_button(
+            "toggle-sidebar",
+            if self.sidebar_collapsed {
+                "Show sidebar (⌘B)"
+            } else {
+                "Hide sidebar (⌘B)"
+            },
+            if self.sidebar_collapsed {
+                IconName::PanelLeftOpen
+            } else {
+                IconName::PanelLeftClose
+            },
+        )
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
+    }
+
+    fn review_header(
+        &self,
+        sidebar_openness: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TitleBar {
         const BRANCH_FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 14. + 6.;
         let title_pill_width = self.review.as_ref().map(|review| {
             let pr_title = review
@@ -211,12 +235,19 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 div()
-                    .w(px(SIDEBAR_WIDTH))
+                    .w(px(COLLAPSED_HEADER_WIDTH
+                        + (SIDEBAR_WIDTH - COLLAPSED_HEADER_WIDTH)
+                            * sidebar_openness))
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(PANEL))
                     .border_r_1()
-                    .border_color(rgb(BORDER)),
+                    .border_color(rgb(BORDER))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .pr(px(UI_SPACING))
+                    .child(self.sidebar_toggle(cx)),
             )
             .child(
                 row()
@@ -457,6 +488,8 @@ impl Rev {
         }
 
         column()
+            .id("project-sidebar")
+            .track_focus(&self.sidebar_focus)
             .w(px(SIDEBAR_WIDTH))
             .h_full()
             .flex_shrink_0()
@@ -658,6 +691,18 @@ impl Render for Rev {
                     .into_any_element()
             };
 
+        let sidebar_openness = motion::transition(
+            "sidebar-openness",
+            if self.sidebar_collapsed {
+                0.0_f32
+            } else {
+                1.0_f32
+            },
+            motion::Transition::new(SIDEBAR_TRANSITION),
+            window,
+            cx,
+        );
+
         let status = if self.modal.is_none() {
             self.error.clone()
         } else {
@@ -675,6 +720,9 @@ impl Render for Rev {
             .track_focus(&self.focus)
             .key_context("Rev")
             .on_action(
+                cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
+            .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.pick_folder(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
@@ -691,14 +739,31 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(window, cx))
+            .child(self.review_header(sidebar_openness, window, cx))
             .child(
                 row()
                     .items_start()
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .child(self.sidebar(cx))
+                    .when(sidebar_openness > 0., |row| {
+                        // Clip a full-width sidebar and slide it with the
+                        // closing edge so its contents never reflow.
+                        row.child(
+                            div()
+                                .w(px(SIDEBAR_WIDTH * sidebar_openness))
+                                .h_full()
+                                .flex_shrink_0()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .left(px(-SIDEBAR_WIDTH * (1. - sidebar_openness)))
+                                        .h_full()
+                                        .child(self.sidebar(cx)),
+                                ),
+                        )
+                    })
                     .child(content),
             )
             .when_some(status, |d, error| {
@@ -745,7 +810,7 @@ mod tests {
 
     impl Render for HeaderHost {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = self.view.update(cx, |view, cx| view.review_header(window, cx));
+            let header = self.view.update(cx, |view, cx| view.review_header(1., window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }
@@ -772,6 +837,8 @@ mod tests {
         let diff = cx.new(DiffView::new);
         let subscriptions = Rev::subscribe_to_views(&file_list, &diff, window, cx);
         Rev {
+            sidebar_collapsed: false,
+            sidebar_focus: cx.focus_handle(),
             backend: None,
             workspace: WorkspaceState::default(),
             data_dir: Default::default(),
