@@ -700,75 +700,307 @@ impl Rev {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut list = column().gap_2();
-        for thread in self
+        let target = self.thread_scroll_target.take();
+        let filter = self.thread_filter.clone();
+        let mut threads: Vec<_> = self
             .state
             .threads
-            .clone()
-            .into_iter()
-            .filter(|thread| !thread.archived)
-        {
-            list = list.child(self.thread_card(&thread, cx));
-        }
-        for comment in self
+            .iter()
+            .enumerate()
+            .filter(|(_, thread)| {
+                thread.archived == self.show_archived
+                    && (!self.changes_only || thread.kind == "change")
+                    && filter
+                        .as_ref()
+                        .is_none_or(|file| self.thread_matches_file(thread, file))
+            })
+            .collect();
+        threads.sort_by(|(_, a), (_, b)| b.updated_at.cmp(&a.updated_at));
+        let represented: HashSet<_> = self
             .state
-            .comments
-            .clone()
-            .into_iter()
-            .filter(|comment| comment.status == "queued")
-        {
-            list = list.child(self.queued_card(&comment, cx));
-        }
-        let queued = self
+            .threads
+            .iter()
+            .flat_map(|thread| &thread.comment_ids)
+            .collect();
+        let queued: Vec<_> = self
             .state
             .comments
             .iter()
-            .any(|comment| comment.status == "queued");
-        column()
+            .enumerate()
+            .filter(|(_, comment)| {
+                !self.show_archived
+                    && filter
+                        .as_ref()
+                        .is_none_or(|file| comment.selection.path == *file)
+                    && !represented.contains(&comment.id)
+            })
+            .collect();
+        let count = queued.len() + threads.len();
+        let keys: Vec<_> = queued
+            .iter()
+            .map(|(_, comment)| (comment.id.clone(), false))
+            .chain(threads.iter().map(|(_, thread)| {
+                (
+                    thread.id.clone(),
+                    self.active_thread.as_ref() == Some(&thread.id),
+                )
+            }))
+            .collect();
+        if self
+            .thread_items
+            .iter()
+            .map(|(id, _)| id)
+            .ne(keys.iter().map(|(id, _)| id))
+        {
+            let top = self.thread_scroll.logical_scroll_top();
+            let anchor = self.thread_items.get(top.item_ix).map(|(id, _)| id);
+            self.thread_scroll.reset(count);
+            self.thread_scroll.splice_focusable(
+                0..count,
+                keys.iter()
+                    .map(|(_, active)| active.then(|| self.thread_reply.focus_handle(cx))),
+            );
+            self.thread_scroll
+                .clone()
+                .with_uniform_item_height(px(180.));
+            // New answers can reorder the list. Keep the row being read in
+            // place unless an explicit thread jump below chooses another one.
+            if let Some(index) =
+                anchor.and_then(|anchor| keys.iter().position(|(id, _)| id == anchor))
+            {
+                self.thread_scroll.scroll_to(ListOffset {
+                    item_ix: index,
+                    offset_in_item: top.offset_in_item,
+                });
+            }
+        } else {
+            for (index, ((_, before), (_, after))) in
+                self.thread_items.iter().zip(&keys).enumerate()
+            {
+                if before != after {
+                    self.thread_scroll.splice_focusable(
+                        index..index + 1,
+                        [after.then(|| self.thread_reply.focus_handle(cx))],
+                    );
+                }
+            }
+        }
+        if let Some(target) = target
+            && let Some(index) = keys.iter().position(|(id, _)| *id == target)
+        {
+            self.thread_scroll.scroll_to(ListOffset {
+                item_ix: index,
+                offset_in_item: px(0.),
+            });
+        }
+        self.thread_items = keys;
+        let entries: Vec<_> = queued
+            .iter()
+            .map(|(index, _)| (true, *index))
+            .chain(threads.iter().map(|(index, _)| (false, *index)))
+            .collect();
+        let owner = cx.weak_entity();
+        let list = if count == 0 {
+            div()
+                .p_3()
+                .text_size(px(12.))
+                .text_color(rgb(MUTED))
+                .child(if self.changes_only {
+                    "No change requests"
+                } else {
+                    "No threads yet"
+                })
+                .into_any_element()
+        } else {
+            list(self.thread_scroll.clone(), move |index, _, cx| {
+                owner
+                    .update(cx, |this, cx| {
+                        let (queued, index) = entries[index];
+                        let card = if queued {
+                            this.queued_card(&this.state.comments[index], cx)
+                        } else {
+                            this.thread_card(&this.state.threads[index], cx)
+                        };
+                        div().px_2().pb_2().min_w_0().child(card).into_any_element()
+                    })
+                    .unwrap_or_else(|_| div().into_any_element())
+            })
             .size_full()
+            .into_any_element()
+        };
+        let pending = self
+            .state
+            .comments
+            .iter()
+            .filter(|comment| comment.status == "queued")
+            .count();
+        let available = self
+            .providers
+            .iter()
+            .any(|provider| provider.id == self.provider && provider.available);
+        let mut panel = column()
+            .id("thread-sidebar")
+            .w_full()
+            .h_full()
+            .flex_shrink_0()
+            .min_h_0()
             .bg(rgb(PANEL))
             .border_l_1()
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(44.))
+                    .h(px(34.))
+                    .flex_shrink_0()
                     .px_3()
-                    .child(div().flex_1().child("Agent threads"))
-                    .child(button("close-threads", "×").on_click(
-                        cx.listener(|this, _, window, cx| this.hide_threads(window, cx)),
-                    )),
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!("Threads  {}", self.thread_count(None))),
+                    )
+                    .child(
+                        button("close-threads", "×")
+                            .tooltip("Close threads (⌘⇧B)")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.hide_threads(window, cx)),
+                            ),
+                    ),
             )
             .child(
-                div()
-                    .id("agent-conversations")
-                    .flex_1()
-                    .min_h_0()
-                    .p_3()
-                    .overflow_y_scroll()
-                    .child(list),
+                row()
+                    .px_2()
+                    .py_1()
+                    .flex_shrink_0()
+                    .child(
+                        button("threads-all", "All")
+                            .selected(!self.changes_only && !self.show_archived)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.changes_only = false;
+                                this.show_archived = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        button("threads-changes", "Changes")
+                            .selected(self.changes_only && !self.show_archived)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.changes_only = true;
+                                this.show_archived = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        button("threads-archived", "Archived")
+                            .selected(self.show_archived)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_archived = !this.show_archived;
+                                this.changes_only = false;
+                                cx.notify();
+                            })),
+                    ),
             )
-            .when(self.active_thread.is_some(), |panel| {
-                panel.child(
-                    column()
-                        .p_3()
-                        .key_context("RevThread")
-                        .child(Textarea::new(&self.thread_reply).h(px(72.)))
-                        .child(button("send-follow-up", "Send").on_click(
-                            cx.listener(|this, _, window, cx| this.reply_thread(window, cx)),
-                        )),
+            .when_some(filter, |d, path| {
+                d.child(
+                    row()
+                        .px_3()
+                        .pb_1()
+                        .text_size(px(11.))
+                        .text_color(rgb(MUTED))
+                        .child(div().min_w_0().flex_1().truncate().child(path))
+                        .child(
+                            button("all-threads", "×")
+                                .tooltip("Show all files")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_filter = None;
+                                    cx.notify();
+                                })),
+                        ),
                 )
             })
-            .when(queued, |panel| {
-                panel.child(
-                    div().p_3().child(
-                        button("apply-changes", "Apply changes")
-                            .disabled(self.repository_agent_running())
+            .child(
+                div()
+                    .id("review-threads")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .pt_2()
+                    .overflow_hidden()
+                    .child(list)
+                    .child({
+                        let owner = cx.weak_entity();
+                        canvas(
+                            move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    let width = this.thread_scroll.viewport_bounds().size.width;
+                                    if this.thread_hinted_width != Some(width) {
+                                        // GPUI discards all height hints on the first layout
+                                        // and width changes. Restore them after list prepaint
+                                        // so scrolling can reach rows not measured yet.
+                                        this.thread_hinted_width = Some(width);
+                                        this.thread_scroll
+                                            .clone()
+                                            .with_uniform_item_height(px(180.));
+                                        this.threads_pane.update(cx, |_, cx| cx.notify());
+                                    }
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    }),
+            );
+        if pending > 0 {
+            let mut providers = row().gap_1();
+            for provider in &self.providers {
+                let id = provider.id.clone();
+                providers = providers.child(
+                    button(
+                        SharedString::from(format!("changes-provider-{id}")),
+                        if id == "codex" { "Codex" } else { "Claude" },
+                    )
+                    .selected(self.provider == id)
+                    .disabled(!provider.available || self.submitting)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.provider = id.clone();
+                        cx.notify();
+                    })),
+                );
+            }
+            panel = panel.child(
+                column()
+                    .id("changes-footer")
+                    .flex_shrink_0()
+                    .p_2()
+                    .gap_2()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(providers)
+                    .child(
+                        Button::new("apply-changes")
+                            .small()
+                            .primary()
+                            .w_full()
+                            .label(format!(
+                                "Apply all {pending} {}",
+                                if pending == 1 { "change" } else { "changes" }
+                            ))
+                            .disabled(
+                                !available
+                                    || self.loading
+                                    || self.patch_loading
+                                    || self.submitting
+                                    || self.repository_agent_running(),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.apply_queued_changes(window, cx)
                             })),
                     ),
-                )
-            })
-            .into_any_element()
+            );
+        }
+        let _ = window;
+        panel.into_any_element()
     }
 }
