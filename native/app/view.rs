@@ -617,22 +617,33 @@ impl Rev {
     }
 
     fn prompt_tabs(&self, kind: ModalKind, cx: &mut Context<Self>) -> AnyElement {
-        row()
-            .gap_1()
+        TabBar::new("prompt-mode-tabs")
+            .segmented()
+            .small()
+            .selected_index(usize::from(kind == ModalKind::Change))
             .child(
-                button("prompt-ask", "Ask agent")
-                    .selected(kind == ModalKind::Ask)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.switch_prompt_mode(ModalKind::Ask, window, cx)
-                    })),
+                Tab::new()
+                    .label("Ask agent")
+                    .aria_label("Ask agent, Command 1")
+                    .disabled(self.submitting),
             )
             .child(
-                button("prompt-change", "Agent change")
-                    .selected(kind == ModalKind::Change)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.switch_prompt_mode(ModalKind::Change, window, cx)
-                    })),
+                Tab::new()
+                    .label("Agent change")
+                    .aria_label("Agent change, Command 2")
+                    .disabled(self.submitting),
             )
+            .on_click(cx.listener(|this, index, window, cx| {
+                this.switch_prompt_mode(
+                    if *index == 0 {
+                        ModalKind::Ask
+                    } else {
+                        ModalKind::Change
+                    },
+                    window,
+                    cx,
+                );
+            }))
             .into_any_element()
     }
 
