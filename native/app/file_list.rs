@@ -323,12 +323,8 @@ impl Render for FileList {
             });
 
         column()
-            .w(px(210.))
-            .bg(rgb(SUBPANEL))
-            .h_full()
-            .flex_shrink_0()
-            .border_r_1()
-            .border_color(rgb(BORDER))
+            .size_full()
+            .min_h_0()
             .child(
                 file_header_row().child(
                     Input::new(&self.filter)
@@ -600,5 +596,19 @@ mod tests {
                 assert!(list.adjacent_file(None, 1).is_none());
             })
         });
+    }
+}
+
+impl FileList {
+    pub(super) fn focus_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    pub(super) fn filter_focused(&self, window: &Window, cx: &App) -> bool {
+        self.filter.focus_handle(cx).contains_focused(window, cx)
+    }
+
+    pub(super) fn row_count(&mut self) -> usize {
+        self.entries().len()
     }
 }
