@@ -32,6 +32,7 @@ export {
   isCommitId,
   listBranches,
   resolveRef,
+  resolveReviewRef,
   rootOf,
 } from './refs';
 export {

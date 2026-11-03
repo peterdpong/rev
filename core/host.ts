@@ -41,7 +41,7 @@ type HostParams = {
     preview?: boolean;
   };
   fetch: { repo: string; review?: ReviewRequest };
-  pr: { repo: string; value: string };
+  pr: { repo: string; value: string; base?: string };
 };
 
 type HostResults = {
@@ -190,7 +190,7 @@ export class HostService {
         break;
       }
       case 'pr':
-        result = await importPR(p.repo, p.value);
+        result = await importPR(p.repo, p.value, p.base);
         break;
       default:
         throw new Error('Unknown action.');
