@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
+    LoadFile(String),
     VisibleFileChanged(String),
 }
 
@@ -24,13 +25,14 @@ pub(super) struct DiffFileStatus {
     pub counts: (usize, usize),
     pub viewed: bool,
     pub disabled: bool,
+    pub deferred: bool,
+    pub loading: bool,
 }
 
 pub(super) struct DiffView {
     state: Entity<DiffState>,
     status: DiffViewStatus,
     wrap: bool,
-    selecting: bool,
     _state_subscriptions: Vec<Subscription>,
 }
 
@@ -41,10 +43,9 @@ impl DiffView {
         let state = cx.new(|cx| DiffState::new([], cx));
         let subscriptions = vec![
             cx.observe(&state, |_, _, cx| cx.notify()),
-            cx.subscribe(&state, |this, _, event, cx| match event {
+            cx.subscribe(&state, |_, _, event, cx| match event {
+                DiffEvent::FileExpanded(path) => cx.emit(DiffViewEvent::LoadFile(path.to_string())),
                 DiffEvent::VisibleFileChanged(path) => cx.emit(DiffViewEvent::VisibleFileChanged(path.to_string())),
-                DiffEvent::SelectionStarted(_) => this.selecting = true,
-                DiffEvent::SelectionEnded(_) => this.selecting = false,
                 _ => {},
             }),
         ];
@@ -53,7 +54,6 @@ impl DiffView {
             state,
             status: DiffViewStatus::default(),
             wrap: false,
-            selecting: false,
             _state_subscriptions: subscriptions,
         }
     }
@@ -63,7 +63,8 @@ impl DiffView {
     }
 
     pub(super) fn is_selecting(&self, cx: &App) -> bool {
-        self.selecting || self.state.read(cx).is_selecting_text(cx)
+        let state = self.state.read(cx);
+        state.is_selecting_lines() || state.is_selecting_text(cx)
     }
 
     pub(super) fn sync_status(&mut self, status: DiffViewStatus, cx: &mut Context<Self>) {
@@ -78,30 +79,12 @@ impl DiffView {
         files: impl IntoIterator<Item = DiffFile>,
         cx: &mut Context<Self>,
     ) {
-        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_files(files, cx));
     }
 
-    pub(super) fn refresh_files(
-        &mut self,
-        files: Vec<DiffFile>,
-        preserve_scroll: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.state.update(cx, |state, cx| {
-            let scroll = state.list().logical_scroll_top();
-            let horizontal = state.horizontal_scroll().offset();
-            state.set_files(files, cx);
-            if preserve_scroll {
-                state.list().scroll_to(scroll);
-                state.horizontal_scroll().set_offset(horizontal);
-            }
-        });
-    }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_selected_lines(None, cx));
     }
@@ -133,6 +116,7 @@ impl DiffView {
     fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
         let path = file.path().to_string();
         let status = self.status.files.get(&path);
+        let load_path = path.clone();
         let viewed = status.is_some_and(|status| status.viewed);
         let (added, removed) = status.map_or((file.additions(), file.deletions()), |status| status.counts);
         row()
@@ -148,6 +132,16 @@ impl DiffView {
                     .text_size(px(12.))
                     .child(path.clone()),
             )
+            .when(status.is_some_and(|status| status.deferred), |d| {
+                d.child(div().text_size(px(11.)).text_color(rgb(MUTED)).child("Large diff"))
+                    .child(button(SharedString::from(format!("load-diff-{path}")),
+                        if status.is_some_and(|status| status.loading) { "Loading…" } else { "Load diff" })
+                        .disabled(status.is_some_and(|status| status.loading))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.state.update(cx, |state, cx| state.set_file_collapsed(&load_path, false, cx));
+                            cx.emit(DiffViewEvent::LoadFile(load_path.clone()));
+                        })))
+            })
             .when(added > 0, |d| {
                 d.child(
                     div()
@@ -303,5 +297,69 @@ mod tests {
             view.clear_selection(cx);
             assert!(view.state.read(cx).selected_lines().is_none());
         });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.state.update(cx, |state, cx| {
+                    state.begin_line_selection(
+                        crate::diff::DiffLinePosition::new("file.rs", DiffSide::Modified, 2),
+                        false, window, cx,
+                    );
+                });
+                assert!(view.is_selecting(cx));
+                view.state.update(cx, |state, cx| state.set_files([], cx));
+                assert!(!view.is_selecting(cx));
+            });
+        });
     }
+
+    #[gpui::test]
+    fn deferred_file_buttons_emit_the_path_and_expand_the_file(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        use super::{DiffFileStatus, DiffViewEvent};
+        use std::cell::RefCell;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                view.set_files([DiffFile::placeholder("large.rs", "Large diff")], cx);
+                view.state.update(cx, |state, cx| state.set_file_collapsed("large.rs", true, cx));
+                view.sync_status(DiffViewStatus {
+                    path: Some("large.rs".into()),
+                    files: [("large.rs".into(), DiffFileStatus {
+                        deferred: true, disabled: true, ..Default::default()
+                    })].into(),
+                    ..Default::default()
+                }, cx);
+                view
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        let paths = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|_, cx| {
+            let paths = paths.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if let DiffViewEvent::LoadFile(path) = event {
+                    paths.borrow_mut().push(path.clone());
+                }
+            })
+        });
+        cx.run_until_parked();
+        let button = cx.update(|window, cx| {
+            window.refresh();
+            _ = window.draw(cx);
+            window.find_by_label("Load diff").bounds()
+        });
+        cx.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+        assert!(!paths.borrow().is_empty());
+        assert!(paths.borrow().iter().all(|path| path == "large.rs"));
+        cx.update(|_, cx| assert!(!view.read(cx).state.read(cx).is_file_collapsed("large.rs")));
+    }
+
 }

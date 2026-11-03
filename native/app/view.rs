@@ -735,14 +735,18 @@ impl Rev {
 impl Render for Rev {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = super::motion::reveal("sidebar-visibility", !self.sidebar_collapsed, window, cx);
+        let viewed = self.state.viewed.iter().filter(|(path, _)| self.is_file_viewed(path))
+            .map(|(path, digest)| (path.clone(), digest.clone())).collect();
         self.file_list.update(cx, |list, cx| {
-            list.sync_status(self.file.as_deref(), &self.state.viewed, self.loading, cx)
+            list.sync_status(self.file.as_deref(), &viewed, self.loading, cx)
         });
 
         let files = self.review.iter().flat_map(|review| &review.files).map(|file| {
             let patch = self.patches.get(&file.path);
             (file.path.clone(), DiffFileStatus {
                 counts: (file.added, file.removed),
+                deferred: patch.is_some_and(|patch| patch.deferred),
+                loading: self.loading_patches.contains(&file.path),
                 viewed: patch.is_some_and(|patch| self.state.viewed.get(&file.path) == Some(&patch.digest)),
                 disabled: self.loading || self.patch_loading || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
             })
@@ -804,6 +808,7 @@ impl Render for Rev {
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
             .key_context("Rev")
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
             .child(self.navigation_events(cx))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -968,6 +973,8 @@ mod tests {
             file_sheet: Default::default(),
             patch: FilePatch::default(),
             patches: Default::default(),
+            loading_patches: Default::default(),
+            pending_file_navigation: None,
             diff,
             file_list,
             commit_picker: Default::default(),
@@ -1401,7 +1408,7 @@ impl Rev {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.diff.clone())
+                    .child(self.diff.clone().cached(StyleRefinement::default().size_full()))
                     .child({
                         let bounds = self.navigation.diff_bounds.clone();
                         canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
@@ -1449,7 +1456,7 @@ impl Rev {
                         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                             this.hide_file_sheet(window, cx);
                         }))
-                        .child(self.file_list.clone()),
+                        .child(self.file_list.clone().cached(StyleRefinement::default().size_full())),
                 )
             })
             .into_any_element()

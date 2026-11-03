@@ -40,7 +40,12 @@ type HostParams = {
     headSha?: string;
     mergeBase?: string;
   };
-  patches: { review: ReviewRequest; headSha: string; mergeBase: string };
+  patches: {
+    review: ReviewRequest;
+    headSha: string;
+    mergeBase: string;
+    preview?: boolean;
+  };
   viewed: {
     review: ReviewRequest;
     path: string;
@@ -176,7 +181,7 @@ export class HostService {
           review,
           snapshotId: this.reviewCache.storeSnapshot(review),
           ...(p.patches !== false
-            ? { patches: await reviewPatches(review) }
+            ? { patches: await reviewPatches(review, p.preview === true) }
             : {}),
           state: await readReviewState(review, p.preview !== true),
         };
@@ -215,8 +220,7 @@ export class HostService {
             'The comparison changed while loading. Refresh the review.',
           );
         }
-
-        result = await reviewPatches(review);
+        result = await reviewPatches(review, p.preview === true);
         break;
       }
       case 'viewed': {
