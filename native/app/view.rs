@@ -167,6 +167,31 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
 }
 
 impl Rev {
+    fn popover_button(
+        &self,
+        id: &str,
+        trigger: impl IntoElement,
+        corner: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bounds = self
+            .modal
+            .as_ref()
+            .filter(|modal| modal.anchor.as_deref() == Some(id))
+            .map(|modal| modal.anchor_bounds.clone());
+        gpui_kit::base::Popup::new(SharedString::from(format!("popover-{id}")), trigger)
+            .flex_shrink_0()
+            .anchor(corner)
+            .offset(px(UI_SPACING))
+            .when_some(bounds, |popup, bounds| {
+                popup
+                    .on_position(move |_, trigger| bounds.set(trigger))
+                    .content(self.popover(window, cx))
+            })
+            .into_any_element()
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
         icon_button(
             "toggle-sidebar",
@@ -311,7 +336,7 @@ impl Rev {
             )
     }
 
-    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_1();
 
@@ -367,6 +392,7 @@ impl Rev {
                                 })),
                             )
                             .child(
+                                self.popover_button(&format!("add-{repo}"),
                                 icon_button(
                                     SharedString::from(format!("add-{repo}")),
                                     format!("Open a branch or PR in {}", project.name),
@@ -375,7 +401,8 @@ impl Rev {
                                 .disabled(blocked)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_branch_modal(repo.clone(), window, cx)
-                                })),
+                                }))
+, Anchor::TopLeft, window, cx),
                             ),
                     ),
             );
@@ -693,7 +720,9 @@ impl Render for Rev {
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| row.child(self.sidebar(cx)))
+                    .when(!self.sidebar_collapsed, |row| {
+                        row.child(self.sidebar(window, cx))
+                    })
                     .child(content),
             )
             .when_some(status, |d, error| {
@@ -713,7 +742,7 @@ impl Render for Rev {
                         ),
                 )
             })
-            .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
+
     }
 }
 
