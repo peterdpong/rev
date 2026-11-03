@@ -117,6 +117,17 @@ impl Rev {
                             }
                         }
                         this.restore_navigation(window, cx);
+                        this.diff_state(cx).update(cx, |diff, cx| {
+                            for (path, digest) in &this.state.viewed {
+                                if this
+                                    .patches
+                                    .get(path)
+                                    .is_some_and(|patch| &patch.digest == digest)
+                                {
+                                    diff.set_file_collapsed(path, true, cx);
+                                }
+                            }
+                        });
                     }
                     Err(error) => {
                         this.navigation.restore = None;
@@ -183,10 +194,16 @@ impl Rev {
         let epoch = self.review_epoch;
         let viewed = self.state.viewed.get(&path) != Some(&patch.digest);
         self.rpc("viewed", json!({ "review": review.request, "path": path, "viewed": viewed, "digest": patch.digest }), window, cx,
-            move |this, result, _, _| {
+            move |this, result, _, cx| {
                 if this.review_epoch != epoch { return; }
                 if let Some(value) = this.result(result) {
-                    match decode(value) { Ok(state) => this.state = state, Err(error) => this.error = Some(error) }
+                    match decode(value) {
+                        Ok(state) => {
+                            this.state = state;
+                            this.diff_state(cx).update(cx, |diff, cx| diff.set_file_collapsed(&path, viewed, cx));
+                        },
+                        Err(error) => this.error = Some(error)
+                    }
                 }
             });
     }

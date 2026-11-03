@@ -1505,7 +1505,7 @@ fn line_highlights(
     side: DiffSide,
     ix: usize,
     changed: bool,
-    selected: bool,
+    _selected: bool,
     inline_background: Hsla,
     code: &CodePresentation,
     cx: &App,
@@ -1528,15 +1528,6 @@ fn line_highlights(
                 },
             )
         }));
-    }
-    if selected {
-        highlights.push((
-            0..line.display().len(),
-            HighlightStyle {
-                background_color: Some(cx.theme().selection),
-                ..Default::default()
-            },
-        ));
     }
     highlights
 }
