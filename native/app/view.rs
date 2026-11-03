@@ -209,7 +209,7 @@ impl Rev {
         .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
     }
 
-    fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
+    fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
@@ -313,6 +313,24 @@ impl Rev {
                         .child(
                             icon_actions()
                                 .id("review-header-actions")
+                                .child(
+                                    self.popover_button(
+                                        "review-details",
+                                        icon_button(
+                                            "review-details",
+                                            "Review details",
+                                            IconName::Info,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_review_details(window, cx)
+                                            }),
+                                        ),
+                                        Anchor::TopRight,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                                 .debug_selector(|| "review-header-actions".into())
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -713,7 +731,7 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(cx))
+            .child(self.review_header(window, cx))
             .child(
                 row()
                     .items_start()
@@ -768,8 +786,10 @@ mod tests {
     }
 
     impl Render for HeaderHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = self.view.update(cx, |view, cx| view.review_header(cx));
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self
+                .view
+                .update(cx, |view, cx| view.review_header(window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }
@@ -1078,6 +1098,7 @@ mod tests {
                     head_ref_name: "feature".into(),
                     base_ref_name: "main".into(),
                     comparison_base_ref_name: None,
+                    ..Default::default()
                 });
                 app
             }),
