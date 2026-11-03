@@ -10,7 +10,10 @@
     "build:host": "tsc --noEmit && node scripts/build.mjs",
     "start": "npm run build:host && cargo run --bin rev --",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "build": "npm run build:host && cargo build --release --locked",
+    "bundle": "npm run build:host && node scripts/bundle.mjs",
+    "test:native": "cargo test --locked"
   },
   "engines": {
     "node": ">=22"
