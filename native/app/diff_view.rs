@@ -138,7 +138,8 @@ impl DiffView {
         row()
             .id(SharedString::from(format!("diff-heading-{path}")))
             .min_w_0()
-            .h(px(28.))
+            .gap(px(UI_SPACING))
+            .h(px(CONTROL_HEIGHT))
             .child(
                 div()
                     .flex_1()
