@@ -125,12 +125,19 @@ impl Rev {
     }
 
     fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let blocked = self.loading || self.workspace_busy;
+        let blocked = self.loading || self.workspace_busy || self.sidebar_collapsed;
         let mut projects = column().gap_3().min_w_0();
         for project in self.workspace.projects.clone() {
             let repo = project.repo.clone();
             let collapse_repo = repo.clone();
             let collapsed = project.collapsed;
+            let expanded = motion::reveal(
+                SharedString::from(format!("project-reveal-{repo}")),
+                !collapsed,
+                window,
+                cx,
+            );
+            let tabs_height = px(project.tabs.len() as f32 * 32. * expanded);
             let project_button = navigation_button(
                 SharedString::from(format!("project-{repo}")),
                 project.name,
@@ -165,7 +172,7 @@ impl Rev {
             }));
             let add_review =
                 self.popover_button(&review_anchor, add_review, Anchor::TopLeft, window, cx);
-            let mut group = column().gap_1().min_w_0().child(
+            let mut group = column().min_w_0().child(
                 row()
                     .mx_2()
                     .gap_0()
@@ -173,7 +180,8 @@ impl Rev {
                     .child(project_button)
                     .child(add_review),
             );
-            if !collapsed {
+            let mut tabs = column().gap_1().pt_1().min_w_0();
+            if expanded > 0. {
                 for tab in project.tabs {
                     let id = tab.id.clone();
                     let close = id.clone();
@@ -181,7 +189,7 @@ impl Rev {
                     let request = tab.request.clone();
                     let file = tab.file.clone();
 
-                    group = group.child(
+                    tabs = tabs.child(
                         row()
                             .mx_2()
                             .pl(px(20.))
@@ -195,7 +203,7 @@ impl Rev {
                                     tab.label,
                                     { div().child("⑂").into_any_element() },
                                 )
-                                .disabled(blocked)
+                                .disabled(blocked || collapsed)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.load_review(request.clone(), file.clone(), window, cx)
@@ -208,7 +216,7 @@ impl Rev {
                                     IconName::Close,
                                     "Close review",
                                 )
-                                .disabled(blocked)
+                                .disabled(blocked || collapsed)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.workspace_action(
@@ -223,6 +231,14 @@ impl Rev {
                     );
                 }
             }
+            group = group.child(
+                div()
+                    .id(SharedString::from(format!("project-tabs-{}", project.repo)))
+                    .h(tabs_height)
+                    .overflow_hidden()
+                    .opacity(expanded)
+                    .child(tabs),
+            );
             projects = projects.child(group);
         }
         column()
@@ -252,6 +268,7 @@ impl Rev {
                         self.popover_button(
                             "add-project",
                             navigation_action("add-project", IconName::Plus, "Open repository")
+                                .disabled(self.sidebar_collapsed)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_modal(
                                         ModalKind::Open,
@@ -278,14 +295,12 @@ impl Rev {
                     .child(projects),
             )
             .child(
-                row()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(self.popover_button(
+                row().p_3().border_t_1().border_color(rgb(BORDER)).child(
+                    self.popover_button(
                         "open-project",
-                        button("open-project", "Open folder").on_click(cx.listener(
-                            |this, _, window, cx| {
+                        button("open-project", "Open folder")
+                            .disabled(self.sidebar_collapsed)
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_modal(
                                     ModalKind::Open,
                                     None,
@@ -294,12 +309,12 @@ impl Rev {
                                     window,
                                     cx,
                                 )
-                            },
-                        )),
+                            })),
                         Anchor::BottomLeft,
                         window,
                         cx,
-                    )),
+                    ),
+                ),
             )
             .into_any_element()
     }
@@ -738,8 +753,12 @@ impl Rev {
         })
         .min((window.viewport_size().width - px(16.)).max(px(120.)));
         let serial = modal.serial;
+        let progress = motion::enter(("popover-enter", serial), window, cx);
         column()
             .id("review-popover")
+            .relative()
+            .top(px(-4. * (1. - progress)))
+            .opacity(progress)
             .role(Role::Dialog)
             .w(width)
             .max_h(max_height)
@@ -799,7 +818,10 @@ impl Rev {
 
 impl Render for Rev {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Sample once so the titlebar, sidebar and review controls move together.
+        let sidebar = motion::reveal("sidebar-reveal", !self.sidebar_collapsed, window, cx);
         let content = if self.review.is_some() {
+            let body_progress = motion::enter(("review-body-enter", 0_usize), window, cx);
             let body = {
                 row()
                     .items_start()
@@ -814,8 +836,14 @@ impl Render for Rev {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .child(self.toolbar(window, cx))
-                .child(body)
+                .child(self.toolbar(sidebar, window, cx))
+                .child(
+                    column()
+                        .flex_1()
+                        .min_h_0()
+                        .opacity(body_progress)
+                        .child(body),
+                )
                 .into_any_element()
         } else {
             column()
@@ -900,16 +928,23 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.top_nav(window, cx))
+            .child(self.top_nav(sidebar, window, cx))
             .child(
                 row()
                     .items_start()
                     .gap_0()
                     .flex_1()
                     .min_h_0()
-                    .when(!self.sidebar_collapsed, |row| {
-                        row.child(self.sidebar(window, cx))
-                    })
+                    .child(
+                        div()
+                            .id("sidebar-clip")
+                            .w(px(motion::SIDEBAR_WIDTH * sidebar))
+                            .h_full()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .opacity(sidebar)
+                            .when(sidebar > 0., |d| d.child(self.sidebar(window, cx))),
+                    )
                     .child(content),
             )
             .when_some(status, |d, error| {
