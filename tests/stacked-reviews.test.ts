@@ -4,7 +4,14 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, inspect, resolveRef, importPR, filePatch } from '../core/git';
+import {
+  command,
+  git,
+  inspect,
+  resolveRef,
+  importPR,
+  filePatch,
+} from '../core/git';
 import { HostService } from '../core/host';
 import type { ReviewRequest } from '../core/types';
 
@@ -242,7 +249,7 @@ test('PRs targeting main automatically compare to the nearest parent PR and reta
   assert.equal((await inspect(refreshed.request)).mergeBase, f.parent);
 });
 
-test('explicit PR bases survive import and host refresh', async (t) => {
+test('explicit PR bases survive import, host refresh, and CLI import', async (t) => {
   const f = await pullFixture(t);
   const host = new HostService(undefined, path.join(f.root, 'data'));
   t.after(() => host.close());
@@ -270,6 +277,22 @@ test('explicit PR bases survive import and host refresh', async (t) => {
     (await inspect({ ...refreshed.request, commitRange: undefined })).mergeBase,
     f.main,
   );
+  const cli = await command(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      'cli/main.ts',
+      'pr',
+      '2',
+      '--repo',
+      f.repo,
+      '--base',
+      'parent',
+    ],
+    process.cwd(),
+  );
+  assert.match(cli, /--base refs\/remotes\/origin\/parent /);
   const remoteRequest = await importPR(f.repo, '2', 'origin/parent');
   await git(f.remote, ['switch', 'parent']);
   const advanced = await f.commit('parent-later.txt');
