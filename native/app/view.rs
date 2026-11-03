@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::text::TextView;
+use gpui_kit::component::{Icon, IconName, text::TextView};
 
 const BG: u32 = 0x17181b;
 const PANEL: u32 = 0x111215;
@@ -18,19 +18,101 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
     Button::new(id).label(label).small().ghost()
 }
 
+fn navigation_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: impl IntoElement,
+) -> Button {
+    let label = label.into();
+    Button::new(id)
+        .small()
+        .ghost()
+        .flex_1()
+        .min_w_0()
+        .h(px(28.))
+        .px_2()
+        .accessibility_label(label.clone())
+        .tooltip(label.clone())
+        // Button's built-in label is centered. A full-width content row keeps
+        // short and truncated names on the same leading edge.
+        .child(
+            row()
+                .id("navigation-content")
+                .w_full()
+                .min_w_0()
+                .text_size(px(13.))
+                .child(
+                    div()
+                        .size(px(14.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(MUTED))
+                        .child(icon),
+                )
+                .child(
+                    div()
+                        .id("navigation-label")
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(label),
+                ),
+        )
+}
+
+fn navigation_action(id: impl Into<ElementId>, icon: IconName, label: &'static str) -> Button {
+    Button::new(id)
+        .small()
+        .ghost()
+        .icon(icon)
+        .w(px(24.))
+        .h(px(28.))
+        .flex_shrink_0()
+        .accessibility_label(label)
+        .tooltip(label)
+}
+
 impl Rev {
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
-        let mut projects = column().gap_3();
+        let mut projects = column().gap_3().min_w_0();
         for project in self.workspace.projects.clone() {
             let repo = project.repo.clone();
             let collapse_repo = repo.clone();
             let collapsed = project.collapsed;
-            let mut group = column().gap_1().child(
-                row().px_2()
-                    .child(button(SharedString::from(format!("project-{repo}")), format!("{}  {}", if collapsed { "›" } else { "⌄" }, project.name)).flex_1().justify_start().disabled(blocked)
-                        .on_click(cx.listener(move |this, _, window, cx| this.workspace_action(json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }), false, window, cx))))
-                    .child(button(SharedString::from(format!("add-{repo}")), "+").disabled(blocked).on_click(cx.listener(move |this, _, window, cx| this.open_modal(ModalKind::Review, None, Some(repo.clone()), window, cx))))
+            let project_button = navigation_button(
+                SharedString::from(format!("project-{repo}")),
+                project.name,
+                Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+                    .size(px(14.)),
+            )
+            .disabled(blocked)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace_action(
+                    json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }),
+                    false,
+                    window,
+                    cx,
+                )
+            }));
+            let add_review = navigation_action(
+                SharedString::from(format!("add-{repo}")),
+                IconName::Plus,
+                "Open branch or PR",
+            )
+            .disabled(blocked)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_modal(ModalKind::Review, None, Some(repo.clone()), window, cx)
+            }));
+            let mut group = column().gap_1().min_w_0().child(
+                row()
+                    .mx_2()
+                    .gap_0()
+                    .min_w_0()
+                    .child(project_button)
+                    .child(add_review),
             );
             if !collapsed {
                 for tab in project.tabs {
@@ -43,17 +125,17 @@ impl Rev {
                     group = group.child(
                         row()
                             .mx_2()
-                            .pl_3()
+                            .pl(px(20.))
+                            .gap_0()
+                            .min_w_0()
                             .rounded_md()
                             .when(active, |d| d.bg(rgb(SELECTED)))
                             .child(
-                                button(
+                                navigation_button(
                                     SharedString::from(format!("tab-{id}")),
-                                    format!("{}{}", { "⑂  " }, tab.label),
+                                    tab.label,
+                                    { div().child("⑂").into_any_element() },
                                 )
-                                .flex_1()
-                                .min_w_0()
-                                .justify_start()
                                 .disabled(blocked)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
@@ -62,16 +144,22 @@ impl Rev {
                                 )),
                             )
                             .child(
-                                button(SharedString::from(format!("close-{id}")), "×")
-                                    .disabled(blocked)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                navigation_action(
+                                    SharedString::from(format!("close-{id}")),
+                                    IconName::Close,
+                                    "Close review",
+                                )
+                                .disabled(blocked)
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.workspace_action(
                                             json!({ "type": "closeTab", "id": close }),
                                             active,
                                             window,
                                             cx,
                                         )
-                                    })),
+                                    },
+                                )),
                             ),
                     );
                 }
@@ -82,25 +170,28 @@ impl Rev {
             .w(px(225.))
             .h_full()
             .flex_shrink_0()
+            .overflow_hidden()
             .bg(rgb(PANEL))
             .border_r_1()
             .border_color(rgb(BORDER))
             .child(
                 row()
                     .h(px(52.))
-                    .px_4()
+                    .px_2()
                     .justify_between()
                     .child(
                         div()
+                            .pl_2()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(16.))
                             .child("Rev"),
                     )
-                    .child(button("add-project", "+").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_modal(ModalKind::Open, None, None, window, cx)
-                        },
-                    ))),
+                    .child(
+                        navigation_action("add-project", IconName::Plus, "Open repository")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_modal(ModalKind::Open, None, None, window, cx)
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -129,7 +220,9 @@ impl Rev {
         let working = review.request.mode.as_deref() == Some("working");
         let mut request = review.request.clone();
         request.mode = Some(if working { "branch" } else { "working" }.into());
+        request.commit_range = None;
         let busy = self.loading || self.submitting;
+
         column()
             .child(
                 row()
@@ -174,6 +267,26 @@ impl Rev {
                     .child(div().flex_1())
                     .child(
                         button(
+                            "choose-commits",
+                            if let Some(range) = &review.request.commit_range {
+                                if review.commit_count == 1 {
+                                    range.end[..8].to_string()
+                                } else {
+                                    format!("{} commits", review.commit_count)
+                                }
+                            } else {
+                                "All commits".into()
+                            },
+                        )
+                        .dropdown_caret(true)
+                        .disabled(busy || self.patch_loading)
+                        .tooltip("Review one commit or a range of commits")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_commit_picker(window, cx)),
+                        ),
+                    )
+                    .child(
+                        button(
                             "scope",
                             if working {
                                 "Working tree"
@@ -206,7 +319,7 @@ impl Rev {
 
     fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let files = self.visible_files(cx);
-        let mut list = column().gap_1().p_2();
+        let mut list = column().gap_1().p_2().min_w_0();
         for (index, file) in files.iter().enumerate() {
             let path = file.path.clone();
             let selected = self.file.as_ref() == Some(&path);
@@ -217,10 +330,11 @@ impl Rev {
                     .cursor_pointer()
                     .rounded_md()
                     .px_2()
-                    .py_2()
+                    .h(px(32.))
+                    .min_w_0()
                     .flex()
                     .gap_2()
-                    .items_start()
+                    .items_center()
                     .when(selected, |d| d.bg(rgb(SELECTED)))
                     .hover(|d| d.bg(rgb(0x25272d)))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -230,7 +344,10 @@ impl Rev {
                     }))
                     .child(
                         div()
-                            .w(px(13.))
+                            .w(px(16.))
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_center()
                             .text_color(if viewed { rgb(0x88c99b) } else { rgb(MUTED) })
                             .child(if viewed {
                                 "✓".into()
@@ -243,6 +360,7 @@ impl Rev {
                             .flex_1()
                             .min_w_0()
                             .text_size(px(12.))
+                            .truncate()
                             .child(file.path.clone()),
                     ),
             );
@@ -265,6 +383,113 @@ impl Rev {
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(list),
+            )
+            .into_any_element()
+    }
+
+    fn commit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let commit = &self.commit_picker.commits[index];
+        let selected = self.commit_picker.selected(index);
+        let label = format!("{} {}", &commit.sha[..8], commit.subject);
+        Button::new(("commit", index))
+            .ghost()
+            .w_full()
+            .h(px(48.))
+            .px_2()
+            .accessibility_label(label)
+            .tooltip(format!(
+                "{} · {} · Shift-click to select a range",
+                commit.author, commit.date
+            ))
+            .selected(selected)
+            .child(
+                row()
+                    .w_full()
+                    .min_w_0()
+                    .child(div().w(px(16.)).flex_shrink_0().child(if selected {
+                        "✓"
+                    } else {
+                        ""
+                    }))
+                    .child(
+                        column()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(13.))
+                                    .child(commit.subject.clone()),
+                            )
+                            .child(
+                                row()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(MUTED))
+                                    .child(
+                                        div()
+                                            .font_family("Menlo")
+                                            .child(commit.sha[..8].to_string()),
+                                    )
+                                    .child(div().truncate().child(commit.author.clone())),
+                            ),
+                    ),
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                this.choose_commit(index, event.modifiers().shift, cx)
+            }))
+            .into_any_element()
+    }
+
+    fn commit_choices(&self, cx: &mut Context<Self>) -> AnyElement {
+        column()
+            .gap_2()
+            .child(
+                Button::new("all-commits")
+                    .ghost()
+                    .w_full()
+                    .h(px(32.))
+                    .px_2()
+                    .accessibility_label("Full branch diff")
+                    .child(
+                        row()
+                            .w_full()
+                            .child(div().w(px(16.)).flex_shrink_0().child(
+                                if self.commit_picker.range.is_none() {
+                                    "✓"
+                                } else {
+                                    ""
+                                },
+                            ))
+                            .child("Full branch diff"),
+                    )
+                    .selected(self.commit_picker.range.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_all_commits(cx))),
+            )
+            .when(!self.commit_picker.commits.is_empty(), |body| {
+                body.child(
+                    uniform_list(
+                        "commit-list",
+                        self.commit_picker.commits.len(),
+                        cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                            range
+                                .map(|index| this.commit_row(index, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .h(px((self.commit_picker.commits.len().min(7) * 48) as f32))
+                    .w_full(),
+                )
+            })
+            .when(self.commit_picker.loading, |body| {
+                body.child(div().text_color(rgb(MUTED)).child("Loading commits…"))
+            })
+            .when(
+                self.commit_picker.has_more && !self.commit_picker.loading,
+                |body| {
+                    body.child(button("older-commits", "Load older commits").on_click(
+                        cx.listener(|this, _, window, cx| this.load_more_commits(window, cx)),
+                    ))
+                },
             )
             .into_any_element()
     }
@@ -341,8 +566,8 @@ impl Rev {
                 .text_size(px(12.))
                 .on_add_annotation(move |range, window, cx| {
                     let _ = add_owner.update(cx, |this, cx| {
-                        this.selection = Selection::from_range(range);
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));
+                        this.accept_selection(range, window, cx);
                         this.diff.update(cx, |diff, cx| {
                             diff.set_selected_lines(Some(range.clone()), cx)
                         });
@@ -388,13 +613,31 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
+
         let title = match modal.kind {
             ModalKind::Open => "Open repository",
             ModalKind::Review => "Open branch or PR",
+
+            ModalKind::Commits => "Commits",
         };
         let mut body = column().gap_4();
         let mut footer = row().justify_end().gap_2();
-        if matches!(modal.kind, ModalKind::Open | ModalKind::Review) {
+        if modal.kind == ModalKind::Commits {
+            body = body.child(self.commit_choices(cx));
+            footer = footer.child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child(if self.commit_picker.range.is_none() {
+                        "Full branch diff".to_string()
+                    } else if self.commit_picker.count == 1 {
+                        "1 commit".to_string()
+                    } else {
+                        format!("{} commits", self.commit_picker.count)
+                    }),
+            );
+        } else if matches!(modal.kind, ModalKind::Open | ModalKind::Review) {
             body = body
                 .child(self.form_field(0, "Repository", "Repository folder"))
                 .child(
@@ -444,6 +687,7 @@ impl Rev {
                 "Working…"
             } else {
                 match modal.kind {
+                    ModalKind::Commits => "View diff",
                     _ => "Open",
                 }
             };
@@ -451,7 +695,10 @@ impl Rev {
                 Button::new("submit-modal")
                     .primary()
                     .label(label)
-                    .disabled(self.submitting)
+                    .disabled(
+                        self.submitting
+                            || (modal.kind == ModalKind::Commits && self.commit_picker.loading),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
@@ -579,6 +826,8 @@ impl Render for Rev {
             .on_action(cx.listener(|this, _: &OpenProject, window, cx| {
                 this.open_modal(ModalKind::Open, None, None, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
+            .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -618,16 +867,6 @@ impl Render for Rev {
                         ))),
                 )
             })
-            .when(
-                self.modal.is_none() && self.selection.is_some() && !self.selecting,
-                |d| {
-                    d.child(deferred(
-                        anchored()
-                            .position(self.selection_menu)
-                            .snap_to_window_with_margin(px(8.)),
-                    ))
-                },
-            )
             .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
     }
 }
