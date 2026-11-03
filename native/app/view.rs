@@ -185,6 +185,13 @@ impl Rev {
                 for tab in project.tabs {
                     let id = tab.id.clone();
                     let close = id.clone();
+                    let branch_name = tab
+                        .request
+                        .head
+                        .as_deref()
+                        .filter(|s| *s != "HEAD")
+                        .unwrap_or(&tab.label)
+                        .to_string();
                     let active = self.workspace.active_tab_id.as_ref() == Some(&tab.id);
                     let current = tab.is_current();
                     let request = tab.request.clone();
@@ -210,6 +217,18 @@ impl Rev {
                                         this.load_review(request.clone(), file.clone(), window, cx)
                                     },
                                 )),
+                            )
+                            .child(
+                                navigation_action(
+                                    SharedString::from(format!("copy-branch-{id}")),
+                                    IconName::Copy,
+                                    "Copy branch name",
+                                )
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        branch_name.clone(),
+                                    ))
+                                }),
                             )
                             .when(current, |d| {
                                 d.child(
@@ -362,7 +381,17 @@ impl Rev {
                         .text_size(px(12.))
                         .truncate()
                         .child(name.to_string()),
-                );
+                )
+                .when(file.ignored, |d| {
+                    d.child(
+                        div()
+                            .id(SharedString::from(format!("ignored-file-{path}")))
+                            .flex_shrink_0()
+                            .text_size(px(10.))
+                            .text_color(rgb(MUTED))
+                            .child("Ignored"),
+                    )
+                });
 
             list = list.child(item.on_click(cx.listener(move |this, _, window, cx| {
                 if !this.loading {
@@ -533,12 +562,14 @@ impl Rev {
         let path = file.path().to_string();
         let patch = self.patches.get(&path);
         let viewed = patch.is_some_and(|patch| self.state.viewed.get(&path) == Some(&patch.digest));
+
         let counts = self
             .review
             .as_ref()
             .and_then(|review| review.files.iter().find(|file| file.path == path));
         let added = counts.map_or(file.additions(), |file| file.added);
         let removed = counts.map_or(file.deletions(), |file| file.removed);
+        let ignored = counts.is_some_and(|file| file.ignored);
         row()
             .id(SharedString::from(format!("diff-heading-{path}")))
             .min_w_0()
@@ -551,6 +582,16 @@ impl Rev {
                     .text_size(px(12.))
                     .child(path.clone()),
             )
+            .when(ignored, |d| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("ignored-diff-{path}")))
+                        .flex_shrink_0()
+                        .text_size(px(11.))
+                        .text_color(rgb(MUTED))
+                        .child("Ignored"),
+                )
+            })
             .when(added > 0, |d| {
                 d.child(
                     div()
@@ -568,17 +609,20 @@ impl Rev {
                 )
             })
             .child(
-                button(
-                    SharedString::from(format!("viewed-{path}")),
-                    if viewed { "✓ Viewed" } else { "Viewed" },
-                )
-                .disabled(
-                    self.patch_loading
-                        || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.mark_file_viewed(path.clone(), window, cx)
-                })),
+                button(SharedString::from(format!("viewed-{path}")), "Viewed")
+                    .icon(if viewed {
+                        gpui_kit::assets::IconName::SquareCheck
+                    } else {
+                        gpui_kit::assets::IconName::Square
+                    })
+                    .selected(viewed)
+                    .disabled(
+                        self.patch_loading
+                            || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.mark_file_viewed(path.clone(), window, cx)
+                    })),
             )
             .into_any_element()
     }

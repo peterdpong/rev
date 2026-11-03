@@ -76,6 +76,18 @@ impl Rev {
                 .as_ref()
                 .map(|pr| format!("#{}", pr.number))
                 .unwrap_or_else(|| review.request.head.clone().unwrap_or_else(|| "HEAD".into()));
+            let branch_name = review
+                .pull_request
+                .as_ref()
+                .map(|pr| pr.head_ref_name.clone())
+                .unwrap_or_else(|| {
+                    review
+                        .request
+                        .head
+                        .clone()
+                        .filter(|head| head != "HEAD")
+                        .unwrap_or_else(|| review.branch.clone())
+                });
             main = main
                 .child(
                     div()
@@ -90,6 +102,17 @@ impl Rev {
                         .truncate()
                         .text_color(rgb(MUTED))
                         .child(label),
+                )
+                .child(
+                    Button::new("copy-review-branch")
+                        .small()
+                        .ghost()
+                        .icon(IconName::Copy)
+                        .tooltip("Copy branch name")
+                        .accessibility_label("Copy branch name")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(branch_name.clone()))
+                        }),
                 );
         } else {
             main = main.child(div().text_color(rgb(MUTED)).child("Review"));

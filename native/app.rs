@@ -557,6 +557,7 @@ impl Rev {
         }
         self.close_modal(window, cx);
         self.error = None;
+
         let mut request = self
             .review
             .as_ref()
@@ -581,7 +582,8 @@ impl Rev {
             request: request.clone(),
             tab,
             anchor: selection
-                .is_none()
+                .as_ref()
+                .is_none_or(|s| s.start == 0)
                 .then(|| SharedString::from(anchor.to_owned())),
             anchor_bounds: Default::default(),
             selection,
