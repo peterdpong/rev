@@ -3,13 +3,12 @@ use super::controls::*;
 use crate::theme::*;
 use gpui_kit::{
     assets::IconName,
-    base::{Button as BaseButton, Popup, motion},
+    base::{Button as BaseButton, Popover, Popup, motion},
     component::{Icon, TitleBar},
 };
 
 const SIDEBAR_WIDTH: f32 = 225.;
 const COLLAPSED_HEADER_WIDTH: f32 = 112.;
-const SIDEBAR_TRANSITION: std::time::Duration = std::time::Duration::from_millis(200);
 const PR_DESCRIPTION_GAP: f32 = 2.;
 
 #[derive(IntoElement)]
@@ -169,6 +168,60 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
 }
 
 impl Rev {
+    /// A project's `+` button and the branch popover it opens.
+    fn branch_popover(
+        &self,
+        repo: &str,
+        project_name: &str,
+        blocked: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = format!("add-{repo}");
+        let anchored = |modal: &&Modal| modal.anchor.as_deref() == Some(id.as_str());
+        let open = self
+            .modal
+            .as_ref()
+            .filter(|modal| modal.ready)
+            .filter(anchored);
+        let popover = AnimatedPopover::new(format!("popover-{id}"), open.is_some(), window, cx);
+        // A closed popover animates out with the form it closed with.
+        let content = open
+            .or(self.closing_modal.as_ref().filter(anchored))
+            .filter(|_| popover.visible())
+            .map(|modal| self.popover(modal, popover.open(), window, cx));
+        let this = cx.entity().downgrade();
+        let repo = repo.to_string();
+        let branch_popover = Popover::new(SharedString::from(format!("popover-{id}")))
+            .flex_shrink_0()
+            .track_focus(&self.modal_focus)
+            .on_open_change(move |open, window, cx| {
+                _ = this.update(cx, |this, cx| {
+                    // Opening again while the branches load cancels the open.
+                    if *open {
+                        if !blocked {
+                            this.open_branch_modal(repo.clone(), window, cx);
+                        }
+                    } else if this.modal.as_ref().is_some_and(|m| m.request.repo == repo) {
+                        this.close_modal(window, cx);
+                    }
+                });
+            })
+            .trigger(
+                icon_button(
+                    SharedString::from(id.clone()),
+                    format!("Open a branch or PR in {project_name}"),
+                    IconName::Plus,
+                )
+                .debug_selector({
+                    let id = id.clone();
+                    move || id.clone()
+                })
+                .disabled(blocked),
+            );
+        popover.render(branch_popover, content)
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
         icon_button(
             "toggle-sidebar",
@@ -186,7 +239,12 @@ impl Rev {
         .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
     }
 
-    fn review_header(&self, sidebar_openness: f32, cx: &mut Context<Self>) -> TitleBar {
+    fn review_header(
+        &self,
+        sidebar_openness: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TitleBar {
         let busy = self.loading || self.submitting;
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
@@ -282,6 +340,7 @@ impl Rev {
                         .child(self.commit_picker_pill(
                             review,
                             busy || self.patch_loading,
+                            window,
                             cx,
                         ))
                         .child(div().flex_1().min_w_0())
@@ -311,7 +370,7 @@ impl Rev {
             )
     }
 
-    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_1();
 
@@ -328,6 +387,10 @@ impl Rev {
 
             let mut group = column().gap(px(2.)).child(
                 sidebar_row(hover_group.clone(), false, blocked)
+                    .debug_selector({
+                        let id = hover_group.to_string();
+                        move || id.clone()
+                    })
                     .group(hover_group.clone())
                     .child(
                         sidebar_item(
@@ -367,15 +430,7 @@ impl Rev {
                                 })),
                             )
                             .child(
-                                icon_button(
-                                    SharedString::from(format!("add-{repo}")),
-                                    format!("Open a branch or PR in {}", project.name),
-                                    IconName::Plus,
-                                )
-                                .disabled(blocked)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_branch_modal(repo.clone(), window, cx)
-                                })),
+                                self.branch_popover(&repo, &project.name, blocked, window, cx),
                             ),
                     ),
             );
@@ -657,7 +712,7 @@ impl Render for Rev {
             } else {
                 1.0_f32
             },
-            motion::Transition::new(SIDEBAR_TRANSITION),
+            motion_transition(),
             window,
             cx,
         );
@@ -698,7 +753,7 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(sidebar_openness, cx))
+            .child(self.review_header(sidebar_openness, window, cx))
             .child(
                 row()
                     .items_start()
@@ -719,7 +774,7 @@ impl Render for Rev {
                                         .relative()
                                         .left(px(-SIDEBAR_WIDTH * (1. - sidebar_openness)))
                                         .h_full()
-                                        .child(self.sidebar(cx)),
+                                        .child(self.sidebar(window, cx)),
                                 ),
                         )
                     })
@@ -742,13 +797,14 @@ impl Render for Rev {
                         ),
                 )
             })
-            .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
+
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Rev;
+    use crate::app::controls::MOTION_DURATION;
     use crate::app::{FileList, DiffView};
     use crate::{
         model::{File, FilePatch, Review, ReviewState},
@@ -768,8 +824,10 @@ mod tests {
     }
 
     impl Render for HeaderHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = self.view.update(cx, |view, cx| view.review_header(1., cx));
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self
+                .view
+                .update(cx, |view, cx| view.review_header(1., window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }
@@ -814,6 +872,7 @@ mod tests {
             commit_picker: Default::default(),
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
+            closing_modal: None,
             modal: None,
             modal_serial: 0,
             folder_picker_open: false,
@@ -872,6 +931,91 @@ mod tests {
             assert!(!app.folder_picker_open);
             assert!(app.review.is_none());
             assert!(app.error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn plus_button_toggles_an_animated_branch_popover(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.workspace.projects = vec![crate::workspace_state::Project {
+                repo: "/repo".into(),
+                name: "repo".into(),
+                collapsed: false,
+                tabs: Vec::new(),
+            }];
+            app
+        });
+        let settle = |cx: &mut VisualTestContext| {
+            draw(cx);
+            cx.executor().advance_clock(MOTION_DURATION);
+            draw(cx);
+        };
+        draw(cx);
+        // The project's buttons show while its row is hovered.
+        let row = cx.debug_bounds("project-row-/repo").unwrap();
+        cx.simulate_mouse_move(row.center(), None, Default::default());
+        draw(cx);
+        let plus = cx.debug_bounds("add-/repo").unwrap();
+        assert!(cx.debug_bounds("review-popover").is_none());
+
+        // Without a backend there are no branches to wait for, so it opens at
+        // once, below its button, and takes focus.
+        cx.simulate_click(plus.center(), Default::default());
+        settle(cx);
+        let popover = cx.debug_bounds("review-popover").unwrap();
+        assert!(popover.top() >= plus.bottom());
+        assert!(cx.update(|window, cx| view.read(cx).modal_focus.is_focused(window)));
+
+        // Clicking elsewhere dismisses it; it fades out before it goes.
+        cx.simulate_click(gpui_kit::point(px(900.), px(500.)), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).modal.is_none()));
+        assert!(cx.debug_bounds("review-popover").is_some());
+        settle(cx);
+        assert!(cx.debug_bounds("review-popover").is_none());
+
+        // Its button toggles it closed rather than reopening it.
+        cx.simulate_mouse_move(plus.center(), None, Default::default());
+        draw(cx);
+        cx.simulate_click(plus.center(), Default::default());
+        settle(cx);
+        assert!(cx.update(|_, cx| view.read(cx).modal.is_some()));
+        cx.simulate_click(plus.center(), Default::default());
+        settle(cx);
+        assert!(cx.update(|_, cx| view.read(cx).modal.is_none()));
+        assert!(cx.debug_bounds("review-popover").is_none());
+    }
+
+    #[gpui::test]
+    fn closing_keeps_only_a_shown_popover_for_its_exit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(fixture);
+        cx.update(|window, cx| {
+            view.update(cx, |app, cx| {
+                // Without a backend there are no branches to wait for.
+                app.open_branch_modal("/first-repo".into(), window, cx);
+                assert!(app.modal.as_ref().unwrap().ready);
+                app.close_modal(window, cx);
+                let closing = app.closing_modal.as_ref().unwrap();
+                assert_eq!(closing.anchor.as_deref(), Some("add-/first-repo"));
+
+                // A popover still waiting on its branches was never shown.
+                app.open_branch_modal("/second-repo".into(), window, cx);
+                app.modal.as_mut().unwrap().ready = false;
+                app.close_modal(window, cx);
+                let closing = app.closing_modal.as_ref().unwrap();
+                assert_eq!(closing.anchor.as_deref(), Some("add-/first-repo"));
+            });
         });
     }
 
@@ -1199,14 +1343,20 @@ mod tests {
         });
         draw(cx);
         draw(cx);
+        cx.executor().advance_clock(MOTION_DURATION);
+        draw(cx);
         let menu = cx.debug_bounds("commit-menu").unwrap();
         assert_eq!(menu.left(), pill.left(), "align the menu with its pill");
         assert!(menu.top() >= pill.bottom());
 
-        // Clicking the pill again closes it rather than reopening.
+        // Clicking the pill again closes it rather than reopening. The menu
+        // fades out before it goes.
         cx.simulate_click(pill.center(), Default::default());
         draw(cx);
         assert!(!cx.update(|_, cx| view.read(cx).commit_picker.open));
+        assert!(cx.debug_bounds("commit-menu").is_some());
+        cx.executor().advance_clock(MOTION_DURATION);
+        draw(cx);
         assert!(cx.debug_bounds("commit-menu").is_none());
 
         // Reopening on the same branch reuses the loaded commits, so it opens at once.
@@ -1220,6 +1370,8 @@ mod tests {
         cx.simulate_click(gpui_kit::point(px(950.), px(350.)), Default::default());
         draw(cx);
         assert!(!cx.update(|_, cx| view.read(cx).commit_picker.open));
+        cx.executor().advance_clock(MOTION_DURATION);
+        draw(cx);
         assert!(cx.debug_bounds("commit-menu").is_none());
     }
 

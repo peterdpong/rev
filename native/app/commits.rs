@@ -25,6 +25,9 @@ pub(super) struct CommitPicker {
     /// menu on the same branch reuses them instead of loading again.
     source: Option<(String, Option<String>, String)>,
     serial: u64,
+    /// Shared by the open menu and its exiting copy, so the copy keeps the
+    /// list's scroll position while it fades out.
+    scroll: UniformListScrollHandle,
 }
 
 impl CommitPicker {
@@ -245,6 +248,7 @@ impl Rev {
         &self,
         review: &Review,
         disabled: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let label = CommitPicker::label(review);
@@ -288,13 +292,11 @@ impl Rev {
                     .text_color(rgb(MUTED)),
             );
 
-        let content = open.then(|| self.commit_menu(review, cx));
-        Popover::new("commit-picker")
+        let popover = AnimatedPopover::new("commit-picker", open, window, cx);
+        let menu = popover.visible().then(|| self.commit_menu(review, cx));
+        let commit_picker = Popover::new("commit-picker")
             .flex_shrink_0()
             .min_w_0()
-            .anchor(Anchor::TopLeft)
-            .offset(px(UI_SPACING))
-            .open(open)
             .on_open_change(move |open, window, cx| {
                 let open = *open;
                 _ = this.update(cx, |this, cx| {
@@ -306,11 +308,8 @@ impl Rev {
                     }
                 });
             })
-            .trigger(trigger)
-            .when_some(content, |popover, content| {
-                popover.content(move |_, _, _| content)
-            })
-            .into_any_element()
+            .trigger(trigger);
+        popover.render(commit_picker, menu)
     }
 
     fn commit_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -417,6 +416,7 @@ impl Rev {
                                 .collect::<Vec<_>>()
                         }),
                     )
+                    .track_scroll(&picker.scroll)
                     .h(px(
                         picker.commits.len().min(MENU_VISIBLE_ROWS) as f32 * MENU_ROW_HEIGHT
                     ))

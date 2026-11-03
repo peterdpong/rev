@@ -3,7 +3,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use gpui_kit::{
     assets::IconName,
-    base::{Button as BaseButton, motion},
+    base::{Button as BaseButton, Popover, Popup, motion},
     component::{Icon, tooltip::Tooltip},
 };
 
@@ -54,6 +54,110 @@ impl RenderOnce for FolderIcon {
                     .opacity(openness),
             )
     }
+}
+
+/// Shared timing for the sidebar and popovers: short, with most of the
+/// movement up front.
+pub(super) const MOTION_DURATION: std::time::Duration = std::time::Duration::from_millis(160);
+
+pub(super) fn motion_transition() -> motion::Transition {
+    motion::Transition::new(MOTION_DURATION).ease(ease_out_quint())
+}
+
+/// A [`Popover`] below its trigger that fades and drops in when it opens and
+/// reverses when it closes.
+///
+/// `Popover` owns the open lifecycle: toggling from the trigger, Escape,
+/// outside clicks, and capturing and restoring focus. It drops its content the
+/// moment it closes, so the closing surface is drawn by a popup around it,
+/// shielded from the pointer while it fades.
+pub(super) struct AnimatedPopover {
+    id: SharedString,
+    open: bool,
+    progress: f32,
+    visible: bool,
+}
+
+impl AnimatedPopover {
+    pub(super) fn new(
+        id: impl Into<SharedString>,
+        open: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let id = id.into();
+        let sample = motion::Presence::new(SharedString::from(format!("{id}-motion")), open)
+            .transition(motion_transition())
+            .sample(window, cx);
+        Self {
+            id,
+            open,
+            progress: sample.progress,
+            // A presence first sampled closed reports an exit at zero progress
+            // until its duration passes; there is nothing to animate out.
+            visible: sample.should_render() && (open || sample.progress > 0.),
+        }
+    }
+
+    /// Whether the surface is drawn this frame: while open, and while it
+    /// animates out. Build content only when this holds.
+    pub(super) fn visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Whether the content is the live surface rather than a closing copy.
+    pub(super) fn open(&self) -> bool {
+        self.open
+    }
+
+    /// Renders `popover`, which supplies the trigger and open-change handling,
+    /// with `content` as its surface.
+    pub(super) fn render(self, popover: Popover, content: Option<impl IntoElement>) -> AnyElement {
+        let Self {
+            id, open, progress, ..
+        } = self;
+        let content = content
+            .filter(|_| self.visible)
+            .map(IntoElement::into_any_element);
+        let (live, closing) = if open {
+            (content, None)
+        } else {
+            (None, content)
+        };
+        let popover = popover
+            .anchor(Anchor::TopLeft)
+            .offset(px(UI_SPACING))
+            .open(open)
+            .when_some(live, |popover, content| {
+                popover.content(move |_, _, _| surface_motion(content, progress, true))
+            });
+        Popup::new(SharedString::from(format!("{id}-closing")), popover)
+            .flex_shrink_0()
+            .min_w_0()
+            .anchor(Anchor::TopLeft)
+            .offset(px(UI_SPACING))
+            .when_some(closing, |popup, content| {
+                popup.content(surface_motion(content, progress, false))
+            })
+            .into_any_element()
+    }
+}
+
+fn surface_motion(content: AnyElement, progress: f32, interactive: bool) -> Div {
+    div()
+        .relative()
+        .top(px(-6. * (1. - progress)))
+        .opacity(progress)
+        .child(content)
+        .when(!interactive, |d| {
+            d.child(
+                div()
+                    .id("popover-exit-shield")
+                    .absolute()
+                    .inset_0()
+                    .occlude(),
+            )
+        })
 }
 
 pub(super) fn row() -> Div {

@@ -1,3 +1,4 @@
+use std::time::Duration;
 use super::controls::*;
 use super::{CloseModal, Rev, Submit, decode};
 use crate::{model::ReviewRequest, theme::*};
@@ -10,15 +11,23 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
 
+/// How long to hold a new popover back while its branches load, so the list
+/// doesn't pop in after it opens. A slower load opens with a loading row.
+const BRANCHES_REVEAL_TIMEOUT: Duration = Duration::from_millis(250);
+
 #[derive(Clone)]
 pub(super) struct Modal {
     pub(super) request: ReviewRequest,
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
     pub(super) serial: u64,
+    /// The id of the button the popover opens from.
+    pub(super) anchor: Option<SharedString>,
     pub(super) local_branches: Vec<String>,
     pub(super) branches_loading: bool,
     pub(super) branches_error: Option<String>,
+    /// Whether the popover is shown; false while its branches load.
+    pub(super) ready: bool,
 }
 
 impl Modal {
@@ -47,12 +56,19 @@ impl Modal {
 
 impl Rev {
     pub(super) fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.modal = None;
+        let closing = self.modal.is_some();
+        if let Some(modal) = self.modal.take().filter(|modal| modal.ready) {
+            self.closing_modal = Some(modal);
+        }
 
         self.modal_serial += 1;
         self.diff.update(cx, |diff, cx| diff.clear_selection(cx));
         gpui_kit::base::TextSelection::clear(window, cx);
-        self.focus.focus(window, cx);
+        // Take focus back only from a popover that was open: opening one
+        // focuses it before clearing out any previous popover.
+        if closing && self.modal_focus.contains_focused(window, cx) {
+            self.focus.focus(window, cx);
+        }
         cx.notify();
     }
 
@@ -63,6 +79,10 @@ impl Rev {
         cx: &mut Context<Self>,
     ) {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
+            return;
+        }
+        if self.modal.as_ref().is_some_and(|m| m.request.repo == repo) {
+            self.close_modal(window, cx);
             return;
         }
         self.close_modal(window, cx);
@@ -78,23 +98,24 @@ impl Rev {
                 InputState::new(window, cx).placeholder("Branch, #123 or PR URL (default: HEAD)")
             }),
             serial: self.modal_serial,
+            anchor: Some(format!("add-{}", request.repo).into()),
             local_branches: Vec::new(),
             branches_loading: self.backend.is_some(),
             branches_error: self
                 .backend
                 .is_none()
                 .then(|| "The local service is unavailable. Restart Rev.".into()),
+            ready: false,
         };
+        let serial = modal.serial;
         self.modal = Some(modal);
-        self.modal_focus.focus(window, cx);
         if self.backend.is_some() {
-            let serial = self.modal_serial;
             self.rpc(
                 "branches",
                 json!({ "repo": request.repo, "localOnly": true }),
                 window,
                 cx,
-                move |this, result, _, _| {
+                move |this, result, _, cx| {
                     let Some(modal) = this.modal.as_mut().filter(|modal| modal.serial == serial)
                     else {
                         return;
@@ -104,9 +125,32 @@ impl Rev {
                         Ok(branches) => modal.local_branches = branches,
                         Err(error) => modal.branches_error = Some(error),
                     }
+                    this.reveal_modal(serial, cx);
                 },
             );
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(BRANCHES_REVEAL_TIMEOUT)
+                    .await;
+                let _ = this.update(cx, |this, cx| this.reveal_modal(serial, cx));
+            })
+            .detach();
+        } else {
+            self.reveal_modal(serial, cx);
         }
+        cx.notify();
+    }
+
+    fn reveal_modal(&mut self, serial: u64, cx: &mut Context<Self>) {
+        let Some(modal) = self
+            .modal
+            .as_mut()
+            .filter(|modal| modal.serial == serial && !modal.ready)
+        else {
+            return;
+        };
+        // The popover takes focus as it opens, and gives it back on close.
+        modal.ready = true;
         cx.notify();
     }
 
@@ -219,10 +263,15 @@ impl Rev {
             .into_any_element()
     }
 
-    pub(super) fn dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(modal) = self.modal.clone() else {
-            return div().into_any_element();
-        };
+    /// Renders `modal`'s popover. A closing popover is not `interactive`: it
+    /// takes no focus, keys or clicks while it animates out.
+    pub(super) fn popover(
+        &self,
+        modal: &Modal,
+        interactive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let title = "Open branch or PR in";
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
@@ -347,96 +396,95 @@ impl Rev {
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
-        let max_height = (window.viewport_size().height - px(110.)).max(px(220.));
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
-            .child(
-                column()
-                    .w(px(650.))
-                    .max_w_full()
-                    .max_h(max_height)
-                    .m_6()
-                    .bg(rgb(SURFACE))
-                    .border_1()
-                    .border_color(rgb(CONTROL_BORDER))
-                    .rounded(px(CONTROL_RADIUS))
-                    .shadow_lg()
-                    .track_focus(&self.modal_focus)
-                    .key_context("PatchModal")
+        let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
+        column()
+            .id("review-popover")
+            .debug_selector(|| "review-popover".into())
+            .when(interactive, |d| {
+                d.track_focus(&self.modal_focus)
+                    .key_context("RevPopover")
                     .on_action(
                         cx.listener(|this, _: &CloseModal, window, cx| {
                             this.close_modal(window, cx)
                         }),
                     )
                     .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
+            })
+            .w(px(650.))
+            .max_w_full()
+            .max_h(max_height)
+            .bg(rgb(SURFACE))
+            .border_1()
+            .border_color(rgb(CONTROL_BORDER))
+            .rounded(px(CONTROL_RADIUS))
+            .shadow_lg()
+            .child(
+                row()
+                    .h(px(HEADER_HEIGHT))
+                    .flex_shrink_0()
+                    .pl(px(POPOVER_PADDING))
+                    .pr(px(UI_SPACING))
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
-                        row()
-                            .h(px(HEADER_HEIGHT))
+                        div()
                             .flex_shrink_0()
-                            .pl(px(POPOVER_PADDING))
-                            .pr(px(UI_SPACING))
-                            .border_b_1()
-                            .border_color(rgb(BORDER))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .map(|d| {
-                                let name = std::path::Path::new(&modal.request.repo)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| modal.request.repo.clone());
-                                d.child(
-                                    header_pill()
-                                        .max_w(px(200.))
-                                        .text_color(rgb(TEXT))
-                                        .child(
-                                            Icon::new(IconName::Folder)
-                                                .size(px(14.))
-                                                .text_color(rgb(MUTED))
-                                                .flex_shrink_0(),
-                                        )
-                                        .child(div().min_w_0().truncate().child(name)),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .map(|d| {
+                        let name = std::path::Path::new(&modal.request.repo)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| modal.request.repo.clone());
+                        d.child(
+                            header_pill()
+                                .max_w(px(200.))
+                                .text_color(rgb(TEXT))
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(14.))
+                                        .text_color(rgb(MUTED))
+                                        .flex_shrink_0(),
                                 )
-                            })
-                            .child(div().flex_1().min_w_0())
-                            .child(
-                                icon_button("close-modal", "Close", IconName::Close)
-                                    .flex_shrink_0()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_modal(window, cx)
-                                    })),
-                            ),
-                    )
+                                .child(div().min_w_0().truncate().child(name)),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0())
                     .child(
-                        div()
-                            .id("modal-body")
-                            .min_h_0()
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p(px(POPOVER_PADDING))
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .px(px(POPOVER_PADDING))
-                            .py(px(UI_SPACING))
+                        icon_button("close-modal", "Close", IconName::Close)
                             .flex_shrink_0()
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .child(footer),
-                    )
-                    .focus_trap("modal-trap", &self.modal_focus),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                            ),
+                    ),
             )
-            .into_any_element()
+            .child(
+                div()
+                    .id("modal-body")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p(px(POPOVER_PADDING))
+                    .child(body),
+            )
+            .child(
+                div()
+                    .px(px(POPOVER_PADDING))
+                    .py(px(UI_SPACING))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(footer),
+            )
+            .map(|d| {
+                if interactive {
+                    d.focus_trap("modal-trap", &self.modal_focus)
+                        .into_any_element()
+                } else {
+                    d.into_any_element()
+                }
+            })
     }
 }
 
@@ -461,9 +509,11 @@ mod tests {
             base_input: cx.new(|cx| InputState::new(window, cx)),
             head_input: cx.new(|cx| InputState::new(window, cx)),
             serial: 1,
+            anchor: None,
             local_branches: vec!["feature".into()],
             branches_loading: false,
             branches_error: None,
+            ready: true,
         }
     }
 
