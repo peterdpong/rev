@@ -141,7 +141,7 @@ pub struct Selection {
 impl Selection {
     pub fn from_range(range: &DiffLineRange) -> Option<Self> {
         // A cross-side unified selection has two coordinate systems. Never
-        // silently turn it into an incorrect source range for the selected range.
+        // silently turn it into an incorrect source range for the agent.
         if range.side() != range.end_side() {
             return None;
         }
@@ -157,15 +157,44 @@ impl Selection {
             end: range.start().max(range.end()),
         })
     }
+    pub fn diff_side(&self) -> DiffSide {
+        if self.side == "deletions" {
+            DiffSide::Original
+        } else {
+            DiffSide::Modified
+        }
+    }
+    pub fn label(&self) -> String {
+        if self.scope.as_deref() == Some("review") {
+            return "Entire review".into();
+        }
+        if self.scope.as_deref() == Some("file") {
+            return self.path.clone();
+        }
+        format!("{}:{}–{} · {}", self.path, self.start, self.end, self.side)
+    }
 }
-
+#[derive(Clone, Debug, Deserialize)]
+pub struct Comment {
+    #[serde(flatten)]
+    pub selection: Selection,
+    pub id: String,
+    pub body: String,
+    pub status: String,
+    pub digest: String,
+}
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ReviewState {
+    #[serde(default)]
+    pub threads: Vec<ReviewThread>,
+    pub comments: Vec<Comment>,
     pub viewed: HashMap<String, String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReviewTab {
     pub id: String,
+    #[serde(rename = "scopeKey", default)]
+    pub scope_key: Option<String>,
     pub label: String,
     #[serde(default)]
     pub kind: String,
@@ -215,6 +244,77 @@ pub struct ReviewPatch {
     #[serde(flatten)]
     pub patch: FilePatch,
     pub error: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct Provider {
+    pub id: String,
+    pub available: bool,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct AgentEvent {
+    pub kind: String,
+    pub text: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct AgentRun {
+    #[serde(rename = "scopeKey", default)]
+    pub scope_key: String,
+    pub worktree: Option<AgentWorktree>,
+    pub id: String,
+    pub status: String,
+    pub events: Vec<AgentEvent>,
+    pub mode: String,
+    #[serde(default)]
+    pub thread: Option<ReviewThread>,
+    #[serde(default)]
+    pub approvals: Vec<AgentApproval>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    #[serde(default)]
+    pub archived: bool,
+    pub id: String,
+    pub kind: String,
+    pub body: String,
+    pub selection: Option<Selection>,
+    pub digest: Option<String>,
+    pub head_sha: String,
+    pub merge_base: String,
+    pub updated_at: String,
+    pub comment_ids: Vec<String>,
+    #[serde(default)]
+    pub changes: Vec<Comment>,
+    pub turns: Vec<ThreadTurn>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct ThreadTurn {
+    pub worktree: Option<AgentWorktree>,
+    pub id: String,
+    pub question: String,
+    pub provider: String,
+    pub status: String,
+    pub events: Vec<AgentEvent>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AgentWorktree {
+    pub path: String,
+    pub branch: String,
+}
+
+impl AgentRun {
+    pub fn is_active(&self) -> bool {
+        matches!(self.status.as_str(), "running" | "queued")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AgentApproval {
+    pub id: String,
+    pub title: String,
+    pub detail: String,
 }
 
 #[cfg(test)]
