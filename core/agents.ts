@@ -106,3 +106,245 @@ export async function preparePrompt(request: AgentRequest) {
   }
   return { prompt, review, ids };
 }
+
+export class AgentRunner {
+  runs = new Map<string, AgentRun>();
+  private stops = new Map<string, () => void>();
+  private activeRepos = new Set<string>();
+  private approvals = new Map<
+    string,
+    { runId: string; settle(allow: boolean): void }
+  >();
+  constructor(
+    private adapter: (id: Provider) => ProviderAdapter = providerAdapter,
+  ) {}
+
+  async start(request: AgentRequest, onEvent?: (event: AgentEvent) => void) {
+    const adapter = this.adapter(request.provider);
+    const { review, prompt, ids } = await preparePrompt(request);
+    const binary = await executable(request.provider);
+    if (this.activeRepos.has(review.repo)) {
+      throw new Error(
+        'An agent is already running in this repository. Stop it or wait for it to finish.',
+      );
+    }
+    this.activeRepos.add(review.repo);
+    const run: AgentRun = {
+      id: randomUUID(),
+      status: 'running',
+      events: [],
+      approvals: [],
+      startedAt: new Date().toISOString(),
+      mode: request.mode,
+    };
+    let history;
+    try {
+      history = await createRunHistory(review, request, run, ids);
+    } catch (error) {
+      this.activeRepos.delete(review.repo);
+      throw error;
+    }
+    this.runs.set(run.id, run);
+    for (const [id, old] of this.runs) {
+      if (this.runs.size > 30 && old.status !== 'running') {
+        this.runs.delete(id);
+      }
+    }
+    const emit = (event: AgentEvent) => {
+      if (!event.text) {
+        return;
+      }
+      const bounded = { ...event, text: event.text.slice(0, 50_000) };
+      const index = event.id
+        ? run.events.findIndex(
+            (e) => e.id === event.id && e.kind === event.kind,
+          )
+        : -1;
+      if (index >= 0) {
+        run.events[index] = bounded;
+      } else {
+        run.events.push(bounded);
+      }
+      if (run.events.length > 400) {
+        run.events.shift();
+      }
+      onEvent?.(bounded);
+    };
+    const controller = new AbortController();
+    let cancelled = false;
+    this.stops.set(run.id, () => {
+      cancelled = true;
+      controller.abort();
+    });
+    const approve = (
+      request: Omit<AgentApproval, 'id'>,
+      signal?: AbortSignal,
+    ): Promise<boolean> => {
+      if (controller.signal.aborted || signal?.aborted) {
+        return Promise.resolve(false);
+      }
+      return new Promise((resolve) => {
+        const id = randomUUID();
+        const settle = (allow: boolean) => {
+          this.approvals.delete(id);
+          run.approvals = run.approvals.filter((a) => a.id !== id);
+          controller.signal.removeEventListener('abort', abort);
+          signal?.removeEventListener('abort', abort);
+          resolve(allow);
+        };
+        const abort = () => settle(false);
+        this.approvals.set(id, { runId: run.id, settle });
+        run.approvals.push({
+          id,
+          title: request.title.slice(0, 200),
+          detail: request.detail.slice(0, 50_000),
+        });
+        controller.signal.addEventListener('abort', abort, { once: true });
+        signal?.addEventListener('abort', abort, { once: true });
+        emit({ kind: 'activity', text: 'Waiting for your approval.' });
+      });
+    };
+    void (async () => {
+      let temporary: string | undefined;
+      let status: AgentRun['status'] = 'failed';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 15 * 60_000);
+      try {
+        const key = `${request.provider}:${request.mode}:${review.mode}`;
+        if (request.newSession) {
+          await mutateState(review, (state) => {
+            if (state.sessions) {
+              delete state.sessions[key];
+            }
+          });
+        }
+        const saved = (await readState(review)).sessions?.[key];
+        const sessionId =
+          saved?.headSha === review.headSha &&
+          saved.mergeBase === review.mergeBase
+            ? saved.id
+            : undefined;
+        let cwd = review.repo;
+        if (
+          request.mode === 'ask' &&
+          review.mode === 'branch' &&
+          (review.dirty ||
+            (await resolveRef(review.repo, 'HEAD')) !== review.headSha)
+        ) {
+          temporary = await mkdtemp(path.join(tmpdir(), 'rev-context-'));
+          cwd = path.join(temporary, 'checkout');
+          await git(review.repo, [
+            'worktree',
+            'add',
+            '--detach',
+            cwd,
+            review.headSha,
+          ]);
+          emit({
+            kind: 'activity',
+            text: 'Created an isolated checkout of the reviewed commit for accurate answers.',
+          });
+        }
+        controller.signal.throwIfAborted();
+        emit({
+          kind: 'activity',
+          text: `${sessionId ? 'Continuing' : 'Starting'} ${request.provider === 'codex' ? 'Codex' : 'Claude'} conversation…`,
+        });
+        await adapter.run({
+          executable: binary,
+          cwd,
+          mode: request.mode,
+          prompt,
+          sessionId,
+          signal: controller.signal,
+          emit,
+          approve,
+          saveSession: async (id) => {
+            if (!/^[a-zA-Z0-9_.:-]{1,256}$/.test(id)) {
+              throw new Error('The agent returned an invalid conversation ID.');
+            }
+            run.sessionId = id;
+            await mutateState(review, (state) => {
+              state.sessions ||= {};
+              state.sessions[key] = {
+                id,
+                headSha: review.headSha,
+                mergeBase: review.mergeBase,
+                updatedAt: new Date().toISOString(),
+              };
+            });
+          },
+        });
+        controller.signal.throwIfAborted();
+        if (ids.length) {
+          await mutateState(review, (state) => {
+            state.comments.forEach((c) => {
+              if (ids.includes(c.id)) {
+                c.status = 'sent';
+              }
+            });
+          });
+        }
+        status = 'completed';
+      } catch (error: any) {
+        status = cancelled ? 'cancelled' : 'failed';
+        if (!cancelled) {
+          emit({
+            kind: 'error',
+            text: timedOut
+              ? 'Agent timed out after 15 minutes.'
+              : error.message || String(error),
+          });
+        }
+      } finally {
+        clearTimeout(timer);
+        for (const pending of this.approvals.values()) {
+          if (pending.runId === run.id) {
+            pending.settle(false);
+          }
+        }
+        if (temporary) {
+          try {
+            await git(review.repo, [
+              'worktree',
+              'remove',
+              path.join(temporary, 'checkout'),
+            ]);
+            await rmdir(temporary);
+          } catch {
+            emit({
+              kind: 'activity',
+              text: `Temporary agent checkout retained at ${temporary} because cleanup could not safely remove it.`,
+            });
+          }
+        }
+        this.stops.delete(run.id);
+        this.activeRepos.delete(review.repo);
+        run.status = status;
+        await history.finish();
+      }
+    })();
+    return run;
+  }
+  respondToApproval(runId: string, approvalId: string, allow: boolean) {
+    if (typeof allow !== 'boolean') {
+      throw new Error('Choose Allow or Deny.');
+    }
+    const pending = this.approvals.get(approvalId);
+    if (!pending || pending.runId !== runId) {
+      throw new Error('This approval is no longer pending.');
+    }
+    pending.settle(allow);
+  }
+  cancel(id: string) {
+    this.stops.get(id)?.();
+  }
+  stopAll() {
+    for (const stop of this.stops.values()) {
+      stop();
+    }
+  }
+}
