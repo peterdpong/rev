@@ -370,3 +370,32 @@ fn changing_presentation_options_keeps_selection_and_scroll(cx: &mut TestAppCont
     });
     assert!(events.borrow().is_empty());
 }
+
+#[gpui::test]
+fn earlier_file_updates_preserve_later_source_maps_selection_and_change_navigation(cx: &mut TestAppContext) {
+    let state = cx.new(|cx| DiffState::new(DiffFile::parse(PATCH).unwrap(), cx));
+    state.update(cx, |state, cx| {
+        let position = DiffLinePosition::new("second.txt", DiffSide::Modified, 10);
+        state.set_selected_lines(Some(DiffLineRange::new("second.txt", DiffSide::Modified, 10, 10)), cx);
+        let original = state.source_row(&position).unwrap();
+        state.set_file_collapsed("first.txt", true, cx);
+        assert!(state.source_row(&position).unwrap() < original);
+        state.set_file_collapsed("first.txt", false, cx);
+        assert_eq!(state.source_row(&position), Some(original));
+        let snapshot = state.rows().clone();
+        state.replace_file(DiffFile::unchanged("first.txt", &"before\n".repeat(100)), cx);
+        let later = state.source_row(&position).unwrap();
+        assert!(later > original);
+        assert_eq!(snapshot.get(original), state.rows().get(later));
+        assert_eq!(state.selected_text(cx), "TEN\n");
+        state.scroll_to_file("first.txt", cx);
+        state.next_change(cx);
+        assert_eq!(state.visible_file().unwrap().as_str(), "second.txt");
+        state.scroll_to_line(position.clone(), cx);
+        assert_eq!(state.list().logical_scroll_top().item_ix, later);
+        state.replace_file(DiffFile::placeholder("first.txt", "Unavailable"), cx);
+        assert!(state.source_row(&position).unwrap() < original);
+        assert_eq!(state.visible_file().unwrap().as_str(), "second.txt");
+        assert_eq!(state.selected_text(cx), "TEN\n");
+    });
+}

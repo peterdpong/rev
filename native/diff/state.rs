@@ -8,16 +8,19 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
-    WindowId, point, px,
+    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task,
+    Window, WindowId, point, px,
 };
-use gpui_kit::base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
+use gpui_kit::base::{
+    TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle,
+};
 
 use super::{
     DiffAnnotation, DiffConflictResolution, DiffFile, DiffFileStatus, DiffInlineUnit,
     DiffLinePosition, DiffLineRange, DiffMode, DiffSide,
     conflict::ConflictPart,
     presentation::{FilePresentation, PresentationOptions, SyntaxHighlighters},
+    row_index::RowIndex,
     selection::SelectionGeometry,
 };
 
@@ -225,8 +228,8 @@ pub struct DiffState {
     resolutions: HashMap<(SharedString, usize), DiffConflictResolution>,
     file_rows: Vec<FileRows>,
     header_rows: Vec<usize>,
-    rows: Rc<Vec<DisplayRow>>,
-    change_rows: Vec<usize>,
+    rows: Rc<RowIndex<DisplayRow>>,
+    change_rows: Vec<Vec<usize>>,
     list: ListState,
     horizontal_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -529,13 +532,24 @@ impl DiffState {
         let document = self.files.get(file)?;
         let lines = document.lines(side);
         let first = lines.get(lines.partition_point(|line| line.source().end <= range.start))?;
-        let last = lines.get(lines.partition_point(|line| line.source().start < range.end).checked_sub(1)?)?;
-        Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
+        let last = lines.get(
+            lines
+                .partition_point(|line| line.source().start < range.end)
+                .checked_sub(1)?,
+        )?;
+        Some(DiffLineRange::new(
+            document.path().clone(),
+            side,
+            first.line_number(),
+            last.line_number(),
+        ))
     }
 
     /// Whether a native text gesture is still held, including an empty range.
     pub fn is_selecting_text(&self, cx: &App) -> bool {
-        self.selection.snapshot(cx).is_some_and(|snapshot| snapshot.is_selecting())
+        self.selection
+            .snapshot(cx)
+            .is_some_and(|snapshot| snapshot.is_selecting())
     }
 
     /// Whether the file at `path` shows only its header.
@@ -543,7 +557,7 @@ impl DiffState {
         self.collapsed.contains(path)
     }
 
-    pub(crate) fn rows(&self) -> &Rc<Vec<DisplayRow>> {
+    pub(crate) fn rows(&self) -> &Rc<RowIndex<DisplayRow>> {
         &self.rows
     }
     pub(crate) fn list(&self) -> &ListState {
@@ -568,16 +582,26 @@ impl DiffState {
         let top = self.list.logical_scroll_top();
         let path = self.visible_file()?.clone();
         let line = self.row_position(top.item_ix);
-        let leading_rows = line.as_ref().and_then(|line| self.source_row(line))
-            .unwrap_or(top.item_ix).saturating_sub(top.item_ix);
+        let leading_rows = line
+            .as_ref()
+            .and_then(|line| self.source_row(line))
+            .unwrap_or(top.item_ix)
+            .saturating_sub(top.item_ix);
         Some(DiffScrollPosition {
-            path, line, leading_rows, offset: top.offset_in_item,
+            path,
+            line,
+            leading_rows,
+            offset: top.offset_in_item,
             horizontal: self.horizontal_scroll.offset().x,
         })
     }
 
     /// Restores a bookmark, revealing its source if folds or layout changed.
-    pub fn restore_scroll_position(&mut self, position: &DiffScrollPosition, cx: &mut Context<Self>) {
+    pub fn restore_scroll_position(
+        &mut self,
+        position: &DiffScrollPosition,
+        cx: &mut Context<Self>,
+    ) {
         self.set_file_collapsed(&position.path, false, cx);
         if let Some(line) = &position.line {
             self.scroll_to_line(line.clone(), cx);
@@ -683,11 +707,13 @@ impl DiffState {
         self.preparing = None;
         self._presentation = Task::ready(());
         self.geometry.borrow_mut().clear();
-        self.rebuild(false);
+        self.rebuild_file(ix);
         if let Some(position) = position {
             self.restore_viewport(&position);
         }
-        self.list.remeasure();
+        self.list.remeasure_items(
+            self.rows.start(ix)..self.rows.start(ix) + self.rows.segment(ix).len(),
+        );
         self.ensure_presentation(cx);
         cx.notify();
         true
@@ -745,7 +771,7 @@ impl DiffState {
             self.collapsed.remove(&path)
         };
         if changed {
-            self.rebuild_at_anchor();
+            self.rebuild_file_at_anchor(file);
             cx.notify();
         }
     }
@@ -780,7 +806,7 @@ impl DiffState {
             None => self.resolutions.remove(&key),
         };
         if previous != resolution {
-            self.rebuild_at_anchor();
+            self.rebuild_file_at_anchor(file);
             cx.notify();
         }
     }
@@ -879,7 +905,7 @@ impl DiffState {
             return;
         }
         if self.collapsed.remove(position.path().as_str()) {
-            self.rebuild_at_anchor();
+            self.rebuild_file_at_anchor(self.file_ix(position.path()).unwrap());
         }
         if self.expand_line(&position).is_some() {
             self.reveal_line(&position);
@@ -891,7 +917,9 @@ impl DiffState {
         let path = self.visible_file().cloned();
         if path != self.visible_file {
             self.visible_file = path.clone();
-            if let Some(path) = path { cx.emit(DiffEvent::VisibleFileChanged(path)); }
+            if let Some(path) = path {
+                cx.emit(DiffEvent::VisibleFileChanged(path));
+            }
         }
     }
 
@@ -943,7 +971,7 @@ impl DiffState {
         };
         if let Some(expanded) = self.expanded.get_mut(file) {
             expanded.push(revealed);
-            self.rebuild_at_anchor();
+            self.rebuild_file_at_anchor(file);
             cx.notify();
         }
     }
@@ -1283,7 +1311,7 @@ impl DiffState {
         if let Some(DisplayRow::Fold { file, pairs }) = self.rows.get(row) {
             let (file, pairs) = (*file, pairs.clone());
             self.expanded[file].push(pairs);
-            self.rebuild_at_anchor();
+            self.rebuild_file_at_anchor(file);
         }
         self.source_row(position)
     }
@@ -1310,30 +1338,49 @@ impl DiffState {
 
     fn move_change(&mut self, forward: bool, cx: &mut Context<Self>) {
         let top = self.list.logical_scroll_top().item_ix;
-        let groups = &self.change_rows;
+        // Keep change locations local to each file so edits never reindex later lines.
+        let first = || {
+            self.change_rows
+                .iter()
+                .enumerate()
+                .find_map(|(file, rows)| rows.first().map(|row| self.rows.start(file) + row))
+        };
+        let last = || {
+            self.change_rows
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(file, rows)| rows.last().map(|row| self.rows.start(file) + row))
+        };
         let target = if forward {
-            // Scrolled to the end, the list clamps any later change below the
-            // top, so the top never passes it and the key would stop there.
-            // The last row's bounds answer even when the rows above the
-            // viewport were never measured, as after a jump to the end.
             let at_end = self
                 .list
                 .item_count()
                 .checked_sub(1)
                 .and_then(|last| self.list.bounds_for_item(last))
                 .is_some_and(|last| last.bottom() <= self.list.viewport_bounds().bottom());
-            groups
-                .get(groups.partition_point(|ix| *ix <= top))
-                .copied()
+            self.change_rows
+                .iter()
+                .enumerate()
+                .find_map(|(file, rows)| {
+                    let start = self.rows.start(file);
+                    rows.get(rows.partition_point(|row| start + row <= top))
+                        .map(|row| start + row)
+                })
                 .filter(|_| !at_end)
-                .or(groups.first().copied())
+                .or_else(first)
         } else {
-            groups
-                .partition_point(|ix| *ix < top)
-                .checked_sub(1)
-                .and_then(|ix| groups.get(ix))
-                .copied()
-                .or(groups.last().copied())
+            self.change_rows
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(file, rows)| {
+                    let start = self.rows.start(file);
+                    rows.partition_point(|row| start + row < top)
+                        .checked_sub(1)
+                        .map(|ix| start + rows[ix])
+                })
+                .or_else(last)
         };
         if let Some(ix) = target {
             self.list.scroll_to(ListOffset {
@@ -1373,12 +1420,16 @@ impl DiffState {
     }
 
     pub(crate) fn source_row(&self, position: &DiffLinePosition) -> Option<usize> {
-        let rows = self.file_rows.get(self.file_ix(position.path())?)?;
+        let file = self.file_ix(position.path())?;
+        let rows = self.file_rows.get(file)?;
         let rows = match position.side() {
             DiffSide::Original => &rows.original,
             DiffSide::Modified => &rows.modified,
         };
-        rows.get(self.line_index(position)?).copied().flatten()
+        rows.get(self.line_index(position)?)
+            .copied()
+            .flatten()
+            .map(|row| self.rows.start(file) + row)
     }
 
     fn reveal_line(&self, position: &DiffLinePosition) {
@@ -1399,22 +1450,39 @@ impl DiffState {
         }
     }
 
-    /// Projects rows. Without `reset`, only the changed middle is spliced so
-    /// measured heights of unchanged rows survive disclosure changes.
+    /// Rebuilds a single file while retaining the source and pixel scroll anchor.
+    fn rebuild_file_at_anchor(&mut self, file: usize) {
+        let position = self.scroll_position();
+        self.rebuild_file(file);
+        if let Some(position) = position {
+            self.restore_viewport(&position);
+        }
+    }
+
+    /// Global display options can affect every file. Ordinary file updates use
+    /// `rebuild_file` and leave other files' rows and source maps intact.
     fn rebuild(&mut self, reset: bool) {
-        let rows = self.project_rows();
-        self.file_rows = source_rows(&self.files, &rows);
-        self.change_rows = changed_groups(&rows);
-        self.header_rows = rows
+        let segments = (0..self.files.len())
+            .map(|ix| self.project_file_rows(ix))
+            .collect::<Vec<_>>();
+        self.file_rows = self
+            .files
             .iter()
-            .enumerate()
-            .filter_map(|(ix, row)| matches!(row, DisplayRow::File(_)).then_some(ix))
+            .zip(&segments)
+            .map(|(file, rows)| source_rows(file, rows))
             .collect();
+        self.change_rows = segments.iter().map(|rows| changed_groups(rows)).collect();
+        let rows = RowIndex::new(segments);
+        self.header_rows = (0..self.files.len()).map(|file| rows.start(file)).collect();
         if reset {
             self.list.reset(rows.len());
         } else {
             let old = &self.rows;
-            let prefix = old.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+            let prefix = old
+                .iter()
+                .zip(rows.iter())
+                .take_while(|(a, b)| a == b)
+                .count();
             let suffix = old
                 .iter()
                 .rev()
@@ -1429,48 +1497,72 @@ impl DiffState {
         self.apply_row_height_hint();
     }
 
-    fn project_rows(&self) -> Vec<DisplayRow> {
+    fn rebuild_file(&mut self, file: usize) {
+        let rows = self.project_file_rows(file);
+        let old = self.rows.segment(file);
+        let start = self.rows.start(file);
+        let prefix = old.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+        let suffix = old
+            .iter()
+            .rev()
+            .zip(rows.iter().rev())
+            .take(old.len().min(rows.len()) - prefix)
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.list.splice(
+            start + prefix..start + old.len() - suffix,
+            rows.len() - prefix - suffix,
+        );
+        self.file_rows[file] = source_rows(&self.files[file], &rows);
+        self.change_rows[file] = changed_groups(&rows);
+        Rc::make_mut(&mut self.rows).replace(file, rows);
+        for ix in file..self.files.len() {
+            self.header_rows[ix] = self.rows.start(ix);
+        }
+        self.apply_row_height_hint();
+    }
+
+    fn project_file_rows(&self, ix: usize) -> Vec<DisplayRow> {
         let mut rows = Vec::new();
-        for (ix, file) in self.files.iter().enumerate() {
-            rows.push(DisplayRow::File(ix));
-            if self.collapsed.contains(file.path()) {
-                continue;
-            }
-            if file.pairs().is_empty() {
-                rows.push(DisplayRow::Notice(ix));
-            } else if file.status() == DiffFileStatus::Unchanged {
-                rows.extend((0..file.pairs().len()).map(|line| DisplayRow::Code {
-                    file: ix,
-                    original: None,
-                    modified: Some(line),
-                    changed: false,
-                }));
-            } else if file.status() == DiffFileStatus::Conflicted {
-                let resolutions = (0..file.conflicts().len())
-                    .map(|conflict| {
-                        self.resolutions
-                            .get(&(file.path().clone(), conflict))
-                            .copied()
-                    })
-                    .collect::<Vec<_>>();
-                let visible = visible_pairs(
-                    file,
-                    self.context_lines,
-                    self.min_collapsed_lines,
-                    &self.expanded[ix],
-                );
-                project_conflicts(&mut rows, ix, file, &visible, &resolutions);
-            } else {
-                project_file(
-                    &mut rows,
-                    ix,
-                    file,
-                    self.mode,
-                    self.context_lines,
-                    self.min_collapsed_lines,
-                    &self.expanded[ix],
-                );
-            }
+        let file = &self.files[ix];
+        rows.push(DisplayRow::File(ix));
+        if self.collapsed.contains(file.path()) {
+            return rows;
+        }
+        if file.pairs().is_empty() {
+            rows.push(DisplayRow::Notice(ix));
+        } else if file.status() == DiffFileStatus::Unchanged {
+            rows.extend((0..file.pairs().len()).map(|line| DisplayRow::Code {
+                file: ix,
+                original: None,
+                modified: Some(line),
+                changed: false,
+            }));
+        } else if file.status() == DiffFileStatus::Conflicted {
+            let resolutions = (0..file.conflicts().len())
+                .map(|conflict| {
+                    self.resolutions
+                        .get(&(file.path().clone(), conflict))
+                        .copied()
+                })
+                .collect::<Vec<_>>();
+            let visible = visible_pairs(
+                file,
+                self.context_lines,
+                self.min_collapsed_lines,
+                &self.expanded[ix],
+            );
+            project_conflicts(&mut rows, ix, file, &visible, &resolutions);
+        } else {
+            project_file(
+                &mut rows,
+                ix,
+                file,
+                self.mode,
+                self.context_lines,
+                self.min_collapsed_lines,
+                &self.expanded[ix],
+            );
         }
         rows
     }
@@ -1593,42 +1685,33 @@ fn file_ixs(files: &[DiffFile]) -> HashMap<SharedString, usize> {
 /// Every source line maps to its code row or the disclosure hiding it; lines
 /// of a collapsed file have no row. Disjoint folds visit each pair once, so
 /// building the maps is linear.
-fn source_rows(files: &[DiffFile], rows: &[DisplayRow]) -> Vec<FileRows> {
-    let mut file_rows = files
-        .iter()
-        .map(|file| FileRows {
-            original: vec![None; file.lines_count(DiffSide::Original)],
-            modified: vec![None; file.lines_count(DiffSide::Modified)],
-        })
-        .collect::<Vec<_>>();
+fn source_rows(file: &DiffFile, rows: &[DisplayRow]) -> FileRows {
+    let mut mapped = FileRows {
+        original: vec![None; file.lines_count(DiffSide::Original)],
+        modified: vec![None; file.lines_count(DiffSide::Modified)],
+    };
     for (row_ix, row) in rows.iter().enumerate() {
-        let mut map = |file: usize, original: Option<usize>, modified: Option<usize>| {
+        let mut map = |original: Option<usize>, modified: Option<usize>| {
             if let Some(line) = original {
-                file_rows[file].original[line] = Some(row_ix);
+                mapped.original[line] = Some(row_ix);
             }
             if let Some(line) = modified {
-                file_rows[file].modified[line] = Some(row_ix);
+                mapped.modified[line] = Some(row_ix);
             }
         };
         match row {
             DisplayRow::Code {
-                file,
-                original,
-                modified,
-                ..
-            } => map(*file, *original, *modified),
-            DisplayRow::Fold { file, pairs } => {
-                for pair in &files[*file].pairs()[pairs.clone()] {
-                    map(*file, pair.original(), pair.modified());
+                original, modified, ..
+            } => map(*original, *modified),
+            DisplayRow::Fold { pairs, .. } => {
+                for pair in &file.pairs()[pairs.clone()] {
+                    map(pair.original(), pair.modified());
                 }
             }
-            DisplayRow::File(_)
-            | DisplayRow::Notice(_)
-            | DisplayRow::Hunk { .. }
-            | DisplayRow::Conflict { .. } => {}
+            _ => {}
         }
     }
-    file_rows
+    mapped
 }
 
 fn changed_groups(rows: &[DisplayRow]) -> Vec<usize> {

@@ -12,6 +12,7 @@ mod parser_tests;
 mod presentation;
 mod selection;
 mod state;
+mod row_index;
 
 pub use conflict::{DiffConflict, DiffConflictResolution};
 pub use document::{DiffFile, DiffFileStatus, DiffLinePosition, DiffLineRange, DiffSide};

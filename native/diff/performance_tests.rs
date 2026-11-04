@@ -14,10 +14,12 @@ fn median(samples: &mut [f64]) -> f64 {
 #[ignore = "run explicitly with --ignored --nocapture; reports layout CPU time"]
 fn benchmark_layout_updates(cx: &mut TestAppContext) {
     for (file_count, line_count) in [(250, 400), (1000, 100), (20, 5000)] {
-        let text = (0..line_count).map(|line| format!("source line {line}\n")).collect::<String>();
-        let files = (0..file_count).map(|file| {
-            DiffFile::unchanged(format!("file-{file}.txt"), &text)
-        }).collect::<Vec<_>>();
+        let text = (0..line_count)
+            .map(|line| format!("source line {line}\n"))
+            .collect::<String>();
+        let files = (0..file_count)
+            .map(|file| DiffFile::unchanged(format!("file-{file}.txt"), &text))
+            .collect::<Vec<_>>();
         let path = format!("file-{}.txt", file_count / 2);
         let replacement = DiffFile::unchanged(path.clone(), &(text.clone() + "one extra line\n"));
         let mut create = Vec::new();
@@ -48,7 +50,11 @@ fn benchmark_layout_updates(cx: &mut TestAppContext) {
                 replace.push(replace_ms);
             }
         }
-        println!("layout files={file_count} lines_per_file={line_count} create_ms={:.3} collapse_ms={:.3} replace_ms={:.3}",
-            median(&mut create), median(&mut collapse), median(&mut replace));
+        println!(
+            "layout files={file_count} lines_per_file={line_count} create_ms={:.3} collapse_ms={:.3} replace_ms={:.3}",
+            median(&mut create),
+            median(&mut collapse),
+            median(&mut replace)
+        );
     }
 }
