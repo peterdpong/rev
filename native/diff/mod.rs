@@ -1893,6 +1893,9 @@ mod selection_tests;
 mod tests;
 
 #[cfg(test)]
+mod performance_tests;
+
+#[cfg(test)]
 fn test_init(cx: &mut gpui::App) {
     gpui_kit::init(cx);
     init(cx);
