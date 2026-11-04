@@ -14,3 +14,6 @@ own diff bindings. Cargo uses the registry dependency without a path override.
 
 Run `cargo test --locked --bin rev diff::` to check parser, source coordinates,
 selection, copying, folds, highlighting, and scrolling behavior.
+
+The performance prototype is described in [PERFORMANCE.md](PERFORMANCE.md),
+including the architecture, repeatable benchmarks and remaining bottlenecks.
