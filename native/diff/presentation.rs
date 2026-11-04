@@ -6,8 +6,8 @@ use gpui::{HighlightStyle, SharedString};
 use gpui_kit::base::input::HighlightStyleResolver;
 use similar::{ChangeTag, TextDiff};
 
-use super::{DiffFile, DiffSide, document::SourceLine};
 use super::highlight::CaptureHighlighter as SyntaxHighlighter;
+use super::{DiffFile, DiffSide, document::SourceLine};
 
 /// The unit inline changes are compared and emphasized in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -73,6 +73,11 @@ impl<T> LineSpans<T> {
         spans
     }
 
+    fn estimated_bytes(&self) -> usize {
+        self.starts.capacity() * std::mem::size_of::<u32>()
+            + self.spans.capacity() * std::mem::size_of::<(Range<u32>, T)>()
+    }
+
     fn line(&self, ix: usize) -> &[(Range<u32>, T)] {
         match (self.starts.get(ix), self.starts.get(ix + 1)) {
             (Some(start), Some(end)) => &self.spans[*start as usize..*end as usize],
@@ -110,6 +115,22 @@ impl FilePresentation {
             presentation.inline = inline_changes(file, unit, options.inline_max_line_length);
         }
         presentation
+    }
+
+    /// Approximate owned buffer sizes for the presentation cache budget.
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        self.names.capacity() * std::mem::size_of::<SharedString>()
+            + self.names.iter().map(|name| name.len()).sum::<usize>()
+            + self
+                .syntax
+                .iter()
+                .map(LineSpans::estimated_bytes)
+                .sum::<usize>()
+            + self
+                .inline
+                .iter()
+                .map(LineSpans::estimated_bytes)
+                .sum::<usize>()
     }
 
     /// Theme styles for one line's syntax, as display ranges.

@@ -254,6 +254,8 @@ pub struct DiffState {
     /// started for earlier ones never installs its results.
     presentation_generation: usize,
     preparing: Option<usize>,
+    highlighters: Option<SyntaxHighlighters>,
+    cached_presentation_window: Range<usize>,
     _presentation: Task<()>,
     _selection_subscription: Subscription,
 }
@@ -385,6 +387,8 @@ impl DiffState {
             window: None,
             presentation_generation: 0,
             preparing: None,
+            highlighters: None,
+            cached_presentation_window: 0..0,
             _presentation: Task::ready(()),
             _selection_subscription,
         };
@@ -914,6 +918,7 @@ impl DiffState {
     }
 
     pub(crate) fn notify_visible_file(&mut self, cx: &mut Context<Self>) {
+        self.ensure_presentation(cx);
         let path = self.visible_file().cloned();
         if path != self.visible_file {
             self.visible_file = path.clone();
@@ -1596,58 +1601,126 @@ impl DiffState {
     /// Discards prepared emphasis after files or options change.
     fn reset_presentation(&mut self) {
         self.presentations = vec![None; self.files.len()];
+        self.cached_presentation_window = 0..0;
         self.presentation_generation += 1;
         self.preparing = None;
         self._presentation = Task::ready(());
     }
 
-    /// Prepares syntax and inline emphasis for files that lack it, one file at
-    /// a time on the background executor, reusing highlighters per language.
-    /// Starts on first render, so builders applied after `new` take effect.
+    /// A conservative visible range, plus one file on either side for prefetch.
+    /// Row-height estimates work before offscreen rows have ever been measured.
+    fn presentation_window(&self) -> (Range<usize>, Range<usize>) {
+        if self.rows.is_empty() {
+            return (0..0, 0..0);
+        }
+        let top = self
+            .list
+            .logical_scroll_top()
+            .item_ix
+            .min(self.rows.len() - 1);
+        let height = f32::from(self.list.viewport_bounds().size.height).max(0.);
+        let row_height = f32::from(self.row_height.unwrap_or(px(20.))).max(1.);
+        let bottom = top
+            .saturating_add((height / row_height).ceil() as usize)
+            .min(self.rows.len() - 1);
+        let first = self.rows.file_at(top).unwrap();
+        let end = self.rows.file_at(bottom).unwrap() + 1;
+        (
+            first..end,
+            first.saturating_sub(1)..(end + 1).min(self.files.len()),
+        )
+    }
+
+    fn next_presentation(&self) -> Option<usize> {
+        let (visible, nearby) = self.presentation_window();
+        visible
+            .clone()
+            .chain(nearby.filter(|ix| !visible.contains(ix)))
+            .find(|ix| {
+                self.presentations[*ix].is_none()
+                    && !self.collapsed.contains(self.files[*ix].path())
+                    && !self.files[*ix].pairs().is_empty()
+            })
+    }
+
+    /// Retain 8 MiB of prepared spans outside the active window at most. The
+    /// visible/prefetched files remain pinned, even if one exceeds that budget.
+    fn trim_presentations(&mut self, budget: usize) {
+        let (visible, nearby) = self.presentation_window();
+        let mut bytes = 0;
+        let mut candidates = Vec::new();
+        for (ix, presentation) in self.presentations.iter().enumerate() {
+            if let Some(presentation) = presentation {
+                bytes += presentation.estimated_bytes();
+                if !nearby.contains(&ix) {
+                    candidates.push(ix);
+                }
+            }
+        }
+        candidates.sort_unstable_by_key(|ix| std::cmp::Reverse(ix.abs_diff(visible.start)));
+        for ix in candidates {
+            if bytes <= budget {
+                break;
+            }
+            bytes -= self.presentations[ix].as_ref().unwrap().estimated_bytes();
+            self.presentations[ix] = None;
+        }
+    }
+
+    /// Paint plain text immediately; prepare only the current viewport and a
+    /// small prefetch window. Re-read priority after every background job so a
+    /// jump never waits for all earlier files. Only one CPU job is in flight.
     pub(crate) fn ensure_presentation(&mut self, cx: &mut Context<Self>) {
         let generation = self.presentation_generation;
+        let nearby = self.presentation_window().1;
+        if nearby != self.cached_presentation_window {
+            self.cached_presentation_window = nearby;
+            self.trim_presentations(8 * 1024 * 1024);
+        }
         if self.preparing == Some(generation) {
             return;
         }
-        let pending = self
-            .presentations
-            .iter()
-            .enumerate()
-            .filter(|(_, presentation)| presentation.is_none())
-            .map(|(ix, _)| (ix, self.files[ix].clone()))
-            .collect::<Vec<_>>();
-        if pending.is_empty() {
+        let Some(mut ix) = self.next_presentation() else {
             return;
-        }
+        };
+        let mut file = self.files[ix].clone();
         let options = self.presentation_options;
+        let mut highlighters = self.highlighters.take().unwrap_or_default();
         self.preparing = Some(generation);
         self._presentation = cx.spawn(async move |this, cx| {
-            let mut highlighters = Some(SyntaxHighlighters::default());
-            for (ix, file) in pending {
-                let mut moved = highlighters.take();
+            loop {
                 let (presentation, returned) = cx
                     .background_spawn(async move {
-                        let presentation = FilePresentation::prepare(
-                            &file,
-                            options,
-                            moved.get_or_insert_default(),
-                        );
-                        (presentation, moved)
+                        let presentation =
+                            FilePresentation::prepare(&file, options, &mut highlighters);
+                        (presentation, highlighters)
                     })
                     .await;
                 highlighters = returned;
-                let current = this.update(cx, |state, cx| {
+                let next = this.update(cx, |state, cx| {
                     if state.presentation_generation != generation {
-                        return false;
+                        return Err(());
                     }
-                    if let Some(slot) = state.presentations.get_mut(ix) {
-                        *slot = Some(Arc::new(presentation));
-                    }
+                    state.presentations[ix] = Some(Arc::new(presentation));
+                    state.trim_presentations(8 * 1024 * 1024);
                     cx.notify();
-                    true
+                    Ok(state
+                        .next_presentation()
+                        .map(|ix| (ix, state.files[ix].clone())))
                 });
-                if !matches!(current, Ok(true)) {
-                    return;
+                match next {
+                    Ok(Ok(Some((next_ix, next_file)))) => {
+                        ix = next_ix;
+                        file = next_file;
+                    }
+                    Ok(Ok(None)) => {
+                        let _ = this.update(cx, |state, _| {
+                            state.preparing = None;
+                            state.highlighters = Some(highlighters);
+                        });
+                        return;
+                    }
+                    _ => return,
                 }
             }
         });
@@ -1972,6 +2045,47 @@ fn project_conflicts(
         rows.push(DisplayRow::Fold {
             file,
             pairs: start..ix,
+        });
+    }
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn highlighting_follows_jumps_and_skips_unopened_files(cx: &mut TestAppContext) {
+        let files =
+            (0..20).map(|ix| DiffFile::unchanged(format!("file-{ix}.txt"), &"line\n".repeat(50)));
+        let state = cx.new(|cx| DiffState::new(files, cx));
+        state.update(cx, |state, cx| {
+            state.ensure_presentation(cx);
+            // Jump while the original task is still pending.
+            state.scroll_to_file("file-15.txt", cx);
+            state.set_file_collapsed("file-14.txt", true, cx);
+            assert_eq!(state.next_presentation(), Some(15));
+        });
+        cx.run_until_parked();
+        state.update(cx, |state, cx| {
+            assert!(state.presentations[15].is_some());
+            assert!(state.presentations[16].is_some());
+            assert!(state.presentations[14].is_none());
+            assert!(state.presentations[8].is_none());
+            // Only the active neighborhood survives a zero background cache budget.
+            state.trim_presentations(0);
+            assert!(state.presentations[0].is_none());
+            assert!(state.presentations[15].is_some());
+            state.scroll_to_file("file-8.txt", cx);
+            state.ensure_presentation(cx);
+            // A replacement review invalidates the task and all its old indices.
+            state.set_files([DiffFile::unchanged("replacement.txt", "new\n")], cx);
+        });
+        cx.run_until_parked();
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.presentations.len(), 1);
+            assert_eq!(state.files[0].path().as_str(), "replacement.txt");
+            assert!(state.presentations[0].is_some());
         });
     }
 }
