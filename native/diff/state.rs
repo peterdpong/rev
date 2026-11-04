@@ -11,7 +11,7 @@ use gpui::{
     ListOffset, ListState, Pixels, ScrollHandle, SharedString, Size, Subscription, Task, Window,
     WindowId, point, px,
 };
-use gpui_base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
+use gpui_kit::base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
 
 use super::{
     DiffAnnotation, DiffConflictResolution, DiffFile, DiffFileStatus, DiffInlineUnit,

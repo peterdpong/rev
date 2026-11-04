@@ -29,7 +29,7 @@ fn draw(cx: &mut VisualTestContext) {
 }
 
 fn long_patch(cx: &mut TestAppContext) -> (Entity<DiffState>, &mut VisualTestContext) {
-    cx.update(crate::init);
+    cx.update(super::test_init);
     let original = (0..LINES)
         .map(|ix| format!("old {ix}\n"))
         .collect::<String>();

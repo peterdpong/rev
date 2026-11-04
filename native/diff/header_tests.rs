@@ -8,7 +8,7 @@ use super::{
 
 #[gpui::test]
 fn test_diff_builder(cx: &mut TestAppContext) {
-    cx.update(crate::init);
+    cx.update(super::test_init);
     let document = fixture::document(
         Some(("before.rs", "let value = 1;\n")),
         Some(("after.rs", "let value = 2;\n")),

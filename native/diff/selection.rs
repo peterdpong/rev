@@ -14,7 +14,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, StyledText,
     TextLayout, Window, px,
 };
-use gpui_base::{
+use gpui_kit::base::{
     ScrollbarHandle, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun,
 };
 
@@ -280,7 +280,7 @@ impl Element for CodeText {
                 layers.push((
                     line.display_range(start - line.source().start..end - line.source().start),
                     HighlightStyle {
-                        background_color: Some(crate::ActiveTheme::theme(cx).selection),
+                        background_color: Some(gpui_kit::component::ActiveTheme::theme(cx).selection),
                         ..Default::default()
                     },
                 ));

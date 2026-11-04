@@ -1,6 +1,9 @@
 //! Readonly, virtualized patch display inspired by Diffs from Pierre.
 //! Parse an externally supplied patch into [`DiffFile`]s, retain one
 //! [`DiffState`] for all of them in the owner, and build [`Diff`] during rendering.
+#![allow(dead_code, unused_imports)]
+mod language;
+mod highlight;
 mod conflict;
 mod document;
 mod parser;
@@ -25,10 +28,10 @@ use gpui::{
     StatefulInteractiveElement as _, StyleRefinement, Styled, TextRun, Window, div, list, point,
     prelude::FluentBuilder as _, px,
 };
-use gpui_base::TestSupportExt as _;
+use gpui_kit::base::TestSupportExt as _;
 use rust_i18n::t;
 
-use crate::{
+use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -45,7 +48,7 @@ use state::{DisplayRow, FoldExpansion, LayoutKey, SelectedLines};
 // Private: bindings serve the focused code body only.
 mod actions {
     gpui::actions!(
-        diff,
+        rev_diff,
         [
             ScrollUp,
             ScrollDown,
@@ -63,18 +66,18 @@ mod actions {
 
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("up", ScrollUp, Some("Diff")),
-        KeyBinding::new("down", ScrollDown, Some("Diff")),
-        KeyBinding::new("left", ScrollLeft, Some("Diff")),
-        KeyBinding::new("right", ScrollRight, Some("Diff")),
-        KeyBinding::new("pageup", PageUp, Some("Diff")),
-        KeyBinding::new("pagedown", PageDown, Some("Diff")),
-        KeyBinding::new("home", First, Some("Diff")),
-        KeyBinding::new("end", Last, Some("Diff")),
-        KeyBinding::new("shift-up", ExtendUp, Some("Diff")),
-        KeyBinding::new("shift-down", ExtendDown, Some("Diff")),
-        KeyBinding::new("secondary-c", Copy, Some("Diff")),
-        KeyBinding::new("secondary-a", SelectAll, Some("Diff")),
+        KeyBinding::new("up", ScrollUp, Some("RevDiff")),
+        KeyBinding::new("down", ScrollDown, Some("RevDiff")),
+        KeyBinding::new("left", ScrollLeft, Some("RevDiff")),
+        KeyBinding::new("right", ScrollRight, Some("RevDiff")),
+        KeyBinding::new("pageup", PageUp, Some("RevDiff")),
+        KeyBinding::new("pagedown", PageDown, Some("RevDiff")),
+        KeyBinding::new("home", First, Some("RevDiff")),
+        KeyBinding::new("end", Last, Some("RevDiff")),
+        KeyBinding::new("shift-up", ExtendUp, Some("RevDiff")),
+        KeyBinding::new("shift-down", ExtendDown, Some("RevDiff")),
+        KeyBinding::new("secondary-c", Copy, Some("RevDiff")),
+        KeyBinding::new("secondary-a", SelectAll, Some("RevDiff")),
     ]);
 }
 
@@ -554,7 +557,7 @@ fn render_diff(
                 // single-axis wheel remapping. The sibling mask owns X input.
                 .when(!soft_wrap, |this| this.overflow_x_hidden())
                 .track_scroll(&horizontal)
-                .child(gpui_base::ScrollBounce::new(
+                .child(gpui_kit::base::ScrollBounce::new(
                     "diff-bounce",
                     &scrollbar,
                     list(scrollbar.clone(), move |ix, window, cx| {
@@ -712,7 +715,7 @@ fn render_diff(
         )
         .test_support()
         .track_focus(&state.focus_handle(cx))
-        .key_context("Diff")
+        .key_context("RevDiff")
         .role(gpui::accesskit::Role::Document)
         .aria_label(label);
     v_flex()
@@ -764,7 +767,7 @@ struct CodePresentation {
     on_add_annotation: Option<RangeHandler>,
     on_line_click: Option<ClickHandler>,
     on_line_hover: Option<HoverHandler>,
-    selection: gpui_base::TextSelectionHandle,
+    selection: gpui_kit::base::TextSelectionHandle,
     selected_lines: Option<DiffLineRange>,
     selected: Option<SelectedLines>,
     geometry: Rc<std::cell::RefCell<selection::SelectionGeometry>>,
@@ -1864,3 +1867,9 @@ mod scroll_tests;
 mod selection_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+fn test_init(cx: &mut gpui::App) {
+    gpui_kit::init(cx);
+    init(cx);
+}

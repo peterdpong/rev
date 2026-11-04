@@ -3,11 +3,11 @@
 use std::{collections::HashMap, ops::Range};
 
 use gpui::{HighlightStyle, SharedString};
-use gpui_base::input::HighlightStyleResolver;
+use gpui_kit::base::input::HighlightStyleResolver;
 use similar::{ChangeTag, TextDiff};
 
 use super::{DiffFile, DiffSide, document::SourceLine};
-use crate::{Rope, highlighter::SyntaxHighlighter};
+use super::highlight::CaptureHighlighter as SyntaxHighlighter;
 
 /// The unit inline changes are compared and emphasized in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -179,7 +179,7 @@ fn syntax_spans(
         let base = lines[range.start].source().start;
         let text = &source[base..lines[range.end - 1].source().end];
         let hunk_lines = &lines[range.clone()];
-        for (capture, name) in highlighter.capture_names(&Rope::from_str(text)) {
+        for (capture, name) in highlighter.capture_names(text) {
             let capture = capture.start + base..capture.end + base;
             let first = hunk_lines.partition_point(|line| line.source().end <= capture.start);
             for (offset, line) in hunk_lines[first..].iter().enumerate() {
@@ -313,7 +313,7 @@ pub(crate) fn detected_language(path: &str) -> SharedString {
             _ => "text",
         },
     };
-    crate::highlighter::language_name(language)
+    super::language::language_name(language)
 }
 
 #[cfg(test)]
@@ -415,7 +415,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "tree-sitter-rust")]
     #[test]
     fn syntax_is_parsed_per_hunk_and_respects_language_and_line_limit() {
         // Hunks are separated by unavailable source. Parsing their fragments
