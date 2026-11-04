@@ -69,5 +69,6 @@ export type PullRequest = {
   isDraft: boolean;
   headRefName: string;
   baseRefName: string;
+  comparisonBaseRefName?: string;
   updatedAt: string;
 };
