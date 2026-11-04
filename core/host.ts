@@ -8,13 +8,13 @@ export type ReviewResponse = {
 
 export class HostService {
   private closed = false;
-  
+
   async call(method: string, params: any): Promise<ReviewResponse | FilePatch> {
     if (this.closed) {
       throw new Error('The local service is closing.');
     }
 
-    if (!params || typeof params.repo !== 'string') {
+    if (!params || typeof params.repo !== 'string' || !params.repo.trim()) {
       throw new Error('Pass a repository folder.');
     }
 
@@ -26,7 +26,7 @@ export class HostService {
     if (method === 'patch') {
       return filePatch(review, params.path);
     }
-    
+
     return { review, patches: await reviewPatches(review) };
   }
 

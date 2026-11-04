@@ -11,3 +11,7 @@ With Rev you should be able to
 - Ask questions to local coding agents and gain understanding about the code change.
 - Propose revisions to the code change and send them to be applied by local coding agents.
 
+Run `npm start`, then choose **Open Folder…** (or press **⌘O**) to load a local Git repository. Rev starts with an empty window until you open a folder.
+
+You can also open a repository directly with `npm start -- --repo /path/to/repo`. Add `--base main` to choose the comparison base, or `--working` to review uncommitted changes.
+

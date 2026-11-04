@@ -86,3 +86,28 @@ export async function defaultBase(repo: string) {
     'This repository has no commits yet. Make an initial commit first.',
   );
 }
+
+/** List local and locally cached remote branches, excluding remote HEAD aliases. */
+export async function listBranches(repo: string): Promise<string[]> {
+  const root = await rootOf(repo);
+  return (
+    (
+      await runGitText(root, [
+        'for-each-ref',
+        '--format=%(refname)%09%(refname:short)', // Full and short ref names, separated by a tab (%09).
+        'refs/heads', // Branches in this repository.
+        'refs/remotes', // Locally cached remote branches; no network request is made.
+      ])
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean) // Filter out blank branch entries.
+      .map((line) => line.split('\t'))
+      // Use full names to distinguish remote HEAD aliases from local branches.
+      .filter(
+        ([ref]) => !ref.startsWith('refs/remotes/') || !ref.endsWith('/HEAD'),
+      )
+      // Return short names such as main or origin/main.
+      .map(([, name]) => name)
+  );
+}

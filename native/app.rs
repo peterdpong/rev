@@ -11,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
 
-gpui_kit::actions!(rev, [Quit]);
+gpui_kit::actions!(rev, [Quit, OpenFolder]);
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {
@@ -35,6 +35,7 @@ pub struct Rev {
     backend: Option<Backend>,
     request: Option<ReviewRequest>,
     loading: bool,
+    selecting_folder: bool,
     notices: Vec<String>,
     focus: FocusHandle,
     pub(crate) diff: Entity<DiffState>,
@@ -46,62 +47,107 @@ pub struct Rev {
 
 impl Rev {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::from_patch(
-            include_str!("../fixtures/sample.diff"),
-            "Sample diff".into(),
-            window,
-            cx,
-        )
-    }
-
-    pub fn from_patch(
-        patch: &str,
-        title: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let (files, error) = match DiffFile::parse(patch) {
-            Ok(files) => (files, None),
-            Err(error) => (vec![], Some(error.to_string())),
-        };
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         Self {
             backend: None,
             request: None,
             loading: false,
+            selecting_folder: false,
             notices: vec![],
             focus,
-            diff: cx.new(|cx| DiffState::new(files, cx)),
+            diff: cx.new(|cx| DiffState::new(vec![], cx)),
             split: false,
             wrap: true,
-            title,
-            error,
+            title: "No folder open".into(),
+            error: None,
         }
     }
 
-    pub fn from_repo(
-        backend: Backend,
-        request: ReviewRequest,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn from_repo(request: ReviewRequest, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut app = Self::new(window, cx);
-        app.backend = Some(backend);
-        app.title = request.repo.clone().into();
-        app.request = Some(request);
-        app.diff.update(cx, |diff, cx| diff.set_files([], cx));
-        app.load_review(window, cx);
+        app.open_repo(request, window, cx);
         app
     }
 
-    fn load_review(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.loading {
+    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.selecting_folder {
             return;
         }
 
-        let (Some(backend), Some(request)) = (self.backend.clone(), self.request.clone()) else {
+        self.selecting_folder = true;
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open repository".into()),
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            let selection = selection.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.selecting_folder = false;
+                match selection {
+                    Ok(Ok(Some(paths))) => {
+                        if let Some(path) = paths.first() {
+                            this.open_repo(
+                                ReviewRequest {
+                                    repo: path.to_string_lossy().into_owned(),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(error)) => this.error = Some(error.to_string()),
+                    Err(error) => this.error = Some(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn open_repo(&mut self, request: ReviewRequest, window: &Window, cx: &mut Context<Self>) {
+        self.title = request.repo.clone().into();
+        self.request = Some(request);
+        self.notices.clear();
+        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
+        self.load_review(window, cx);
+    }
+
+    fn load_review(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.loading || self.selecting_folder {
             return;
+        }
+
+        let Some(request) = self.request.clone() else {
+            return;
+        };
+
+        // Start the local service only after a repository folder is opened.
+        let backend = match self.backend.clone() {
+            Some(backend) => backend,
+            None => match Backend::start() {
+                Ok(backend) => {
+                    let service = backend.clone();
+                    cx.on_app_quit(move |_, _| {
+                        service.close();
+                        async {}
+                    })
+                    .detach();
+                    self.backend = Some(backend.clone());
+                    backend
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    cx.notify();
+                    return;
+                }
+            },
         };
 
         self.loading = true;
@@ -152,7 +198,7 @@ impl Rev {
                     }
                     Err(error) => this.error = Some(error),
                 }
-                
+
                 cx.notify();
             });
         })
@@ -174,6 +220,7 @@ impl Render for Rev {
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
             .key_context("Rev")
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
             .child(
                 TitleBar::new()
                     .h(px(44.))
@@ -197,6 +244,16 @@ impl Render for Rev {
                             .truncate()
                             .child(self.title.clone()),
                     )
+                    .child(
+                        Button::new("open-folder")
+                            .small()
+                            .ghost()
+                            .label("Open Folder…")
+                            .disabled(self.loading || self.selecting_folder)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_folder(window, cx)),
+                            ),
+                    )
                     .when(self.request.is_some(), |bar| {
                         bar.child(
                             Button::new("refresh")
@@ -207,7 +264,7 @@ impl Render for Rev {
                                 } else {
                                     "Refresh"
                                 })
-                                .disabled(self.loading)
+                                .disabled(self.loading || self.selecting_folder)
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.load_review(window, cx)),
                                 ),
@@ -218,6 +275,7 @@ impl Render for Rev {
                             .small()
                             .ghost()
                             .label(if self.split { "Split" } else { "Unified" })
+                            .disabled(self.request.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.split = !this.split;
                                 this.diff.update(cx, |diff, cx| {
@@ -239,6 +297,7 @@ impl Render for Rev {
                             .ghost()
                             .label("Wrap")
                             .selected(self.wrap)
+                            .disabled(self.request.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.wrap = !this.wrap;
                                 cx.notify();
@@ -253,13 +312,35 @@ impl Render for Rev {
             .when_some(self.error.clone(), |d, error| {
                 d.child(div().p_3().text_color(rgb(0xee9292)).child(error))
             })
-            .child(
-                div().id("review-surface").flex_1().min_h_0().child(
-                    Diff::new(&self.diff)
-                        .size_full()
-                        .soft_wrap(self.wrap)
-                        .text_size(px(12.)),
-                ),
-            )
+            .when(self.request.is_none(), |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .child("Open a local Git repository to review its changes.")
+                        .child(
+                            Button::new("open-first-folder")
+                                .label("Open Folder…")
+                                .disabled(self.selecting_folder)
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.open_folder(window, cx)),
+                                ),
+                        ),
+                )
+            })
+            .when(self.request.is_some(), |d| {
+                d.child(
+                    div().id("review-surface").flex_1().min_h_0().child(
+                        Diff::new(&self.diff)
+                            .size_full()
+                            .soft_wrap(self.wrap)
+                            .text_size(px(12.)),
+                    ),
+                )
+            })
     }
 }

@@ -3,11 +3,13 @@ import { hash, mapLimit } from './util';
 import type {
   ChangeStatus,
   ChangedFile,
+  CommitRange,
   Review,
   ReviewMode,
   ReviewRequest,
 } from './types';
 import { runGitText } from './command';
+import { readPullRequest } from './pull-requests';
 import {
   assertCommitId,
   CommitIdLabel,
@@ -148,24 +150,146 @@ async function refNames(repo: string) {
     '--format=%(if)%(symref)%(then)%(else)%(refname:short)%(end)',
     'refs/heads',
     'refs/remotes',
-    'refs/revue',
+    'refs/rev', // Include PR refs imported by Rev.
   ]);
   return out.split('\n').filter(Boolean);
 }
 
-/**
- * Resolve the requested comparison and assemble its Review metadata.
- */
-export async function inspect(input: ReviewRequest): Promise<Review> {
-  const repo = await rootOf(input.repo);
-  const mode = input.mode || 'branch';
+function validateReviewRequest(input: ReviewRequest, mode: ReviewMode) {
   if (!REVIEW_MODES.includes(mode)) {
     throw new Error('Unknown comparison mode.');
   }
 
+  if (input.commitRange) {
+    // A range selects committed history, not working-tree changes.
+    if (mode === 'working') {
+      throw new Error('Commit ranges are only supported in committed mode.');
+    }
+
+    const { start, end } = input.commitRange;
+    if (typeof start !== 'string' || typeof end !== 'string') {
+      throw new Error('Choose a start and end commit for the range.');
+    }
+  }
+}
+
+type ResolvedComparison = Pick<
+  Review,
+  'mergeBase' | 'headSha' | 'commitRange' | 'commitCount' | 'scopeKey'
+>;
+
+/** Full-branch and working reviews share the same merge base and commit count. */
+async function resolveBranchComparison(
+  repo: string,
+  baseSha: string,
+  headSha: string,
+  key: string,
+): Promise<ResolvedComparison> {
+  const mergeBase = (
+    await runGitText(repo, ['merge-base', baseSha, headSha])
+  ).trim();
+
+  // Count commits reachable from head but not the merge base.
+  const commitCount = Number(
+    (
+      await runGitText(repo, [
+        'rev-list',
+        '--count',
+        `${mergeBase}..${headSha}`,
+        '--',
+      ])
+    ).trim(),
+  );
+
+  return {
+    mergeBase,
+    headSha,
+    commitRange: undefined,
+    commitCount,
+    scopeKey: key,
+  };
+}
+
+/** Resolve an inclusive range on the branch's first-parent history. */
+async function resolveRangeComparison(
+  repo: string,
+  branchHeadSha: string,
+  range: CommitRange,
+  key: string,
+): Promise<ResolvedComparison> {
+  const [start, end, history] = await Promise.all([
+    resolveRef(repo, range.start),
+    resolveRef(repo, range.end),
+    runGitText(repo, ['rev-list', '--first-parent', branchHeadSha, '--']),
+  ]);
+
+  const shas = history.trim().split('\n');
+  const first = shas.indexOf(start);
+  const last = shas.indexOf(end);
+  if (first < 0 || last < 0) {
+    throw new Error(
+      'Selected commits are not in this branch’s first-parent history. Choose Full branch diff or select commits from the current branch.',
+    );
+  }
+
+  // History is newest first, so the older start must have the larger index.
+  if (first < last) {
+    throw new Error(
+      'The start commit must be older than or equal to the end commit.',
+    );
+  }
+
+  // Read the stored header: rev-list hides parents at shallow boundaries,
+  // which must not be mistaken for a root commit and diffed from empty.
+  const header = (await runGitText(repo, ['cat-file', 'commit', start])).split(
+    '\n\n',
+    1,
+  )[0];
+
+  const parent = header
+    .split('\n')
+    .find((line) => line.startsWith('parent '))
+    ?.slice(7);
+
+  let mergeBase: string;
+  if (parent) {
+    try {
+      // Start before the first selected commit so its changes are included.
+      mergeBase = await resolveRef(repo, parent);
+    } catch {
+      throw new Error(
+        'The parent commit is unavailable locally. Fetch more history before reviewing this commit.',
+      );
+    }
+  } else {
+    // A root commit has no parent so compare it against Git's empty tree.
+    mergeBase = (
+      await runGitText(repo, ['hash-object', '-t', 'tree', '--stdin'])
+    ).trim();
+  }
+
+  return {
+    mergeBase,
+    headSha: end, // Exclude commits newer than the selected endpoint.
+    commitRange: { start, end },
+    commitCount: first - last + 1, // Include both endpoints.
+    scopeKey: hash(`${key}\0${start}\0${end}`).slice(0, 24),
+  };
+}
+
+/**
+ * Validate the request, resolve its comparison, then load review metadata and files.
+ */
+export async function inspect(input: ReviewRequest): Promise<Review> {
+  const repo = await rootOf(input.repo);
+  const mode = input.mode || 'branch';
+  validateReviewRequest(input, mode);
+
   const requestedBase = input.base;
   const head = input.head || 'HEAD';
-  const [{ base, baseSha }, headSha, current, branches, status] =
+
+  // Keep the branch tip separate from the selected range's end commit.
+  const [{ base, baseSha }, branchHeadSha, current, branches, status] =
     await Promise.all([
       requestedBase
         ? resolveRef(repo, requestedBase).then((baseSha) => ({
@@ -182,16 +306,24 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
   if (
     mode === 'working' &&
     head !== 'HEAD' &&
-    (await resolveRef(repo, head)) !== headSha
+    (await resolveRef(repo, head)) !== branchHeadSha
   ) {
     throw new Error(
       `The working tree belongs to ${current || 'a detached HEAD'}. Open that branch to review local changes.`,
     );
   }
 
-  const mergeBase = (
-    await runGitText(repo, ['merge-base', baseSha, headSha])
-  ).trim();
+  // Keep the review identity stable when the selected commit range changes.
+  const key = reviewKey(
+    repo,
+    mode,
+    base,
+    head === 'HEAD' ? current || branchHeadSha : head,
+  );
+
+  const comparison = input.commitRange
+    ? await resolveRangeComparison(repo, branchHeadSha, input.commitRange, key)
+    : await resolveBranchComparison(repo, baseSha, branchHeadSha, key);
 
   const review: Review = {
     repo,
@@ -201,18 +333,39 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
     mode,
     branch: current || 'detached HEAD',
     baseSha,
-    headSha,
-    mergeBase,
+    branchHeadSha,
+    ...comparison,
     branches,
     files: [],
     dirty: Boolean(status),
-    key: reviewKey(
-      repo,
-      mode,
-      base,
-      head === 'HEAD' ? current || headSha : head,
-    ),
+    key,
   };
+
+  // Load the compared commit's details and any locally cached PR metadata.
+  const [commit, pullRequest] = await Promise.all([
+    runGitText(repo, [
+      'log',
+      '-1',
+      '--format=%H%x00%P%x00%s%x00%b%x00%an%x00%aI', // NUL-separated ID, parents, subject, body, author, date.
+      review.headSha,
+      '--',
+    ]),
+    readPullRequest(repo, head),
+  ]);
+
+  const [sha, parents, subject, body, author, date] = commit
+    .trimEnd()
+    .split('\0');
+
+  review.headCommit = {
+    sha,
+    parents: parents.split(' ').filter(Boolean),
+    subject,
+    body: body.trim(),
+    author,
+    date,
+  };
+  review.pullRequest = pullRequest;
 
   const [summary, untracked] = await Promise.all([
     runGitText(repo, diffArgs(review, ['--raw', '--numstat', '-z'])),

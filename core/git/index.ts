@@ -1,5 +1,4 @@
 export { hash } from './util';
-export { createSampleRepo } from './sample';
 export type {
   ReviewMode,
   ReviewRequest,
@@ -8,6 +7,11 @@ export type {
   Review,
   FilePatch,
   ReviewPatch,
+  Commit,
+  CommitRange,
+  CommitPage,
+  CommitDetails,
+  PullRequest,
 } from './types';
 export {
   runCommandText,
@@ -24,6 +28,7 @@ export {
   CommitIdLabel,
   defaultBase,
   isCommitId,
+  listBranches,
   resolveRef,
   rootOf,
 } from './refs';
@@ -37,3 +42,5 @@ export {
 } from './review';
 export { filePatch, reviewPatches } from './patch';
 export { ignoredPaths } from './ignored';
+export { listCommits } from './commits';
+export { fetchRepo, importPR } from './pull-requests';
