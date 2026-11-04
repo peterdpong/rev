@@ -1,3 +1,4 @@
+use crate::diff::{Diff, DiffFile, DiffMode, DiffState};
 use crate::{
     backend::Backend,
     model::{ReviewRequest, ReviewResponse},
@@ -5,7 +6,6 @@ use crate::{
 use gpui_kit::component::{
     Disableable, Selectable, Sizable, TitleBar,
     button::{Button, ButtonVariants},
-    diff::{Diff, DiffFile, DiffMode, DiffState},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;

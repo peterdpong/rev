@@ -1,3 +1,6 @@
+extern crate gpui_kit as gpui;
+mod diff;
+rust_i18n::i18n!("native/diff/locales", fallback = "en");
 mod app;
 mod backend;
 mod model;
@@ -43,6 +46,7 @@ fn main() -> anyhow::Result<()> {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            diff::init(cx);
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
             cx.bind_keys([
                 KeyBinding::new("cmd-q", app::Quit, None),
