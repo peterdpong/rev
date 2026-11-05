@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { runGitText as git, inspect, filePatch } from '../core/git';
-import { readState, mutateState } from '../core/store';
+import { readReviewState, updateReviewState } from '../core/review-state';
 import type { ReviewRequest } from '../core/types';
 
 async function fixture(t: any) {
@@ -31,16 +31,16 @@ test('viewed status expires when the reviewed code changes', async (t) => {
   const review = await inspect(r);
   const patch = await filePatch(review, 'app.ts');
 
-  await mutateState(review, (state) => {
+  await updateReviewState(review, (state) => {
     state.viewed['app.ts'] = patch.digest;
   });
 
-  assert.equal(Object.keys((await readState(review)).viewed).length, 1);
+  assert.equal(Object.keys((await readReviewState(review)).viewed).length, 1);
 
   await writeFile(path.join(r.repo, 'app.ts'), 'changed since review\n');
 
   assert.equal(
-    Object.keys((await readState(await inspect(r))).viewed).length,
+    Object.keys((await readReviewState(await inspect(r))).viewed).length,
     0,
   );
 });
@@ -49,10 +49,55 @@ test('updates return state without stale markers', async (t) => {
   const review = await inspect(await fixture(t));
   const patch = await filePatch(review, 'app.ts');
 
-  const state = await mutateState(review, (state) => {
+  const state = await updateReviewState(review, (state) => {
     state.viewed['app.ts'] = patch.digest;
     state.viewed['gone.ts'] = 'stale-digest';
   });
 
   assert.deepEqual(state.viewed, { 'app.ts': patch.digest });
+});
+
+test('viewed status expires when a too-large file changes', async (t) => {
+  const request = await fixture(t);
+  const large = (fill: string) =>
+    writeFile(
+      path.join(request.repo, 'large.txt'),
+      `${fill}\n`.repeat(1_100_000),
+    );
+
+  await large('a');
+  await git(request.repo, ['add', '.']);
+  await git(request.repo, ['commit', '-m', 'large']);
+  const review = await inspect(request);
+  const patch = await filePatch(review, 'large.txt');
+  assert.equal(patch.tooLarge, true);
+  assert.notEqual(patch.digest, '');
+
+  await updateReviewState(review, (state) => {
+    state.viewed['large.txt'] = patch.digest;
+  });
+  assert.equal(
+    (await readReviewState(review)).viewed['large.txt'],
+    patch.digest,
+  );
+
+  await large('b');
+  await git(request.repo, ['commit', '-am', 'large again']);
+  assert.deepEqual(
+    Object.keys((await readReviewState(await inspect(request))).viewed),
+    [],
+  );
+});
+
+test('a corrupt state file is moved aside instead of failing every update', async (t) => {
+  const review = await inspect(await fixture(t));
+  const gitDir = (
+    await git(review.repo, ['rev-parse', '--absolute-git-dir'])
+  ).trim();
+  const dir = path.join(gitDir, 'rev');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, `${review.scopeKey}.json`), '{ not json');
+
+  assert.deepEqual((await readReviewState(review)).viewed, {});
+  assert.ok((await readdir(dir)).some((name) => name.includes('.corrupt-')));
 });

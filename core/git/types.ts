@@ -40,7 +40,7 @@ export type Review = Required<Omit<ReviewRequest, 'commitRange'>> & {
   pullRequest?: PullRequest;
 };
 
-/** When `tooLarge` is true, `patch` and `digest` are empty. */
+/** When `tooLarge` is true, `patch` is empty and `digest` covers the content IDs. */
 export type FilePatch = { patch: string; digest: string; tooLarge: boolean };
 
 export type ReviewPatch = FilePatch & { path: string; error?: string };

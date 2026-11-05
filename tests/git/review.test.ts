@@ -255,10 +255,10 @@ for (const tracked of [true, false]) {
     content += 'x';
     // The source still fits; its diff headers take the output over the limit.
     assert.ok(Buffer.byteLength(content) < MAX_PATCH_BYTES);
-    assert.deepEqual(await patchForContent(), {
-      patch: '',
-      digest: '',
-      tooLarge: true,
-    });
+    const over = await patchForContent();
+    assert.equal(over.tooLarge, true);
+    assert.equal(over.patch, '');
+    // The digest still identifies the content so viewed markers can expire.
+    assert.match(over.digest, /^[0-9a-f]{64}$/);
   });
 }
