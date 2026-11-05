@@ -54,7 +54,7 @@ async function dropStaleMarkers(
   return state;
 }
 
-export async function readState(
+export async function readReviewState(
   review: Review,
   validateViewed = true,
 ): Promise<ReviewState> {
@@ -62,7 +62,7 @@ export async function readState(
   return validateViewed ? dropStaleMarkers(review, state) : state;
 }
 
-export async function mutateState(
+export async function updateReviewState(
   review: Review,
   change: (state: ReviewState) => void,
   validateViewed = true,

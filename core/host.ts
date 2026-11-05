@@ -9,7 +9,7 @@ import {
   listBranches,
   checkouts,
 } from './git';
-import { readState, mutateState } from './store';
+import { readReviewState, updateReviewState } from './review-state';
 import type {
   Checkout,
   CommitPage,
@@ -128,7 +128,7 @@ export class HostService {
           ...(p.patches !== false
             ? { patches: await reviewPatches(review) }
             : {}),
-          state: await readState(review, p.preview !== true),
+          state: await readReviewState(review, p.preview !== true),
         };
         break;
       }
@@ -166,7 +166,7 @@ export class HostService {
           );
         }
 
-        result = await mutateState(
+        result = await updateReviewState(
           review,
           (s) => {
             if (p.viewed) {
