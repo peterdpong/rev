@@ -56,3 +56,32 @@ test('updates return state without stale markers', async (t) => {
 
   assert.deepEqual(state.viewed, { 'app.ts': patch.digest });
 });
+
+test('viewed status expires when a too-large file changes', async (t) => {
+  const request = await fixture(t);
+  const large = (fill: string) =>
+    writeFile(
+      path.join(request.repo, 'large.txt'),
+      `${fill}\n`.repeat(1_100_000),
+    );
+
+  await large('a');
+  await git(request.repo, ['add', '.']);
+  await git(request.repo, ['commit', '-m', 'large']);
+  const review = await inspect(request);
+  const patch = await filePatch(review, 'large.txt');
+  assert.equal(patch.tooLarge, true);
+  assert.notEqual(patch.digest, '');
+
+  await mutateState(review, (state) => {
+    state.viewed['large.txt'] = patch.digest;
+  });
+  assert.equal((await readState(review)).viewed['large.txt'], patch.digest);
+
+  await large('b');
+  await git(request.repo, ['commit', '-am', 'large again']);
+  assert.deepEqual(
+    Object.keys((await readState(await inspect(request))).viewed),
+    [],
+  );
+});

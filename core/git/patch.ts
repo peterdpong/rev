@@ -7,7 +7,39 @@ import { assertComparison, diffArgs } from './review';
 import { readUntracked, untrackedPatch } from './untracked';
 import { MAX_PATCH_BYTES } from './constants';
 
-const TOO_LARGE: FilePatch = { patch: '', digest: '', tooLarge: true };
+/**
+ * A too-large file's patch isn't read, so its digest comes from the content
+ * IDs on each side. Viewed markers still expire when either side changes.
+ */
+async function tooLarge(review: Review, file: ChangedFile): Promise<FilePatch> {
+  const id = (args: string[]) =>
+    runGitText(review.repo, args).then(
+      (out) => out.trim(),
+      () => '', // The file doesn't exist on this side.
+    );
+  const blob = (commit: string, name: string) =>
+    id([
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      '--end-of-options',
+      `${commit}:${name}`,
+    ]);
+
+  const [before, after] = await Promise.all([
+    file.status === '?'
+      ? ''
+      : blob(review.mergeBase, file.oldPath ?? file.path),
+    review.mode === 'branch'
+      ? blob(review.headSha, file.path)
+      : id(['hash-object', '--no-filters', '--', file.path]),
+  ]);
+  return {
+    patch: '',
+    digest: hash(`large\0${before}\0${after}`),
+    tooLarge: true,
+  };
+}
 
 /**
  * Check that Review has a valid mode, commit IDs, and a repo that
@@ -38,13 +70,13 @@ async function patchFor(review: Review, file: ChangedFile): Promise<FilePatch> {
       const untracked = await readUntracked(review.repo, file.path);
 
       if (untracked.kind === 'too-large') {
-        return TOO_LARGE;
+        return tooLarge(review, file);
       }
 
       const patch = untrackedPatch(file.path, untracked);
       // Diff headers and added-line prefixes count toward the same byte limit.
       if (Buffer.byteLength(patch, 'utf8') > MAX_PATCH_BYTES) {
-        return TOO_LARGE;
+        return tooLarge(review, file);
       }
       return {
         patch,
@@ -68,7 +100,7 @@ async function patchFor(review: Review, file: ChangedFile): Promise<FilePatch> {
     return { patch, digest: hash(patch), tooLarge: false };
   } catch (error) {
     if (error instanceof CommandError && error.reason === 'too-large') {
-      return TOO_LARGE;
+      return tooLarge(review, file);
     }
     throw error;
   }

@@ -39,8 +39,9 @@ async function dropStaleMarkers(
   for (let i = 0; i < names.length; i += 8) {
     await Promise.all(
       names.slice(i, i + 8).map(async (name) => {
+        const viewed = state.viewed[name];
         try {
-          if ((await filePatch(review, name)).digest !== state.viewed[name]) {
+          if (!viewed || (await filePatch(review, name)).digest !== viewed) {
             delete state.viewed[name];
           }
         } catch {
