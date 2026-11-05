@@ -1,35 +1,32 @@
-import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import type { Review, ReviewState } from './types';
+import type { Review } from './git';
 import { filePatch, runGitText as git } from './git';
+import { readJson, serialize, writeJson } from './json-file';
 
-// Serialize updates to each state file within this process.
-const pendingWrites = new Map<string, Promise<unknown>>();
+/**
+ * Per-review state kept in the repository's Git directory, keyed by review
+ * scope. Viewed markers map a path to the digest of the patch that was viewed.
+ */
+export type ReviewState = { viewed: Record<string, string> };
 
 async function statePath(review: Review) {
   const gitDir = (
     await git(review.repo, ['rev-parse', '--absolute-git-dir'])
   ).trim();
-
   const dir = path.join(gitDir, 'rev');
   await mkdir(dir, { recursive: true });
-
   return path.join(dir, `${review.scopeKey}.json`);
 }
 
 /** Read the saved state as-is, without checking viewed markers. */
 async function readStoredState(file: string): Promise<ReviewState> {
-  try {
-    return JSON.parse(await readFile(file, 'utf8'));
-  } catch (e: any) {
-    if (e.code === 'ENOENT') {
-      return { viewed: {} };
-    }
-    throw e;
-  }
+  const state = await readJson<ReviewState>(file, () => ({ viewed: {} }));
+  state.viewed ??= {};
+  return state;
 }
 
+/** Drop markers whose file changed or left the review. */
 async function dropStaleMarkers(
   review: Review,
   state: ReviewState,
@@ -61,41 +58,22 @@ export async function readReviewState(review: Review): Promise<ReviewState> {
   );
 }
 
+/** Apply `change` to the saved state. Updates to the same review apply in call order. */
 export async function updateReviewState(
   review: Review,
   change: (state: ReviewState) => void,
-) {
-  // Take the queue position synchronously so updates apply in call order.
+): Promise<ReviewState> {
   // `review.repo` is the repo root, so it identifies the state file with `scopeKey`.
-  const key = `${review.repo}\0${review.scopeKey}`;
-
-  const run = async () => {
-    const file = await statePath(review);
-    const temp = file + '.' + randomUUID();
-    try {
+  const state = await serialize(
+    `${review.repo}\0${review.scopeKey}`,
+    async () => {
+      const file = await statePath(review);
       const state = await readStoredState(file);
       change(state);
-      await writeFile(temp, JSON.stringify(state, null, 2), { mode: 0o600 });
-      await rename(temp, file);
+      await writeJson(file, state);
       return state;
-    } finally {
-      await unlink(temp).catch(() => {});
-    }
-  };
-
-  // Run after the previous update whether it succeeded or failed, so one
-  // failure doesn't block later updates.
-  const write = (pendingWrites.get(key) ?? Promise.resolve()).then(run, run);
-  pendingWrites.set(key, write);
-
-  let state: ReviewState;
-  try {
-    state = await write;
-  } finally {
-    if (pendingWrites.get(key) === write) {
-      pendingWrites.delete(key);
-    }
-  }
+    },
+  );
 
   // Check markers after the write so the git diffs don't hold up the queue.
   return dropStaleMarkers(review, state);
