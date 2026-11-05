@@ -11,7 +11,7 @@ async function statePath(review: Review) {
   const gitDir = (
     await git(review.repo, ['rev-parse', '--absolute-git-dir'])
   ).trim();
-  
+
   const dir = path.join(gitDir, 'rev');
   await mkdir(dir, { recursive: true });
 
@@ -54,14 +54,14 @@ async function dropStaleMarkers(
   return state;
 }
 
-export async function readState(review: Review): Promise<ReviewState> {
+export async function readReviewState(review: Review): Promise<ReviewState> {
   return dropStaleMarkers(
     review,
     await readStoredState(await statePath(review)),
   );
 }
 
-export async function mutateState(
+export async function updateReviewState(
   review: Review,
   change: (state: ReviewState) => void,
 ) {
