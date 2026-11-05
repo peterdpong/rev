@@ -10,13 +10,28 @@ import { readJson, serialize, writeJson } from './json-file';
  */
 export type ReviewState = { viewed: Record<string, string> };
 
+// Git directory lookups, keyed by repository root.
+const stateDirs = new Map<string, Promise<string>>();
+
+function stateDir(repo: string) {
+  let dir = stateDirs.get(repo);
+  if (!dir) {
+    dir = (async () => {
+      const gitDir = (
+        await git(repo, ['rev-parse', '--absolute-git-dir'])
+      ).trim();
+      const dir = path.join(gitDir, 'rev');
+      await mkdir(dir, { recursive: true });
+      return dir;
+    })();
+    dir.catch(() => stateDirs.delete(repo));
+    stateDirs.set(repo, dir);
+  }
+  return dir;
+}
+
 async function statePath(review: Review) {
-  const gitDir = (
-    await git(review.repo, ['rev-parse', '--absolute-git-dir'])
-  ).trim();
-  const dir = path.join(gitDir, 'rev');
-  await mkdir(dir, { recursive: true });
-  return path.join(dir, `${review.scopeKey}.json`);
+  return path.join(await stateDir(review.repo), `${review.scopeKey}.json`);
 }
 
 /** Read the saved state as-is, without checking viewed markers. */
@@ -26,13 +41,12 @@ async function readStoredState(file: string): Promise<ReviewState> {
   return state;
 }
 
-/** Drop markers whose file changed or left the review. */
+/** Drop markers for `names` whose file changed or left the review. */
 async function dropStaleMarkers(
   review: Review,
   state: ReviewState,
+  names = Object.keys(state.viewed),
 ): Promise<ReviewState> {
-  const names = Object.keys(state.viewed);
-
   for (let i = 0; i < names.length; i += 8) {
     await Promise.all(
       names.slice(i, i + 8).map(async (name) => {
@@ -58,17 +72,23 @@ export async function readReviewState(review: Review): Promise<ReviewState> {
   );
 }
 
-/** Apply `change` to the saved state. Updates to the same review apply in call order. */
+/**
+ * Apply `change` to the saved state. Updates to the same review apply in call
+ * order. The result checks only the markers this update set or changed; the
+ * rest were checked by the last read.
+ */
 export async function updateReviewState(
   review: Review,
   change: (state: ReviewState) => void,
 ): Promise<ReviewState> {
   // `review.repo` is the repo root, so it identifies the state file with `scopeKey`.
+  let before: ReviewState['viewed'] = {};
   const state = await serialize(
     `${review.repo}\0${review.scopeKey}`,
     async () => {
       const file = await statePath(review);
       const state = await readStoredState(file);
+      before = { ...state.viewed };
       change(state);
       await writeJson(file, state);
       return state;
@@ -76,5 +96,8 @@ export async function updateReviewState(
   );
 
   // Check markers after the write so the git diffs don't hold up the queue.
-  return dropStaleMarkers(review, state);
+  const changed = Object.keys(state.viewed).filter(
+    (name) => state.viewed[name] !== before[name],
+  );
+  return dropStaleMarkers(review, state, changed);
 }
