@@ -1,6 +1,8 @@
 mod app;
 mod backend;
+mod client_state;
 mod model;
+mod navigation;
 use gpui_kit::*;
 use model::ReviewRequest;
 
@@ -60,7 +62,7 @@ fn main() -> anyhow::Result<()> {
             gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
                 cx.new(|cx| match initial {
                     Some(request) => app::Rev::from_repo(request, window, cx),
-                    None => app::Rev::new(window, cx),
+                    None => app::Rev::reopen_last(window, cx),
                 })
             })
             .expect("open Rev window");
