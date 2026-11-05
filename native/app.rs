@@ -1,5 +1,6 @@
 use crate::{
     backend::Backend,
+    client_state::{self, ClientState},
     model::{ReviewRequest, ReviewResponse},
 };
 use gpui_kit::component::{
@@ -10,6 +11,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
+use std::path::PathBuf;
 
 gpui_kit::actions!(rev, [Quit, OpenFolder]);
 
@@ -43,12 +45,22 @@ pub struct Rev {
     wrap: bool,
     title: SharedString,
     pub(crate) error: Option<String>,
+    client: ClientState,
+    data_dir: PathBuf,
 }
 
 impl Rev {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
+        let data_dir = client_state::data_dir();
+        let (client, error) = match ClientState::load(&data_dir) {
+            Ok(client) => (client, None),
+            Err(error) => (
+                ClientState::default(),
+                Some(format!("Couldn't read saved tabs: {error}")),
+            ),
+        };
         Self {
             backend: None,
             request: None,
@@ -60,8 +72,18 @@ impl Rev {
             split: false,
             wrap: true,
             title: "No folder open".into(),
-            error: None,
+            error,
+            client,
+            data_dir,
         }
+    }
+
+    pub fn reopen_last_active_review(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut app = Self::new(window, cx);
+        if let Some(tab) = app.client.workspace.active_tab() {
+            app.open_repo(tab.request.clone(), window, cx);
+        }
+        app
     }
 
     pub fn from_repo(request: ReviewRequest, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -152,6 +174,7 @@ impl Rev {
 
         self.loading = true;
         self.error = None;
+        let opened = request.clone();
         let task = cx.background_executor().spawn(async move {
             backend.call("review", json!(request)).and_then(|value| {
                 serde_json::from_value::<ReviewResponse>(value).map_err(|error| error.to_string())
@@ -165,6 +188,14 @@ impl Rev {
 
                 match response {
                     Ok(response) => {
+                        // Save review we are loading into the client state.
+                        this.client
+                            .workspace
+                            .remember_review(&response.review, &opened);
+                        if let Err(error) = this.client.save(&this.data_dir) {
+                            this.error = Some(format!("Couldn't save open tabs: {error}"));
+                        }
+
                         this.title = format!(
                             "{} · {} → {}",
                             response.review.name, response.review.head, response.review.base
