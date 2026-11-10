@@ -3,7 +3,7 @@ import path from 'node:path';
 import { hash } from './util';
 import { runGitText, runCommandText } from './command';
 import { rootOf } from './refs';
-import type { ReviewRequest, PullRequest } from './types';
+import type { PullRequest, Review, ReviewRequest } from './types';
 
 export async function fetchRepo(repo: string) {
   const root = await rootOf(repo);
@@ -109,5 +109,27 @@ export async function importPR(
     base: `${namespace}/base`,
     head: `${namespace}/head`,
     mode: 'branch',
+  };
+}
+
+/**
+ * Re-import the PR a review was opened from so it picks up new pushes,
+ * keeping the review's mode and commit range.
+ */
+export async function refreshPR(
+  review: Review,
+): Promise<ReviewRequest | undefined> {
+  const ref = /^refs\/rev\/([^/]+\/[^/]+)\/(\d+)\/head$/.exec(review.head);
+  const url =
+    review.pullRequest?.url ||
+    (ref ? `https://github.com/${ref[1]}/pull/${ref[2]}` : undefined);
+  if (!url) {
+    return undefined;
+  }
+
+  return {
+    ...(await importPR(review.repo, url)),
+    mode: review.mode,
+    commitRange: review.commitRange,
   };
 }

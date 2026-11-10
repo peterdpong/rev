@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { runGitText } from './command';
+import type { Checkout } from './types';
 
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -109,5 +110,25 @@ export async function listBranches(repo: string): Promise<string[]> {
       )
       // Return short names such as main or origin/main.
       .map(([, name]) => name)
+  );
+}
+
+/** The checked-out branch and HEAD of each repo, or null when unavailable. */
+export async function checkouts(repos: string[]): Promise<(Checkout | null)[]> {
+  if (!Array.isArray(repos) || repos.some((repo) => typeof repo !== 'string')) {
+    throw new Error('Pass a list of repository folders.');
+  }
+  return Promise.all(
+    repos.map(async (repo): Promise<Checkout | null> => {
+      try {
+        const [branch, sha] = await Promise.all([
+          runGitText(repo, ['branch', '--show-current']),
+          resolveRef(repo, 'HEAD'),
+        ]);
+        return { repo, branch: branch.trim() || 'detached HEAD', sha };
+      } catch {
+        return null;
+      }
+    }),
   );
 }
