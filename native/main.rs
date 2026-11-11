@@ -1,5 +1,10 @@
 extern crate gpui_kit as gpui;
+#[cfg(feature = "legacy-diff")]
 mod diff;
+#[cfg(not(feature = "legacy-diff"))]
+#[path = "review_diff/mod.rs"]
+mod diff;
+#[cfg(feature = "legacy-diff")]
 rust_i18n::i18n!("native/diff/locales", fallback = "en");
 mod app;
 mod backend;

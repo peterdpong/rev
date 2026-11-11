@@ -171,6 +171,7 @@ impl Rev {
         let subscriptions = vec![
             cx.observe(&filter, |_, _, cx| cx.notify()),
             cx.observe(&fields[2], |_, _, cx| cx.notify()),
+            #[cfg(feature = "legacy-diff")]
             cx.observe_in(&diff, window, |this, diff, window, cx| {
                 let state = diff.read(cx);
                 if state.selected_lines().is_some() {
@@ -198,13 +199,18 @@ impl Rev {
             }),
             cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, window, cx| {
                 match event {
+                    #[cfg(not(feature = "legacy-diff"))]
+                    DiffEvent::CopyUnavailable(message) => this.error = Some(message.clone()),
                     DiffEvent::VisibleFileChanged(path) => {
                         this.set_active_file(path.to_string(), cx)
                     }
                     DiffEvent::FileExpanded(path) => {
                         this.load_file_patch(path.to_string(), window, cx);
                     }
+                    #[cfg(feature = "legacy-diff")]
                     DiffEvent::SelectionStarted(_) => this.selecting = true,
+                    #[cfg(not(feature = "legacy-diff"))]
+                    DiffEvent::SelectionStarted => this.selecting = true,
                     DiffEvent::SelectionEnded(range) => {
                         this.selecting = false;
                         this.selection_menu = window.mouse_position() + point(px(12.), px(18.));

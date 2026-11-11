@@ -5,23 +5,46 @@ edition = "2024"
 publish = false
 default-run = "rev"
 
+[workspace]
+members = ["crates/rev-diff"]
+resolver = "3"
+
+[features]
+default = []
+# Keep the preceding experiment runnable for controlled comparisons.
+legacy-diff = [
+    "dep:similar",
+    "dep:smallvec",
+    "dep:unicode-segmentation",
+    "dep:unicode-width",
+    "dep:rust-i18n",
+    "dep:tree-sitter-highlight",
+    "gpui-kit/tree-sitter-rust",
+    "gpui-kit/tree-sitter-typescript",
+    "gpui-kit/tree-sitter-tsx",
+    "gpui-kit/tree-sitter-javascript",
+    "gpui-kit/tree-sitter-python",
+    "gpui-kit/tree-sitter-markdown",
+]
+
 [[bin]]
 name = "rev"
 path = "native/main.rs"
 
 [dependencies]
-gpui-kit = { version = "=0.8.0", features = ["tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-javascript", "tree-sitter-python", "tree-sitter-markdown"] }
+gpui-kit = "=0.8.0"
+rev-diff = { path = "crates/rev-diff" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 
-# Direct dependencies used by the app-owned diff component.
-similar = { version = "2.7", features = ["unicode"] }
-smallvec = "1"
-unicode-segmentation = "1"
-unicode-width = "0.2"
-rust-i18n = "4.2.0"
-tree-sitter-highlight = "0.26"
+# Used only by the legacy comparison renderer, never by the prototype.
+similar = { version = "2.7", features = ["unicode"], optional = true }
+smallvec = { version = "1", optional = true }
+unicode-segmentation = { version = "1", optional = true }
+unicode-width = { version = "0.2", optional = true }
+rust-i18n = { version = "4.2.0", optional = true }
+tree-sitter-highlight = { version = "0.26", optional = true }
 
 [dev-dependencies]
 gpui-kit = { version = "=0.8.0", features = ["test-support"] }

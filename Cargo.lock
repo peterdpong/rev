@@ -5800,6 +5800,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "rev-diff",
  "rust-i18n",
  "serde",
  "serde_json",
@@ -5809,6 +5810,10 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
 ]
+
+[[package]]
+name = "rev-diff"
+version = "0.1.0"
 
 [[package]]
 name = "rgb"
