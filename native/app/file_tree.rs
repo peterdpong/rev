@@ -16,10 +16,11 @@ pub(super) struct FileTreeCache {
 }
 
 impl FileTreeCache {
-    pub fn set_files(&mut self, files: &[File]) {
+    pub fn set_files(&mut self, files: &[File]) -> bool {
         if self.files == files {
-            return;
+            return false;
         }
+
         self.files = files.to_vec();
         self.file_indices = files
             .iter()
@@ -29,6 +30,7 @@ impl FileTreeCache {
         self.added = files.iter().map(|file| file.added).sum();
         self.removed = files.iter().map(|file| file.removed).sum();
         self.rebuild();
+        true
     }
 
     pub fn file(&self, path: &str) -> Option<&File> {
@@ -52,6 +54,7 @@ impl FileTreeCache {
             })
             .cloned()
             .collect();
+
         self.tree = FileTree::new(&files);
         self.invalidate_rows();
     }
@@ -65,6 +68,7 @@ impl FileTreeCache {
             self.rows = Rc::new(self.tree.entries(collapsed));
             self.dirty = false;
         }
+
         self.rows.clone()
     }
 }
@@ -94,6 +98,7 @@ impl FileTree {
             // Git paths always use '/', including when a filename contains '\\'.
             let mut parts = file.path.split('/').peekable();
             let mut folder = &mut root;
+
             while let Some(part) = parts.next() {
                 if parts.peek().is_some() {
                     folder = folder.folders.entry(part.to_owned()).or_default();
@@ -102,6 +107,7 @@ impl FileTree {
                 }
             }
         }
+
         root
     }
 
@@ -124,17 +130,21 @@ impl FileTree {
             } else {
                 format!("{parent}/{name}")
             };
+
             let expanded = !collapsed.is_some_and(|paths| paths.contains(&path));
+
             entries.push(TreeEntry {
                 path: path.clone(),
                 label: name.clone(),
                 depth,
                 kind: EntryKind::Folder { expanded },
             });
+
             if expanded {
                 folder.append_entries(&path, depth + 1, collapsed, entries);
             }
         }
+
         for (name, file) in &self.files {
             entries.push(TreeEntry {
                 path: file.path.clone(),

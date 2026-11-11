@@ -1,4 +1,3 @@
-use crate::diff::{DiffLineRange, DiffSide};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -85,9 +84,11 @@ impl Review {
     pub fn comparison_label(&self) -> String {
         let mut base = self.request.base.as_deref().unwrap_or("main");
         let mut head = self.request.head.as_deref().unwrap_or("HEAD");
+
         if head == "HEAD" && !self.branch.is_empty() {
             head = &self.branch;
         }
+
         if let Some(pr) = &self.pull_request
             && let Some(namespace) = head
                 .strip_prefix("refs/rev/")
@@ -112,53 +113,31 @@ impl Review {
         format!("{}  ←  {}", short(base), short(head))
     }
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct Selection {
-    pub path: String,
-    pub side: String,
-    pub start: usize,
-    pub end: usize,
-}
-impl Selection {
-    pub fn from_range(range: &DiffLineRange) -> Option<Self> {
-        // A cross-side unified selection has two coordinate systems. Never
-        // silently turn it into an incorrect source range for the selected range.
-        if range.side() != range.end_side() {
-            return None;
-        }
-        Some(Self {
-            path: range.path().to_string(),
-            side: match range.side() {
-                DiffSide::Original => "deletions",
-                DiffSide::Modified => "additions",
-            }
-            .into(),
-            start: range.start().min(range.end()),
-            end: range.start().max(range.end()),
-        })
-    }
-    pub fn diff_side(&self) -> DiffSide {
-        if self.side == "deletions" {
-            DiffSide::Original
-        } else {
-            DiffSide::Modified
-        }
-    }
-    pub fn label(&self) -> String {
-        format!("{}:{}–{} · {}", self.path, self.start, self.end, self.side)
-    }
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct ReviewState {
     pub viewed: HashMap<String, String>,
 }
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilePatch {
     pub patch: String,
     pub digest: String,
     pub too_large: bool,
+}
+
+impl FilePatch {
+    /// Shown instead of a diff when the patch can't be displayed inline.
+    pub fn notice(&self) -> Option<String> {
+        if self.too_large {
+            Some("This patch exceeds the 2 MB inline limit.".into())
+        } else if self.patch == "Binary file (untracked)" {
+            Some("Binary file".into())
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -264,14 +243,4 @@ mod tests {
         assert_eq!(review.comparison_label(), "main  ←  checked-out-feature");
     }
 
-    #[test]
-    fn range_keeps_source_side_and_normalizes_reverse_drag() {
-        let range = DiffLineRange::new("file.rs", DiffSide::Original, 12, 3);
-        let selection = Selection::from_range(&range).unwrap();
-        assert_eq!(
-            (selection.start, selection.end, selection.side.as_str()),
-            (3, 12, "deletions")
-        );
-        assert!(Selection::from_range(&range.with_end_side(DiffSide::Modified)).is_none());
-    }
 }
