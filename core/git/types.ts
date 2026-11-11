@@ -20,8 +20,6 @@ export type ChangedFile = {
   added: number;
   removed: number;
   binary: boolean;
-  /** Only untracked local files excluded by Git's ignore rules are marked. */
-  ignored?: boolean;
 };
 
 export type Review = Required<Omit<ReviewRequest, 'commitRange'>> & {
