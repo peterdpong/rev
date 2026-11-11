@@ -1,379 +1,873 @@
-use crate::diff::{Diff, DiffFile, DiffMode, DiffState};
+use crate::diff::*;
 use crate::{
-    backend::Backend,
+    backend::{Backend, Reply},
     client_state::{self, ClientState},
-    model::{ReviewRequest, ReviewResponse},
+    model::*,
+    workspace_state::WorkspaceState,
 };
 use gpui_kit::component::{
-    Disableable, Selectable, Sizable, TitleBar,
+    Disableable, FocusTrapElement, Sizable,
     button::{Button, ButtonVariants},
+    input::{Input, InputState},
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use serde_json::json;
-use std::path::PathBuf;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
-gpui_kit::actions!(rev, [Quit, OpenFolder]);
+mod file_tree;
+mod view;
+mod working_tree;
+use file_tree::{EntryKind, FileTreeCache, TreeEntry};
+gpui_kit::actions!(
+    rev,
+    [
+        Quit,
+        OpenProject,
+        Refresh,
+        CloseModal,
+        Submit,
+        NextFile,
+        PreviousFile,
+        MarkViewed
+    ]
+);
 
-pub fn window_options(cx: &App) -> WindowOptions {
-    WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some("Rev".into()),
-            appears_transparent: true,
-            traffic_light_position: Some(point(px(16.), px(15.))),
-        }),
-        app_owns_titlebar_drag: true,
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(1100.), px(760.)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(760.), px(500.))),
-        ..Default::default()
+#[derive(Clone)]
+struct Modal {
+    request: ReviewRequest,
+    serial: u64,
+    local_branches: Vec<String>,
+    branches_loading: bool,
+    branches_error: Option<String>,
+}
+
+impl Modal {
+    fn manual_request(&self, values: &[String]) -> ReviewRequest {
+        ReviewRequest {
+            repo: self.request.repo.clone(),
+            base: (!values[0].is_empty()).then(|| values[0].clone()),
+            head: (!values[1].is_empty()).then(|| values[1].clone()),
+            mode: Some("branch".into()),
+            commit_range: None,
+        }
+    }
+
+    fn local_branch_request(&self, branch: &str) -> ReviewRequest {
+        ReviewRequest {
+            repo: self.request.repo.clone(),
+            head: Some(format!("refs/heads/{branch}")),
+            mode: Some("branch".into()),
+            ..Default::default()
+        }
     }
 }
 
 pub struct Rev {
     backend: Option<Backend>,
-    request: Option<ReviewRequest>,
-    loading: bool,
-    selecting_folder: bool,
-    notices: Vec<String>,
+    workspace: WorkspaceState,
+    data_dir: PathBuf,
+    review: Option<Review>,
+    review_snapshot_id: Option<String>,
+    state: ReviewState,
+    file: Option<String>,
+    patch: FilePatch,
+    diff: Entity<DiffState>,
+    selection: Option<Selection>,
+    filter: Entity<InputState>,
+    collapsed_file_folders: HashMap<String, HashSet<String>>,
+    filtered_file_folders: HashSet<String>,
+    file_tree_filter: String,
+    file_tree: FileTreeCache,
+    file_scroll: UniformListScrollHandle,
+    #[cfg(test)]
+    file_rows_rendered: std::cell::RefCell<Vec<String>>,
+    fields: Vec<Entity<InputState>>,
     focus: FocusHandle,
-    pub(crate) diff: Entity<DiffState>,
+    modal_focus: FocusHandle,
+    modal: Option<Modal>,
+    modal_serial: u64,
+    folder_picker_open: bool,
+    loading: bool,
+    patch_loading: bool,
+    submitting: bool,
+    workspace_busy: bool,
+    review_epoch: u64,
+    file_epoch: u64,
+    error: Option<String>,
+    notice: Option<String>,
     split: bool,
     wrap: bool,
-    title: SharedString,
-    pub(crate) error: Option<String>,
-    client: ClientState,
-    data_dir: PathBuf,
+    working_tree_poll_inflight: bool,
+    working_tree_refreshing: bool,
+    working_tree_revisions: HashMap<String, String>,
+    _working_tree_poll: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
+}
+
+fn decode<T: DeserializeOwned>(value: Value) -> Result<T, String> {
+    serde_json::from_value(value).map_err(|e| format!("Invalid local service response: {e}"))
+}
+
+#[cfg(test)]
+mod modal_tests {
+    use super::Modal;
+    use crate::model::{CommitRange, ReviewRequest};
+
+    fn repo_modal() -> Modal {
+        Modal {
+            request: ReviewRequest {
+                repo: "/selected-repo".into(),
+                base: Some("old-base".into()),
+                head: Some("old-branch".into()),
+                mode: Some("working".into()),
+                commit_range: Some(CommitRange {
+                    start: "a".into(),
+                    end: "b".into(),
+                }),
+            },
+            serial: 1,
+            local_branches: vec!["feature".into()],
+            branches_loading: false,
+            branches_error: None,
+        }
+    }
+
+    #[test]
+    fn manual_diff_uses_the_repo_context_and_explicit_comparison() {
+        let modal = repo_modal();
+        let values = ["custom-base".into(), "#123".into()];
+        let request = modal.manual_request(&values);
+        assert_eq!(request.repo, "/selected-repo");
+        assert_eq!(request.base.as_deref(), Some("custom-base"));
+        assert_eq!(request.head.as_deref(), Some("#123"));
+        assert_eq!(request.mode.as_deref(), Some("branch"));
+        assert_eq!(request.commit_range, None);
+    }
+
+    #[test]
+    fn local_branch_opens_independently_of_manual_fields_and_previous_scope() {
+        let modal = repo_modal();
+        let request = modal.local_branch_request("feature");
+        assert_eq!(
+            request,
+            ReviewRequest {
+                repo: "/selected-repo".into(),
+                head: Some("refs/heads/feature".into()),
+                mode: Some("branch".into()),
+                ..Default::default()
+            }
+        );
+        let defaults = modal.manual_request(&[String::new(), String::new()]);
+        assert_eq!(defaults.base, None);
+        assert_eq!(defaults.head, None);
+        assert_eq!(defaults.mode.as_deref(), Some("branch"));
+    }
 }
 
 impl Rev {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus = cx.focus_handle();
-        focus.focus(window, cx);
-        let data_dir = client_state::data_dir();
-        let (client, error) = match ClientState::load(&data_dir) {
-            Ok(client) => (client, None),
-            Err(error) => (
-                ClientState::default(),
-                Some(format!("Couldn't read saved tabs: {error}")),
-            ),
+    pub fn new(
+        backend: Result<Backend, String>,
+        initial: Option<ReviewRequest>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (backend, mut error) = match backend {
+            Ok(b) => (Some(b), None),
+            Err(e) => (None, Some(e)),
         };
-        Self {
-            backend: None,
-            request: None,
-            loading: false,
-            selecting_folder: false,
-            notices: vec![],
-            focus,
-            diff: cx.new(|cx| DiffState::new(vec![], cx)),
-            split: false,
-            wrap: true,
-            title: "No folder open".into(),
-            error,
-            client,
+        let data_dir = client_state::data_dir();
+        let workspace = match ClientState::load(&data_dir) {
+            Ok(client) => client.workspace,
+            Err(e) => {
+                error = Some(format!("Could not load saved tabs: {e}"));
+                WorkspaceState::default()
+            }
+        };
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Find a file…"));
+        let fields = ["Auto-detect base", "Branch, #123 or PR URL (default: HEAD)"]
+            .into_iter()
+            .map(|placeholder| cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)))
+            .collect();
+
+        let diff = cx.new(|cx| DiffState::new([], cx));
+        let subscriptions = vec![
+            cx.observe(&filter, |this, filter, cx| {
+                let value = filter.read(cx).value().to_string();
+                if value != this.file_tree_filter {
+                    this.filtered_file_folders.clear();
+                    this.file_tree.set_filter(&value);
+                    this.file_tree.invalidate_rows();
+                    this.file_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                    this.file_tree_filter = value;
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&diff, window, |this, _, event: &DiffEvent, _, cx| {
+                match event {
+                    DiffEvent::SelectionEnded(range) | DiffEvent::SelectionChanged(Some(range)) => {
+                        this.selection = Selection::from_range(range);
+                        if this.selection.is_none() {
+                            this.error = Some("Select lines on one side of the diff.".into());
+                        }
+                    }
+                    DiffEvent::SelectionChanged(None) => this.selection = None,
+                    _ => {}
+                }
+                cx.notify();
+            }),
+        ];
+        let mut app = Self {
+            backend,
+            workspace,
             data_dir,
-        }
-    }
-
-    pub fn reopen_last_active_review(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut app = Self::new(window, cx);
-        if let Some(tab) = app.client.workspace.active_tab() {
-            app.open_repo(tab.request.clone(), window, cx);
+            review: None,
+            review_snapshot_id: None,
+            state: ReviewState::default(),
+            file: None,
+            patch: FilePatch::default(),
+            diff,
+            selection: None,
+            filter,
+            collapsed_file_folders: HashMap::new(),
+            filtered_file_folders: HashSet::new(),
+            file_tree_filter: String::new(),
+            file_tree: FileTreeCache::default(),
+            file_scroll: UniformListScrollHandle::default(),
+            #[cfg(test)]
+            file_rows_rendered: Default::default(),
+            fields,
+            focus: cx.focus_handle(),
+            modal_focus: cx.focus_handle(),
+            modal: None,
+            modal_serial: 0,
+            folder_picker_open: false,
+            loading: false,
+            patch_loading: false,
+            submitting: false,
+            workspace_busy: false,
+            review_epoch: 0,
+            file_epoch: 0,
+            error,
+            notice: None,
+            split: false,
+            wrap: false,
+            working_tree_poll_inflight: false,
+            working_tree_refreshing: false,
+            working_tree_revisions: HashMap::new(),
+            _working_tree_poll: None,
+            _subscriptions: subscriptions,
+        };
+        app.focus.focus(window, cx);
+        if app.backend.is_some() {
+            let tab = app.workspace.active_tab().cloned();
+            if let Some(request) = initial {
+                app.load_review(request, None, window, cx);
+            } else if let Some(tab) = tab {
+                app.load_review(tab.request, tab.file, window, cx);
+            }
+            app.start_working_tree_updates(window, cx);
         }
         app
     }
 
-    pub fn from_repo(request: ReviewRequest, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut app = Self::new(window, cx);
-        app.open_repo(request, window, cx);
-        app
+    fn rpc(
+        &mut self,
+        method: &'static str,
+        params: Value,
+        window: &Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Reply, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        self.rpc_quiet(
+            method,
+            params,
+            window,
+            cx,
+            move |this, result, window, cx| {
+                done(this, result, window, cx);
+                cx.notify();
+            },
+        );
     }
 
-    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading || self.selecting_folder {
+    fn rpc_quiet(
+        &mut self,
+        method: &'static str,
+        params: Value,
+        window: &Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Reply, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let Some(backend) = self.backend.clone() else {
+            let error = "The local service is unavailable. Restart Rev.";
+            if self.error.as_deref() != Some(error) {
+                self.error = Some(error.into());
+                cx.notify();
+            }
+            return;
+        };
+        let task = cx
+            .background_executor()
+            .spawn(async move { backend.call(method, params) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                done(this, result, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn result(&mut self, result: Reply) -> Option<Value> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.error = Some(error);
+                None
+            }
+        }
+    }
+
+    fn load_review(
+        &mut self,
+        request: ReviewRequest,
+        file: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.loading || self.workspace_busy {
             return;
         }
 
-        self.selecting_folder = true;
-        let selection = cx.prompt_for_paths(PathPromptOptions {
+        let request = request.for_tab();
+        self.loading = true;
+        self.error = None;
+        self.notice = None;
+
+        // Responses from earlier loads are now stale. Bumping the file epoch also discards
+        // any pending patch, so its loading flag must clear here.
+        self.review_epoch += 1;
+        self.file_epoch += 1;
+        self.patch_loading = false;
+        let epoch = self.review_epoch;
+
+        // Patches are fetched per file by `load_file`, so skip them here.
+        let mut params = json!(request);
+        params["patches"] = json!(false);
+
+        self.rpc(
+            "review",
+            params,
+            window,
+            cx,
+            move |this, result, window, cx| {
+                if this.review_epoch != epoch {
+                    return;
+                }
+                this.loading = false;
+                let Some(value) = this.result(result) else {
+                    return;
+                };
+                let parsed = decode::<Review>(value["review"].clone()).and_then(|review| {
+                    Ok((review, decode::<ReviewState>(value["state"].clone())?))
+                });
+                match parsed {
+                    Ok((mut review, state)) => {
+                        this.review_snapshot_id = value["snapshotId"].as_str().map(str::to_owned);
+                        // Committed tabs keep their branch; working trees continue following HEAD.
+                        if review.request.mode.as_deref() != Some("working")
+                            && review.request.head.as_deref() == Some("HEAD")
+                        {
+                            review.request.head = Some(if review.branch == "detached HEAD" {
+                                review.branch_head_sha.clone()
+                            } else {
+                                review.branch.clone()
+                            });
+                        }
+                        this.workspace.remember_review(&review, &request);
+                        this.save_workspace();
+                        this.working_tree_revisions.remove(&review.request.repo);
+                        let selected = file
+                            .or_else(|| this.workspace.active_tab().and_then(|t| t.file.clone()))
+                            .filter(|file| review.files.iter().any(|f| &f.path == file))
+                            .or_else(|| review.files.first().map(|f| f.path.clone()));
+                        this.state = state;
+                        this.file_tree_filter.clear();
+                        this.filtered_file_folders.clear();
+                        this.file_tree.set_filter("");
+                        this.file_tree.set_files(&review.files);
+                        this.file_tree.invalidate_rows();
+                        this.file_scroll = UniformListScrollHandle::default();
+                        this.review = Some(review);
+                        this.file = None;
+                        this.patch = FilePatch::default();
+                        this.selection = None;
+                        this.diff.update(cx, |diff, cx| diff.set_files([], cx));
+                        this.filter
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        if let Some(path) = selected {
+                            this.load_file(path, window, cx);
+                        }
+                        this.load_pull_request(window, cx);
+                    }
+                    Err(e) => this.error = Some(e),
+                }
+            },
+        );
+        cx.notify();
+    }
+
+    fn load_pull_request(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(review) = &self.review else { return };
+        if review.pull_request.is_some() {
+            return;
+        }
+        let epoch = self.review_epoch;
+        // Optional GitHub details load separately so they never delay the diff.
+        self.rpc(
+            "pullRequest",
+            json!(review.request),
+            window,
+            cx,
+            move |this, result, _, _| {
+                if this.review_epoch == epoch
+                    && let Ok(value) = result
+                    && let Ok(pr) = decode::<Option<PullRequest>>(value)
+                    && let Some(review) = &mut this.review
+                {
+                    review.pull_request = pr;
+                }
+            },
+        );
+    }
+
+    fn load_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(review) = self.review.as_ref() else {
+            return;
+        };
+        let request = review.request.clone();
+        let mut revealed = false;
+        if let Some(collapsed) = self.collapsed_file_folders.get_mut(&review.request.repo) {
+            revealed |= file_tree::reveal_file(collapsed, &path);
+        }
+        revealed |= file_tree::reveal_file(&mut self.filtered_file_folders, &path);
+        if revealed {
+            self.file_tree.invalidate_rows();
+        }
+        if let Some(index) = self
+            .file_tree_entries()
+            .iter()
+            .position(|entry| entry.path == path)
+        {
+            self.file_scroll
+                .scroll_to_item(index, ScrollStrategy::Nearest);
+        }
+        self.file_epoch += 1;
+        let epoch = self.file_epoch;
+        self.file = Some(path.clone());
+        self.patch_loading = true;
+        self.selection = None;
+        self.patch = FilePatch::default();
+        self.error = None;
+        self.notice = None;
+        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
+        self.rpc(
+            "patch",
+            json!({ "review": request, "path": path, "snapshotId": self.review_snapshot_id }),
+            window,
+            cx,
+            move |this, result, window, cx| {
+                if this.file_epoch != epoch {
+                    return;
+                }
+                this.patch_loading = false;
+                let Some(value) = this.result(result) else {
+                    return;
+                };
+                match decode::<FilePatch>(value) {
+                    Ok(patch) => {
+                        if patch.too_large {
+                            this.notice = Some("This patch exceeds the 2 MB inline limit.".into());
+                        } else if patch.patch == "Binary file (untracked)" {
+                            this.notice = Some("Binary file".into());
+                        } else {
+                            match DiffFile::parse(&patch.patch) {
+                                Ok(files) => {
+                                    this.diff.update(cx, |diff, cx| diff.set_files(files, cx))
+                                }
+                                Err(e) => {
+                                    this.error = Some(format!("Could not display this patch: {e}"))
+                                }
+                            }
+                        }
+                        this.patch = patch;
+                        if let Some(id) = this.workspace.active_tab_id.clone() {
+                            this.workspace.set_file(&id, path);
+                            this.save_workspace();
+                        }
+                    }
+                    Err(e) => this.error = Some(e),
+                }
+            },
+        );
+        cx.notify();
+    }
+
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(review) = &self.review {
+            let request = self
+                .workspace
+                .active_tab()
+                .map(|tab| tab.request.clone())
+                .unwrap_or_else(|| review.request.clone());
+            self.load_review(request, self.file.clone(), window, cx);
+        }
+    }
+
+    fn save_workspace(&mut self) {
+        let client = ClientState {
+            workspace: self.workspace.clone(),
+        };
+        if let Err(error) = client.save(&self.data_dir) {
+            self.error = Some(format!("Could not save tabs: {error}"));
+        }
+    }
+
+    fn workspace_action(
+        &mut self,
+        action: Value,
+        navigate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_busy || self.loading {
+            return;
+        }
+        match action["type"].as_str() {
+            Some("collapseProject") => {
+                if let (Some(repo), Some(collapsed)) =
+                    (action["repo"].as_str(), action["collapsed"].as_bool())
+                {
+                    self.workspace.collapse_project(repo, collapsed);
+                }
+            }
+            Some("closeTab") => {
+                if let Some(id) = action["id"].as_str() {
+                    self.workspace.close_tab(id);
+                }
+            }
+            Some("removeProject") => {
+                if let Some(repo) = action["repo"].as_str() {
+                    self.workspace.remove_project(repo);
+                    self.collapsed_file_folders.remove(repo);
+                    self.working_tree_revisions.remove(repo);
+                }
+            }
+            _ => return,
+        }
+        self.save_workspace();
+        if navigate {
+            if let Some(tab) = self.workspace.active_tab().cloned() {
+                self.load_review(tab.request, tab.file, window, cx);
+            } else {
+                self.review = None;
+                self.review_snapshot_id = None;
+                self.file_tree.set_files(&[]);
+                self.state = ReviewState::default();
+                self.file = None;
+                self.selection = None;
+                self.patch = FilePatch::default();
+                self.file_epoch += 1;
+                self.patch_loading = false;
+                self.diff.update(cx, |diff, cx| diff.set_files([], cx));
+            }
+        }
+        cx.notify();
+    }
+
+    fn navigate_file(&mut self, direction: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.is_some() || self.loading {
+            return;
+        }
+        let entries = self.file_tree_entries();
+        let files: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                EntryKind::File(file) => Some(file),
+                EntryKind::Folder { .. } => None,
+            })
+            .collect();
+        if files.is_empty() {
+            return;
+        }
+        let index = files
+            .iter()
+            .position(|f| Some(&f.path) == self.file.as_ref());
+        let next = match index {
+            Some(index) => (index as isize + direction).clamp(0, files.len() as isize - 1) as usize,
+            None if direction < 0 => files.len() - 1,
+            None => 0,
+        };
+        self.load_file(files[next].path.clone(), window, cx);
+    }
+
+    fn file_tree_entries(&mut self) -> std::rc::Rc<Vec<TreeEntry>> {
+        let collapsed = if self.file_tree_filter.is_empty() {
+            self.review
+                .as_ref()
+                .and_then(|review| self.collapsed_file_folders.get(&review.request.repo))
+        } else {
+            Some(&self.filtered_file_folders)
+        };
+        self.file_tree.entries(collapsed)
+    }
+
+    fn toggle_file_folder(&mut self, path: &str, cx: &mut Context<Self>) {
+        let Some(review) = &self.review else {
+            return;
+        };
+        let collapsed = if self.filter.read(cx).value().is_empty() {
+            self.collapsed_file_folders
+                .entry(review.request.repo.clone())
+                .or_default()
+        } else {
+            &mut self.filtered_file_folders
+        };
+        if !collapsed.remove(path) {
+            collapsed.insert(path.to_owned());
+        }
+        self.file_tree.invalidate_rows();
+        cx.notify();
+    }
+
+    fn mark_viewed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.patch_loading || self.loading || self.submitting || self.patch.digest.is_empty() {
+            return;
+        }
+        let (Some(review), Some(path)) = (self.review.clone(), self.file.clone()) else {
+            return;
+        };
+        let epoch = self.review_epoch;
+        let viewed = !self.state.viewed.contains_key(&path);
+        self.file_epoch += 1;
+        self.submitting = true;
+        self.rpc("viewed", json!({ "review": review.request, "path": path, "viewed": viewed, "digest": self.patch.digest }), window, cx,
+            move |this, result, _, _| {
+                this.submitting = false;
+                if this.review_epoch != epoch { return; }
+                if let Some(value) = this.result(result) { match decode(value) { Ok(state) => this.state = state, Err(e) => this.error = Some(e) } }
+            });
+    }
+
+    fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.modal = None;
+
+        self.modal_serial += 1;
+        self.selection = None;
+        self.diff
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn open_branch_modal(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
+            return;
+        }
+        self.close_modal(window, cx);
+        self.error = None;
+        let request = ReviewRequest {
+            repo,
+            ..Default::default()
+        };
+        let modal = Modal {
+            request: request.clone(),
+            serial: self.modal_serial,
+            local_branches: Vec::new(),
+            branches_loading: self.backend.is_some(),
+            branches_error: self
+                .backend
+                .is_none()
+                .then(|| "The local service is unavailable. Restart Rev.".into()),
+        };
+        for input in &self.fields {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+
+        self.modal = Some(modal);
+        self.modal_focus.focus(window, cx);
+        if self.backend.is_some() {
+            let serial = self.modal_serial;
+            self.rpc(
+                "branches",
+                json!({ "repo": request.repo, "localOnly": true }),
+                window,
+                cx,
+                move |this, result, _, _| {
+                    let Some(modal) = this.modal.as_mut().filter(|modal| modal.serial == serial)
+                    else {
+                        return;
+                    };
+                    modal.branches_loading = false;
+                    match result.and_then(decode::<Vec<String>>) {
+                        Ok(branches) => modal.local_branches = branches,
+                        Err(error) => modal.branches_error = Some(error),
+                    }
+                },
+            );
+        }
+        cx.notify();
+    }
+
+    fn open_local_branch(
+        &mut self,
+        branch: &str,
+        serial: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.submitting || self.loading || self.patch_loading || self.workspace_busy {
+            return;
+        }
+        let Some(modal) = self.modal.as_ref().filter(|modal| {
+            modal.serial == serial && modal.local_branches.iter().any(|name| name == branch)
+        }) else {
+            return;
+        };
+        let request = modal.local_branch_request(branch);
+        self.close_modal(window, cx);
+        self.load_review(request, None, window, cx);
+    }
+
+    fn pick_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.folder_picker_open
+            || self.loading
+            || self.patch_loading
+            || self.submitting
+            || self.workspace_busy
+        {
+            return;
+        }
+        if self.modal.is_some() {
+            self.close_modal(window, cx);
+        }
+        self.folder_picker_open = true;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
             prompt: Some("Open repository".into()),
         });
-
         cx.spawn_in(window, async move |this, cx| {
-            let selection = selection.await;
+            let result = paths.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.selecting_folder = false;
-                match selection {
+                this.folder_picker_open = false;
+                match result {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.first() {
-                            this.open_repo(
-                                ReviewRequest {
-                                    repo: path.to_string_lossy().into_owned(),
-                                    ..Default::default()
-                                },
+                            this.load_review(
+                                ReviewRequest::working_tree(path.to_string_lossy().to_string()),
+                                None,
                                 window,
                                 cx,
                             );
                         }
                     }
                     Ok(Ok(None)) => {}
-                    Ok(Err(error)) => this.error = Some(error.to_string()),
-                    Err(error) => this.error = Some(error.to_string()),
+                    Ok(Err(error)) => {
+                        this.error = Some(format!("Could not open the folder picker: {error}"));
+                        cx.notify();
+                    }
+                    Err(_) => {
+                        this.error =
+                            Some("The folder picker closed unexpectedly. Try again.".into());
+                        cx.notify();
+                    }
                 }
-                cx.notify();
             });
         })
         .detach();
-        cx.notify();
     }
 
-    fn open_repo(&mut self, request: ReviewRequest, window: &Window, cx: &mut Context<Self>) {
-        self.title = request.repo.clone().into();
-        self.request = Some(request);
-        self.notices.clear();
-        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
-        self.load_review(window, cx);
-    }
-
-    fn load_review(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.loading || self.selecting_folder {
-            return;
-        }
-
-        let Some(request) = self.request.clone() else {
-            return;
-        };
-
-        // Start the local service only after a repository folder is opened.
-        let backend = match self.backend.clone() {
-            Some(backend) => backend,
-            None => match Backend::start() {
-                Ok(backend) => {
-                    let service = backend.clone();
-                    cx.on_app_quit(move |_, _| {
-                        service.close();
-                        async {}
-                    })
-                    .detach();
-                    self.backend = Some(backend.clone());
-                    backend
-                }
-                Err(error) => {
-                    self.error = Some(error);
-                    cx.notify();
-                    return;
+    fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(review) = &self.review else { return };
+        let request = review.request.clone();
+        let epoch = self.review_epoch;
+        self.submitting = true;
+        self.rpc(
+            "fetch",
+            json!({ "repo": request.repo }),
+            window,
+            cx,
+            move |this, result, window, cx| {
+                this.submitting = false;
+                if this.result(result).is_some() && this.review_epoch == epoch {
+                    this.refresh(window, cx);
                 }
             },
-        };
-
-        self.loading = true;
-        self.error = None;
-        let opened = request.clone();
-        let task = cx.background_executor().spawn(async move {
-            backend.call("review", json!(request)).and_then(|value| {
-                serde_json::from_value::<ReviewResponse>(value).map_err(|error| error.to_string())
-            })
-        });
-
-        cx.spawn_in(window, async move |this, cx| {
-            let response = task.await;
-            let _ = this.update_in(cx, |this, _, cx| {
-                this.loading = false;
-
-                match response {
-                    Ok(response) => {
-                        // Save review we are loading into the client state.
-                        this.client
-                            .workspace
-                            .remember_review(&response.review, &opened);
-                        if let Err(error) = this.client.save(&this.data_dir) {
-                            this.error = Some(format!("Couldn't save open tabs: {error}"));
-                        }
-
-                        this.title = format!(
-                            "{} · {} → {}",
-                            response.review.name,
-                            response.review.request.head.as_deref().unwrap_or("HEAD"),
-                            response.review.request.base.as_deref().unwrap_or("main")
-                        )
-                        .into();
-
-                        let mut files = Vec::new();
-                        this.notices.clear();
-
-                        for patch in response.patches {
-                            let parsed = if let Some(error) = patch.error {
-                                Err(error)
-                            } else if patch.too_large {
-                                Err("Diff exceeds the 2 MB inline limit.".into())
-                            } else {
-                                DiffFile::parse(&patch.patch).map_err(|error| error.to_string())
-                            };
-
-                            match parsed {
-                                Ok(parsed) if !parsed.is_empty() => files.extend(parsed),
-                                Ok(_) => this
-                                    .notices
-                                    .push(format!("{} · No textual changes", patch.path)),
-                                Err(error) => {
-                                    this.notices.push(format!("{} · {error}", patch.path))
-                                }
-                            }
-                        }
-
-                        this.diff.update(cx, |diff, cx| diff.set_files(files, cx));
-                    }
-                    Err(error) => this.error = Some(error),
-                }
-
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
+        );
     }
-}
 
-impl Render for Rev {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("rev")
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(0x17191d))
-            .text_color(rgb(0xe4e6eb))
-            .text_size(px(13.))
-            .font_family(".AppleSystemUIFont")
-            .track_focus(&self.focus)
-            .key_context("Rev")
-            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
-            .child(
-                TitleBar::new()
-                    .h(px(44.))
-                    .pl(px(80.))
-                    .bg(rgb(0x131519))
-                    .border_b_1()
-                    .border_color(rgb(0x2b2e34))
-                    .child("Rev"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h(px(36.))
-                    .px_3()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(self.title.clone()),
-                    )
-                    .child(
-                        Button::new("open-folder")
-                            .small()
-                            .ghost()
-                            .label("Open Folder…")
-                            .disabled(self.loading || self.selecting_folder)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_folder(window, cx)),
-                            ),
-                    )
-                    .when(self.request.is_some(), |bar| {
-                        bar.child(
-                            Button::new("refresh")
-                                .small()
-                                .ghost()
-                                .label(if self.loading {
-                                    "Loading…"
-                                } else {
-                                    "Refresh"
-                                })
-                                .disabled(self.loading || self.selecting_folder)
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.load_review(window, cx)),
-                                ),
-                        )
-                    })
-                    .child(
-                        Button::new("view-mode")
-                            .small()
-                            .ghost()
-                            .label(if self.split { "Split" } else { "Unified" })
-                            .disabled(self.request.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.split = !this.split;
-                                this.diff.update(cx, |diff, cx| {
-                                    diff.set_mode(
-                                        if this.split {
-                                            DiffMode::Split
-                                        } else {
-                                            DiffMode::Unified
-                                        },
-                                        cx,
-                                    )
-                                });
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("wrap")
-                            .small()
-                            .ghost()
-                            .label("Wrap")
-                            .selected(self.wrap)
-                            .disabled(self.request.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wrap = !this.wrap;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .children(
-                self.notices
-                    .iter()
-                    .map(|notice| div().px_3().text_color(rgb(0x929aa7)).child(notice.clone())),
-            )
-            .when_some(self.error.clone(), |d, error| {
-                d.child(div().p_3().text_color(rgb(0xee9292)).child(error))
-            })
-            .when(self.request.is_none(), |d| {
-                d.child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap_3()
-                        .child("Open a local Git repository to review its changes.")
-                        .child(
-                            Button::new("open-first-folder")
-                                .label("Open Folder…")
-                                .disabled(self.selecting_folder)
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.open_folder(window, cx)),
-                                ),
-                        ),
-                )
-            })
-            .when(self.request.is_some(), |d| {
-                d.child(
-                    div().id("review-surface").flex_1().min_h_0().child(
-                        Diff::new(&self.diff)
-                            .size_full()
-                            .soft_wrap(self.wrap)
-                            .text_size(px(12.)),
-                    ),
-                )
-            })
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
+        let Some(modal) = self.modal.clone() else {
+            return;
+        };
+        let values: Vec<String> = self
+            .fields
+            .iter()
+            .map(|input| input.read(cx).value().trim().to_string())
+            .collect();
+
+        self.error = None;
+        let request = modal.manual_request(&values);
+        if request.repo.is_empty() {
+            self.error = Some("Choose a repository folder.".into());
+            return;
+        }
+        if values[1].starts_with("https://github.com/")
+            || values[1].starts_with('#')
+            || values[1].parse::<u64>().is_ok()
+        {
+            self.submitting = true;
+            self.rpc(
+                "pr",
+                json!({
+                    "repo": request.repo,
+                    "base": request.base,
+                    "value": values[1].trim_start_matches('#'),
+                }),
+                window,
+                cx,
+                move |this, result, window, cx| {
+                    this.submitting = false;
+                    if this.modal.as_ref().is_none_or(|open| open.serial != modal.serial) {
+                        return;
+                    }
+                    if let Some(value) = this.result(result) {
+                        match decode(value) {
+                            Ok(request) => {
+                                if this.modal_serial == modal.serial {
+                                    this.close_modal(window, cx);
+                                }
+                                this.load_review(request, None, window, cx);
+                            }
+                            Err(e) => this.error = Some(e),
+                        }
+                    }
+                },
+            );
+        } else {
+            self.close_modal(window, cx);
+            self.load_review(request, None, window, cx);
+        }
+        cx.notify();
     }
 }

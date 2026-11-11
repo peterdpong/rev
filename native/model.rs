@@ -275,17 +275,3 @@ mod tests {
         assert!(Selection::from_range(&range.with_end_side(DiffSide::Modified)).is_none());
     }
 }
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewPatch {
-    pub path: String,
-    pub patch: String,
-    pub too_large: bool,
-    pub error: Option<String>,
-}
-#[derive(Deserialize)]
-pub struct ReviewResponse {
-    pub review: Review,
-    pub patches: Vec<ReviewPatch>,
-}

@@ -3,9 +3,11 @@ mod diff;
 rust_i18n::i18n!("native/diff/locales", fallback = "en");
 mod app;
 mod backend;
-mod client_state;
 mod model;
+mod client_state;
 mod workspace_state;
+mod theme;
+use app::*;
 use gpui_kit::*;
 use model::ReviewRequest;
 
@@ -44,30 +46,55 @@ fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
 
 fn main() -> anyhow::Result<()> {
     let initial = initial_review()?;
+    let backend = backend::Backend::start();
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             diff::init(cx);
-            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            crate::theme::init(cx);
             cx.bind_keys([
-                KeyBinding::new("cmd-q", app::Quit, None),
-                KeyBinding::new("cmd-o", app::OpenFolder, Some("Rev")),
+                KeyBinding::new("cmd-q", Quit, None),
+                KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
+                KeyBinding::new("cmd-r", Refresh, Some("Rev")),
+                KeyBinding::new("alt-down", NextFile, Some("Rev")),
+                KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
+                KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+                KeyBinding::new("escape", CloseModal, Some("PatchModal")),
+                KeyBinding::new("cmd-enter", Submit, Some("PatchModal")),
             ]);
-            cx.on_action(|_: &app::Quit, cx| cx.quit());
-
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            if let Ok(service) = &backend {
+                let service = service.clone();
+                cx.on_app_quit(move |_| {
+                    service.close();
+                    async {}
+                })
+                .detach();
+            }
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
             })
             .detach();
-
-            gpui_kit::open_window(app::window_options(cx), cx, |window, cx| {
-                cx.new(|cx| match initial {
-                    Some(request) => app::Rev::from_repo(request, window, cx),
-                    None => app::Rev::reopen_last_active_review(window, cx),
-                })
+            let options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Rev".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(12.), px(12.))),
+                    ..Default::default()
+                }),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1320.), px(860.)),
+                    cx,
+                ))),
+                window_min_size: Some(size(px(940.), px(600.))),
+                ..gpui_kit::component::TitleBar::window_options()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Rev::new(backend, initial, window, cx))
             })
             .expect("open Rev window");
             cx.activate(true);
