@@ -1,6 +1,14 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, rgb, rgba};
 
+/// Shared outer inset and gap for app controls.
+pub const UI_SPACING: f32 = 5.5;
+pub const CONTROL_HEIGHT: f32 = 28.;
+pub const CONTROL_RADIUS: f32 = 6.;
+pub const CONTROL_PADDING: f32 = 10.;
+pub const CHOICE_ROW_HEIGHT: f32 = 40.;
+pub const POPOVER_PADDING: f32 = UI_SPACING * 2.;
+
 // Neutral graphite surfaces, ordered from canvas to raised controls.
 pub const BG: u32 = 0x191919;
 pub const SUBPANEL: u32 = 0x1d1d1d;
@@ -15,12 +23,18 @@ pub const TEXT: u32 = 0xececec;
 pub const MUTED: u32 = 0xa1a1a1;
 pub const FOCUS: u32 = 0x9b9b9b;
 
-// Color is reserved for file status and diff meaning.
-pub const SUCCESS: u32 = 0x4eaa78;
-pub const DANGER: u32 = 0xd46b73;
-pub const WARNING: u32 = 0xd3bb8b;
-pub const BLUE: u32 = 0x9cabc4;
-pub const PURPLE: u32 = 0xbca7cf;
+// Semantic colors stay saturated, independently of the neutral surface palette.
+pub const SUCCESS: u32 = 0x28c76f;
+pub const DANGER: u32 = 0xf04b50;
+pub const WARNING: u32 = 0xe3aa2e;
+pub const BLUE: u32 = 0x58a6ff;
+pub const PURPLE: u32 = 0xbc8cff;
+
+// Opaque diff fills retain their hue instead of blending into graphite gray.
+pub const DIFF_ADDED_BG: u32 = 0x102d1e;
+pub const DIFF_DELETED_BG: u32 = 0x3a141a;
+pub const DIFF_ADDED_EMPHASIS: u32 = 0x185c35;
+pub const DIFF_DELETED_EMPHASIS: u32 = 0x752734;
 
 pub fn init(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);

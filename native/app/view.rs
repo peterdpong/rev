@@ -7,11 +7,12 @@ use gpui_kit::{
 };
 
 const SIDEBAR_WIDTH: f32 = 225.;
-const HEADER_HEIGHT: f32 = 38.;
 const LIST_ROW_HEIGHT: f32 = 26.;
+const ICON_BUTTON_SIZE: f32 = 24.;
 const HEADER_PILL_HEIGHT: f32 = 26.;
-// Shared inset matches the centered header pills, excluding the bottom border.
-const UI_SPACING: f32 = (HEADER_HEIGHT - 1. - HEADER_PILL_HEIGHT) / 2.;
+// Include the shared outer inset above/below the pills and the bottom border.
+const HEADER_HEIGHT: f32 = HEADER_PILL_HEIGHT + UI_SPACING * 2. + 1.;
+const FILE_HEADER_HEIGHT: f32 = CONTROL_HEIGHT + UI_SPACING * 2. + 1.;
 const HEADER_PILL_PADDING: f32 = 10.;
 const HEADER_PILL_LINE_HEIGHT: f32 = 16.;
 const PR_DESCRIPTION_GAP: f32 = 2.;
@@ -170,11 +171,37 @@ impl RenderOnce for PrDescription {
 fn row() -> Div {
     div().flex().items_center().gap_2()
 }
-
+fn icon_actions() -> Div {
+    row().gap(px(UI_SPACING)).flex_shrink_0()
+}
 fn column() -> Div {
     div().flex().flex_col()
 }
-
+fn file_header_row() -> Div {
+    row()
+        .h(px(FILE_HEADER_HEIGHT))
+        .flex_shrink_0()
+        .px(px(UI_SPACING))
+        .gap(px(UI_SPACING))
+        .bg(rgb(SUBPANEL))
+        .border_b_1()
+        .border_color(rgb(BORDER))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+}
+fn header_pill() -> Div {
+    row()
+        .h(px(HEADER_PILL_HEIGHT))
+        .min_w_0()
+        .px(px(HEADER_PILL_PADDING))
+        .gap(px(6.))
+        .rounded(px(CONTROL_RADIUS))
+        .bg(rgb(SURFACE))
+        .border_1()
+        .border_color(rgb(CONTROL_BORDER))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+}
 fn selected_surface<T: Styled>(element: T) -> T {
     element
         .bg(rgb(SELECTED))
@@ -183,30 +210,52 @@ fn selected_surface<T: Styled>(element: T) -> T {
         .text_color(rgb(TEXT))
         .shadow_sm()
 }
-
-fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    Button::new(id).label(label).small().ghost()
-}
-
-fn icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: IconName,
-) -> BaseButton {
+fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
     let label = label.into();
     BaseButton::new(id)
-        .size(px(24.))
+        .h(px(CONTROL_HEIGHT))
+        .px(px(CONTROL_PADDING))
+        .gap(px(UI_SPACING))
         .flex_shrink_0()
-        .rounded_md()
+        .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgba(0x00000000))
-        .text_color(rgb(MUTED))
-        .hover(|d| d.text_color(rgb(TEXT)))
+        .border_color(rgb(CONTROL_BORDER))
+        .bg(rgb(SURFACE))
+        .text_color(rgb(TEXT))
+        .text_size(px(12.))
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
-        .child(Icon::new(icon).size(px(14.)))
         .accessibility_label(label.clone())
-        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+        .child(label)
+}
+
+fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
+    button_base(id, label)
+        .bg(rgb(TEXT))
+        .text_color(rgb(BG))
+        .border_color(rgb(TEXT))
+        .hover(|d| d.bg(rgb(0xffffff)).border_color(rgb(0xffffff)))
+}
+
+fn choice_button(id: impl Into<ElementId>, selected: bool) -> BaseButton {
+    BaseButton::new(id)
+        .w_full()
+        .h(px(CHOICE_ROW_HEIGHT))
+        .flex_shrink_0()
+        .min_w_0()
+        .px(px(CONTROL_PADDING))
+        .gap(px(UI_SPACING))
+        .justify_start()
+        .text_left()
+        .text_size(px(12.))
+        .rounded(px(CONTROL_RADIUS))
+        .border_1()
+        .border_color(rgba(0x00000000))
+        .when(selected, selected_surface)
+        .hover(move |d| d.bg(rgb(if selected { SELECTED } else { HOVER })))
+        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+        .aria_selected(selected)
 }
 
 fn sidebar_item(
@@ -223,7 +272,7 @@ fn sidebar_item(
         .px_2()
         .justify_start()
         .gap_2()
-        .rounded_md()
+        .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
@@ -233,38 +282,25 @@ fn sidebar_item(
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
-fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stateful<Div> {
-    row()
-        .id(id)
-        .h(px(LIST_ROW_HEIGHT))
+fn icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: IconName,
+) -> BaseButton {
+    let label = label.into();
+    BaseButton::new(id)
+        .size(px(ICON_BUTTON_SIZE))
         .flex_shrink_0()
-        .gap_1()
-        .pr_1()
-        .rounded_md()
+        .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
-        .when(selected, selected_surface)
-        .hover(move |d| {
-            if selected || disabled {
-                d
-            } else {
-                d.bg(rgb(HOVER))
-            }
-        })
-}
-
-fn header_pill() -> Div {
-    row()
-        .h(px(HEADER_PILL_HEIGHT))
-        .min_w_0()
-        .px(px(HEADER_PILL_PADDING))
-        .gap(px(6.))
-        .rounded(px(6.))
-        .bg(rgb(SURFACE))
-        .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .text_size(px(12.))
-        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .text_color(rgb(MUTED))
+        .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+        .child(Icon::new(icon).size(px(14.)))
+        .accessibility_label(label.clone())
+        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
 }
 
 fn file_status_icon(id: impl Into<ElementId>, status: &str) -> Stateful<Div> {
@@ -286,6 +322,74 @@ fn file_status_icon(id: impl Into<ElementId>, status: &str) -> Stateful<Div> {
         .role(accesskit::Role::Image)
         .aria_label(label)
         .child(Icon::new(icon).size(px(14.)).text_color(rgb(color)))
+}
+
+fn viewed_button(viewed: bool, disabled: bool) -> BaseButton {
+    BaseButton::new("viewed")
+        .h(px(CONTROL_HEIGHT))
+        .px(px(CONTROL_PADDING))
+        .gap(px(UI_SPACING))
+        .flex_shrink_0()
+        .rounded(px(CONTROL_RADIUS))
+        .border_1()
+        .border_color(rgb(CONTROL_BORDER))
+        .bg(rgb(SURFACE))
+        .text_color(rgb(TEXT))
+        .text_size(px(13.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .when(viewed, selected_surface)
+        .when(!disabled, |d| {
+            d.hover(move |d| d.bg(rgb(if viewed { SELECTED } else { HOVER })))
+        })
+        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+        .disabled(disabled)
+        .role(accesskit::Role::CheckBox)
+        .aria_toggled(if viewed {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        })
+        .accessibility_label("Viewed")
+        .child(
+            div()
+                .size(px(14.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(2.))
+                .border_1()
+                .border_color(rgb(MUTED))
+                .when(viewed, |d| {
+                    d.bg(rgb(0x737373)).border_color(rgb(FOCUS)).child(
+                        Icon::new(IconName::Check)
+                            .size(px(12.))
+                            .text_color(rgb(0xffffff)),
+                    )
+                }),
+        )
+        .child("Viewed")
+}
+
+fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stateful<Div> {
+    row()
+        .id(id)
+        .h(px(LIST_ROW_HEIGHT))
+        .flex_shrink_0()
+        .gap(px(UI_SPACING))
+        .pr(px(UI_SPACING))
+        .rounded(px(CONTROL_RADIUS))
+        .border_1()
+        .border_color(rgba(0x00000000))
+        .when(selected, selected_surface)
+        .hover(move |d| {
+            if selected || disabled {
+                d
+            } else {
+                d.bg(rgb(HOVER))
+            }
+        })
 }
 
 impl Rev {
@@ -312,7 +416,7 @@ impl Rev {
                     .min_w_0()
                     .h_full()
                     .pl(px(UI_SPACING))
-                    .pr_4()
+                    .pr(px(UI_SPACING))
                     .gap(px(UI_SPACING))
                     .when_some(self.review.as_ref(), |d, review| {
                         d.child(
@@ -377,11 +481,9 @@ impl Rev {
                         )
                         .child(div().flex_1().min_w_0())
                         .child(
-                            row()
+                            icon_actions()
                                 .id("review-header-actions")
                                 .debug_selector(|| "review-header-actions".into())
-                                .gap_1()
-                                .flex_shrink_0()
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
@@ -440,9 +542,7 @@ impl Rev {
                         })),
                     )
                     .child(
-                        row()
-                            .gap_0()
-                            .flex_shrink_0()
+                        icon_actions()
                             .invisible()
                             .group_hover(hover_group, |d| d.visible())
                             .child(
@@ -543,10 +643,10 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(30.))
+                    .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
                     .flex_shrink_0()
                     .pl(px(UI_SPACING + 8.))
-                    .pr(px(UI_SPACING + 4.))
+                    .pr(px(UI_SPACING))
                     .justify_between()
                     .child(
                         div()
@@ -582,13 +682,16 @@ impl Rev {
             .bg(rgb(SUBPANEL))
             .h(px(42.))
             .flex_shrink_0()
-            .px_3()
+            .px(px(UI_SPACING))
+            .gap(px(UI_SPACING))
             .border_b_1()
             .border_color(rgb(BORDER))
             .child(
                 column()
                     .flex_1()
                     .min_w_0()
+                    // Match the content inset inside the repo pill and search field.
+                    .pl(px(HEADER_PILL_PADDING + 1.))
                     .gap(px(2.))
                     .line_height(px(16.))
                     .when_some(self.review.as_ref(), |d, review| {
@@ -697,7 +800,7 @@ impl Rev {
             .gap(px(6.))
             .pl(px(8. + entry.depth as f32 * 12.))
             .pr_2()
-            .rounded_md()
+            .rounded(px(CONTROL_RADIUS))
             .border_1()
             .border_color(rgba(0x00000000))
             .text_size(px(12.))
@@ -803,44 +906,121 @@ impl Rev {
             .border_r_1()
             .border_color(rgb(BORDER))
             .child(
-                div()
-                    .h(px(40.))
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .px(px(UI_SPACING))
-                    .child(
-                        Input::new(&self.filter)
-                            .id("filter-files")
-                            .small()
-                            .min_h(px(28.))
-                            .max_h(px(28.))
-                            .px(px(10.))
-                            .py_0()
-                            .gap(px(6.))
-                            .rounded(px(6.))
-                            .bg(rgb(SURFACE))
-                            .border_1()
-                            .border_color(rgb(BORDER))
-                            .text_size(px(12.))
-                            .prefix(
-                                Icon::new(IconName::Search)
-                                    .size(px(14.))
-                                    .text_color(rgb(MUTED)),
-                            )
-                            .cleanable(true)
-                            .aria_label("Find a file"),
-                    ),
+                file_header_row().child(
+                    Input::new(&self.filter)
+                        .id("filter-files")
+                        .focus_bordered(false)
+                        .small()
+                        .min_h(px(CONTROL_HEIGHT))
+                        .max_h(px(CONTROL_HEIGHT))
+                        .px(px(CONTROL_PADDING))
+                        .py_0()
+                        .gap(px(6.))
+                        .rounded(px(CONTROL_RADIUS))
+                        .bg(rgb(SURFACE))
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .text_size(px(12.))
+                        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+                        .prefix(
+                            Icon::new(IconName::Search)
+                                .size(px(14.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .cleanable(true)
+                        .aria_label("Find a file"),
+                ),
             )
             .child(body)
             .into_any_element()
     }
 
-    fn diff_view(&mut self, _: &mut Context<Self>) -> AnyElement {
-        Diff::new(&self.diff)
-            .size_full()
-            .header_visible(false)
-            .soft_wrap(self.wrap)
+    fn diff_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let owner = cx.weak_entity();
+        let add_owner = owner.clone();
+        let viewed = self
+            .file
+            .as_ref()
+            .is_some_and(|p| self.state.viewed.contains_key(p));
+        let file_counts = self
+            .file
+            .as_deref()
+            .and_then(|path| self.file_tree.file(path))
+            .map(|file| (file.added, file.removed));
+        let file_header = file_header_row()
+            .child(
+                row()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(12.))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .child(self.file.clone().unwrap_or_default()),
+                    )
+                    .when_some(file_counts, |d, (added, removed)| {
+                        d.child(
+                            row()
+                                .flex_shrink_0()
+                                .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
+                                .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
+                        )
+                    }),
+            )
+            .child(
+                viewed_button(
+                    viewed,
+                    self.loading
+                        || self.patch_loading
+                        || self.submitting
+                        || self.patch.digest.is_empty(),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.mark_viewed(window, cx))),
+            );
+        let content = if self.loading || self.patch_loading {
+            div()
+                .p_6()
+                .text_color(rgb(MUTED))
+                .child("Loading…")
+                .into_any_element()
+        } else if let Some(notice) = &self.notice {
+            div()
+                .p_6()
+                .text_color(rgb(MUTED))
+                .child(notice.clone())
+                .into_any_element()
+        } else if self.file.is_none() {
+            div()
+                .p_6()
+                .text_color(rgb(MUTED))
+                .child("No changes")
+                .into_any_element()
+        } else {
+            Diff::new(&self.diff)
+                .size_full()
+                .border_0()
+                .header_visible(false)
+                .hunk_separator(DiffHunkSeparator::Simple)
+                .soft_wrap(self.wrap)
+                .text_size(px(12.))
+                .on_add_annotation(move |range, _, cx| {
+                    let _ = add_owner.update(cx, |this, cx| {
+                        this.selection = Selection::from_range(range);
+                        this.diff.update(cx, |diff, cx| {
+                            diff.set_selected_lines(Some(range.clone()), cx)
+                        });
+                        cx.notify();
+                    });
+                })
+                .into_any_element()
+        };
+        column()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(file_header)
+            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
             .into_any_element()
     }
 
@@ -859,6 +1039,14 @@ impl Rev {
                 Input::new(&self.fields[index])
                     .id(("form-field", index))
                     .small()
+                    .min_h(px(CONTROL_HEIGHT))
+                    .max_h(px(CONTROL_HEIGHT))
+                    .px(px(CONTROL_PADDING))
+                    .rounded(px(CONTROL_RADIUS))
+                    .bg(rgb(BG))
+                    .border_1()
+                    .border_color(rgb(CONTROL_BORDER))
+                    .text_size(px(12.))
                     .disabled(self.submitting)
                     .aria_label(placeholder.to_string()),
             )
@@ -870,28 +1058,14 @@ impl Rev {
             return div().into_any_element();
         };
         let title = "Open branch or PR in";
-        let mut body = column().gap_4();
-        let mut footer = row().justify_end().gap_2();
+        let mut body = column().gap(px(POPOVER_PADDING));
+        let mut footer = icon_actions().justify_end();
         let mut choices = column().gap(px(2.));
         for (i, branch) in modal.local_branches.iter().enumerate() {
             let branch = branch.clone();
             let serial = modal.serial;
             choices = choices.child(
-                BaseButton::new(("local-branch", i))
-                    .w_full()
-                    .h(px(44.))
-                    .flex_shrink_0()
-                    .min_w_0()
-                    .px_2()
-                    .gap_2()
-                    .justify_start()
-                    .text_left()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgba(0x00000000))
-                    .hover(|d| d.bg(rgb(HOVER)))
-                    .focus_visible(|d| d.border_color(rgb(FOCUS)))
-                    .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+                choice_button(("local-branch", i), false)
                     .disabled(self.submitting)
                     .accessibility_label(format!("Open local branch {branch}"))
                     .child(
@@ -904,7 +1078,8 @@ impl Rev {
                         column()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(4.))
+                            .gap_0()
+                            .line_height(px(16.))
                             .child(div().truncate().child(branch.clone()))
                             .child(
                                 div()
@@ -926,24 +1101,24 @@ impl Rev {
         if modal.branches_loading {
             choices = choices.child(
                 div()
-                    .px_2()
-                    .py_3()
+                    .px(px(CONTROL_PADDING))
+                    .py(px(UI_SPACING))
                     .text_color(rgb(MUTED))
                     .child("Loading local branches…"),
             );
         } else if let Some(error) = &modal.branches_error {
             choices = choices.child(
                 div()
-                    .px_2()
-                    .py_3()
+                    .px(px(CONTROL_PADDING))
+                    .py(px(UI_SPACING))
                     .text_color(rgb(DANGER))
                     .child(error.clone()),
             );
         } else if modal.local_branches.is_empty() {
             choices = choices.child(
                 div()
-                    .px_2()
-                    .py_3()
+                    .px(px(CONTROL_PADDING))
+                    .py(px(UI_SPACING))
                     .text_color(rgb(MUTED))
                     .child("No local branches yet."),
             );
@@ -951,7 +1126,7 @@ impl Rev {
         body = body
             .child(
                 column()
-                    .gap_2()
+                    .gap(px(UI_SPACING))
                     .child(
                         div()
                             .text_size(px(12.))
@@ -968,15 +1143,15 @@ impl Rev {
             )
             .child(
                 column()
-                    .gap_3()
-                    .pt_4()
+                    .gap(px(POPOVER_PADDING))
+                    .pt(px(POPOVER_PADDING))
                     .border_t_1()
                     .border_color(rgb(BORDER))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
                     .child(
                         row()
                             .items_start()
-                            .gap_3()
+                            .gap(px(POPOVER_PADDING))
                             .child(self.form_field(0, "Base", "Base branch; leave blank to detect"))
                             .child(div().flex().w(relative(0.65)).min_w_0().child(
                                 self.form_field(
@@ -998,9 +1173,7 @@ impl Rev {
                 "Open diff"
             };
             footer = footer.child(
-                Button::new("submit-modal")
-                    .primary()
-                    .label(label)
+                primary_button("submit-modal", label)
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
@@ -1023,7 +1196,7 @@ impl Rev {
                     .bg(rgb(SURFACE))
                     .border_1()
                     .border_color(rgb(CONTROL_BORDER))
-                    .rounded_lg()
+                    .rounded(px(CONTROL_RADIUS))
                     .shadow_lg()
                     .track_focus(&self.modal_focus)
                     .key_context("PatchModal")
@@ -1035,9 +1208,10 @@ impl Rev {
                     .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
                     .child(
                         row()
-                            .h(px(44.))
+                            .h(px(HEADER_HEIGHT))
                             .flex_shrink_0()
-                            .px_4()
+                            .pl(px(POPOVER_PADDING))
+                            .pr(px(UI_SPACING))
                             .border_b_1()
                             .border_color(rgb(BORDER))
                             .child(
@@ -1052,18 +1226,9 @@ impl Rev {
                                     .map(|name| name.to_string_lossy().to_string())
                                     .unwrap_or_else(|| modal.request.repo.clone());
                                 d.child(
-                                    row()
-                                        .h(px(26.))
+                                    header_pill()
                                         .max_w(px(200.))
-                                        .min_w_0()
-                                        .px_2()
-                                        .gap(px(6.))
-                                        .rounded_full()
-                                        .bg(rgb(HOVER))
-                                        .border_1()
-                                        .border_color(rgb(CONTROL_BORDER))
                                         .text_color(rgb(TEXT))
-                                        .text_size(px(12.))
                                         .child(
                                             Icon::new(IconName::Folder)
                                                 .size(px(14.))
@@ -1088,13 +1253,13 @@ impl Rev {
                             .min_h_0()
                             .flex_1()
                             .overflow_y_scroll()
-                            .p_4()
+                            .p(px(POPOVER_PADDING))
                             .child(body),
                     )
                     .child(
                         div()
-                            .px_4()
-                            .py_3()
+                            .px(px(POPOVER_PADDING))
+                            .py(px(UI_SPACING))
                             .flex_shrink_0()
                             .border_t_1()
                             .border_color(rgb(BORDER))
@@ -1139,7 +1304,7 @@ impl Render for Rev {
                             .child("Open a review"),
                     )
                     .child(row().child(
-                        Button::new("welcome-open").label("Open folder").on_click(
+                        primary_button("welcome-open", "Open folder").on_click(
                             cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
                         ),
                     ))
@@ -1190,19 +1355,481 @@ impl Render for Rev {
             .when_some(status, |d, error| {
                 d.child(
                     row()
-                        .px_4()
-                        .py_2()
+                        .p(px(UI_SPACING))
+                        .gap(px(UI_SPACING))
                         .border_t_1()
                         .border_color(rgb(BORDER))
                         .child(div().flex_1().text_color(rgb(DANGER)).child(error))
-                        .child(button("dismiss-error", "×").on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.error = None;
-                                cx.notify();
-                            },
-                        ))),
+                        .child(
+                            icon_button("dismiss-error", "Dismiss error", IconName::Close)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.error = None;
+                                    cx.notify();
+                                })),
+                        ),
                 )
             })
             .when(self.modal.is_some(), |d| d.child(self.dialog(window, cx)))
+    }
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::{FileTreeCache, Rev};
+    use crate::{
+        diff::DiffState,
+        model::{File, FilePatch, Review, ReviewState},
+        workspace_state::WorkspaceState,
+    };
+    use gpui_kit::component::input::InputState;
+    use gpui_kit::{
+        Context, Entity, IntoElement, Render, ScrollStrategy, TestAppContext, VisualTestContext,
+        Window, div, prelude::*, px,
+    };
+
+    struct FileListHost {
+        view: Entity<Rev>,
+    }
+
+    struct HeaderHost {
+        view: Entity<Rev>,
+    }
+
+    impl Render for HeaderHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self.view.update(cx, |view, cx| view.review_header(cx));
+            div().w(px(1000.)).h(px(400.)).child(header)
+        }
+    }
+
+    impl Render for FileListHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let list = self.view.update(cx, |view, cx| view.file_list(cx));
+            div().w(px(210.)).h(px(300.)).child(list)
+        }
+    }
+
+    // Keep UI tests independent of the user's persisted workspace and backend.
+    fn fixture(window: &mut Window, cx: &mut Context<Rev>) -> Rev {
+        let files: Vec<_> = (0..20_000)
+            .map(|index| File {
+                path: format!("file{index:05}.rs"),
+                status: "M".into(),
+                added: 20,
+                removed: 0,
+            })
+            .collect();
+        let mut tree = FileTreeCache::default();
+        tree.set_files(&files);
+        Rev {
+            backend: None,
+            workspace: WorkspaceState::default(),
+            data_dir: Default::default(),
+            review: Some(Review {
+                files,
+                ..Default::default()
+            }),
+            review_snapshot_id: None,
+            state: ReviewState::default(),
+            file: None,
+            patch: FilePatch::default(),
+            diff: cx.new(|cx| DiffState::new([], cx)),
+            selection: None,
+            filter: cx.new(|cx| InputState::new(window, cx)),
+            collapsed_file_folders: Default::default(),
+            filtered_file_folders: Default::default(),
+            file_tree_filter: String::new(),
+            file_tree: tree,
+            file_scroll: Default::default(),
+            file_rows_rendered: Default::default(),
+            fields: Vec::new(),
+            focus: cx.focus_handle(),
+            modal_focus: cx.focus_handle(),
+            modal: None,
+            modal_serial: 0,
+            folder_picker_open: false,
+            loading: false,
+            patch_loading: false,
+            submitting: false,
+            workspace_busy: false,
+            review_epoch: 0,
+            file_epoch: 0,
+            error: None,
+            notice: None,
+            split: false,
+            wrap: false,
+            working_tree_poll_inflight: false,
+            working_tree_refreshing: false,
+            working_tree_revisions: Default::default(),
+            _working_tree_poll: None,
+            _subscriptions: Vec::new(),
+        }
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.refresh();
+            _ = window.draw(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn welcome_screen_opens_and_can_choose_a_repository(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.review = None;
+            app
+        });
+        draw(cx);
+        let open_folder = cx.update(|window, _| window.find_by_label("Open folder").bounds());
+        cx.simulate_mouse_move(open_folder.center(), None, Default::default());
+        draw(cx);
+        cx.simulate_click(open_folder.center(), Default::default());
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|options| {
+            assert!(options.directories);
+            assert!(!options.files);
+            None
+        });
+        draw(cx);
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            assert!(!app.folder_picker_open);
+            assert!(app.review.is_none());
+            assert!(app.error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn twenty_thousand_files_render_only_the_viewport_and_scroll_to_the_last_file(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| FileListHost {
+            view: cx.new(|cx| fixture(window, cx)),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            let rendered = app.file_rows_rendered.take();
+            assert!(
+                !rendered.is_empty() && rendered.len() < 100,
+                "rendered {} rows",
+                rendered.len()
+            );
+            assert_eq!(
+                app.file_scroll
+                    .0
+                    .borrow()
+                    .last_item_size
+                    .unwrap()
+                    .contents
+                    .height,
+                px(28. * 20_000.)
+            );
+        });
+        view.update(cx, |app, cx| {
+            app.file_scroll
+                .scroll_to_item(19_999, ScrollStrategy::Nearest);
+            cx.notify();
+        });
+        draw(cx);
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            let rendered = app.file_rows_rendered.take();
+            assert!(
+                !rendered.is_empty() && rendered.len() < 100,
+                "rendered {} rows after scroll",
+                rendered.len()
+            );
+            assert!(
+                rendered.iter().any(|path| path == "file19999.rs"),
+                "rendered {rendered:?}"
+            );
+        });
+        view.update(cx, |app, cx| {
+            app.file_tree_filter = "file19999".into();
+            app.file_tree.set_filter(&app.file_tree_filter);
+            app.file_scroll.scroll_to_item(0, ScrollStrategy::Top);
+            cx.notify();
+        });
+        draw(cx);
+        view.update(cx, |app, _| {
+            assert_eq!(app.file_tree_entries().len(), 1);
+            assert!(app.file_rows_rendered.borrow().len() < 10);
+            assert_eq!(app.file_scroll.0.borrow().base_handle.offset().y, px(0.));
+        });
+    }
+
+    #[gpui::test]
+    fn unchanged_working_tree_polls_do_not_notify_the_view(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| FileListHost {
+            view: cx.new(|cx| fixture(window, cx)),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        view.update(cx, |app, _| {
+            let review = app.review.as_mut().unwrap();
+            review.request = crate::model::ReviewRequest::working_tree("/test-repo");
+            review.branch = "main".into();
+            review.branch_head_sha = "abc".into();
+            app.workspace.remember_review(review, &review.request);
+            app.working_tree_revisions
+                .insert("/test-repo".into(), "same".into());
+        });
+        cx.run_until_parked();
+        let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            let notifications = notifications.clone();
+            cx.observe(&view, move |_, _| {
+                notifications.set(notifications.get() + 1)
+            })
+        });
+        for _ in 0..3 {
+            cx.update(|window, cx| {
+                view.update(cx, |app, cx| {
+                    app.apply_working_tree_states(
+                        Some("/test-repo"),
+                        vec![Some(crate::model::WorkingTreeState {
+                            repo: "/test-repo".into(),
+                            branch: "main".into(),
+                            sha: "abc".into(),
+                            revision: "same".into(),
+                        })],
+                        window,
+                        cx,
+                    );
+                })
+            });
+        }
+        assert_eq!(notifications.get(), 0);
+        assert!(!cx.update(|_, cx| view.read(cx).working_tree_refreshing));
+    }
+
+    #[gpui::test]
+    fn opening_a_repository_prompts_once_and_cancelling_preserves_the_review(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| FileListHost {
+            view: cx.new(|cx| fixture(window, cx)),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        let before = cx.update(|_, cx| view.read(cx).review.clone());
+        // Repeated clicks must not queue multiple native dialogs.
+        for _ in 0..2 {
+            cx.update(|window, cx| view.update(cx, |app, cx| app.pick_folder(window, cx)));
+        }
+        assert!(cx.did_prompt_for_paths());
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            assert!(app.folder_picker_open);
+            assert!(app.modal.is_none());
+        });
+        cx.simulate_path_prompt_response(|options| {
+            assert!(options.directories);
+            assert!(!options.files);
+            assert!(!options.multiple);
+            None
+        });
+        cx.run_until_parked();
+        assert!(!cx.did_prompt_for_paths());
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            assert!(!app.folder_picker_open);
+            assert!(!app.loading);
+            assert!(app.modal.is_none());
+            assert_eq!(app.review, before);
+            assert!(app.error.is_none());
+        });
+        // Cancelling releases the guard so the picker can be opened again.
+        cx.update(|window, cx| view.update(cx, |app, cx| app.pick_folder(window, cx)));
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|_| None);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn pr_description_opens_only_over_title_text(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            // Check final geometry without depending on animation wall time.
+            cx.set_reduce_motion(true);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| HeaderHost {
+            view: cx.new(|cx| {
+                let mut app = fixture(window, cx);
+                let review = app.review.as_mut().unwrap();
+                review.name = "patch".into();
+                review.pull_request = Some(crate::model::PullRequest {
+                    number: 14,
+                    title: "Refine the UI".into(),
+                    body: "The PR description.".into(),
+                    head_ref_name: "feature".into(),
+                    base_ref_name: "main".into(),
+                    comparison_base_ref_name: None,
+                });
+                app
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        let pill = cx.debug_bounds("pr-title-pill").unwrap();
+        let text = cx.debug_bounds("pr-title-text").unwrap();
+        let actions = cx.debug_bounds("review-header-actions").unwrap();
+        assert!(
+            pill.right() + px(20.) < actions.left(),
+            "title pill should hug its text"
+        );
+        for position in [
+            gpui_kit::point((pill.right() + actions.left()) / 2., pill.center().y),
+            gpui_kit::point(pill.left() + px(3.), pill.center().y),
+            actions.center(),
+        ] {
+            cx.simulate_mouse_move(position, None, Default::default());
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(200));
+            draw(cx);
+            assert!(cx.debug_bounds("pr-description-content").is_none());
+        }
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        let settled = cx.debug_bounds("pr-description-content").unwrap();
+        assert_eq!(settled.left(), pill.left(), "align with the title pill");
+        assert!(
+            (settled.top() - pill.bottom() - px(2.)).abs() <= px(1.),
+            "leave a 2px gap, allowing for pixel rounding: {pill:?}, {settled:?}"
+        );
+
+        // Crossing the gap onto the card keeps the description available.
+        cx.simulate_mouse_move(settled.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        cx.simulate_mouse_move(
+            gpui_kit::point(px(950.), px(350.)),
+            None,
+            Default::default(),
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+
+        view.update(cx, |app, cx| {
+            app.review
+                .as_mut()
+                .unwrap()
+                .pull_request
+                .as_mut()
+                .unwrap()
+                .title = "A long pull request title ".repeat(30);
+            cx.notify();
+        });
+        draw(cx);
+        let pill = cx.debug_bounds("pr-title-pill").unwrap();
+        let actions = cx.debug_bounds("review-header-actions").unwrap();
+        assert!(
+            pill.right() <= actions.left(),
+            "long titles must leave room for actions"
+        );
+    }
+
+    #[gpui::test]
+    fn pr_description_fades_out_and_reentry_cancels_exit(cx: &mut TestAppContext) {
+        struct Host;
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .p_4()
+                    .child(
+                        super::header_pill()
+                            .w(px(200.))
+                            .child(super::PrDescription {
+                                id: "animated-pr-description".into(),
+                                title: "Refine the UI #14".into(),
+                                description: "The PR description.".into(),
+                            }),
+                    )
+            }
+        }
+        let (_, cx) = cx.add_window_view(|_, _| Host);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+        let title = cx.debug_bounds("pr-title-text").unwrap();
+        let outside = gpui_kit::point(px(700.), px(400.));
+        cx.simulate_mouse_move(title.center(), None, Default::default());
+        draw(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(120));
+        draw(cx);
+        let settled = cx.debug_bounds("pr-description-content").unwrap();
+
+        cx.simulate_mouse_move(outside, None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(150));
+        draw(cx);
+        assert!(
+            cx.debug_bounds("pr-description-content").is_some(),
+            "retain the card for its exit"
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(50));
+        draw(cx);
+        assert!(
+            cx.debug_bounds("pr-description-content").is_some(),
+            "retain it midway through fading"
+        );
+
+        // Re-enter during the fade; the pending close must not remove it later.
+        cx.simulate_mouse_move(title.center(), None, Default::default());
+        draw(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(120));
+        draw(cx);
+        assert_eq!(cx.debug_bounds("pr-description-content"), Some(settled));
+        cx.simulate_mouse_move(settled.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        cx.simulate_mouse_move(outside, None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(150));
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(120));
+        draw(cx);
+        assert!(
+            cx.debug_bounds("pr-description-content").is_none(),
+            "unmount after the fade finishes"
+        );
     }
 }

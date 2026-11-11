@@ -6,8 +6,7 @@ use crate::{
     workspace_state::WorkspaceState,
 };
 use gpui_kit::component::{
-    Disableable, FocusTrapElement, Sizable,
-    button::{Button, ButtonVariants},
+    FocusTrapElement, Sizable,
     input::{Input, InputState},
 };
 use gpui_kit::prelude::*;
@@ -474,7 +473,7 @@ impl Rev {
             json!({ "review": request, "path": path, "snapshotId": self.review_snapshot_id }),
             window,
             cx,
-            move |this, result, window, cx| {
+            move |this, result, _, cx| {
                 if this.file_epoch != epoch {
                     return;
                 }
@@ -840,7 +839,11 @@ impl Rev {
                 cx,
                 move |this, result, window, cx| {
                     this.submitting = false;
-                    if this.modal.as_ref().is_none_or(|open| open.serial != modal.serial) {
+                    if this
+                        .modal
+                        .as_ref()
+                        .is_none_or(|open| open.serial != modal.serial)
+                    {
                         return;
                     }
                     if let Some(value) = this.result(result) {

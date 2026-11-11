@@ -137,16 +137,6 @@ impl Selection {
             end: range.start().max(range.end()),
         })
     }
-    pub fn diff_side(&self) -> DiffSide {
-        if self.side == "deletions" {
-            DiffSide::Original
-        } else {
-            DiffSide::Modified
-        }
-    }
-    pub fn label(&self) -> String {
-        format!("{}:{}–{} · {}", self.path, self.start, self.end, self.side)
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
