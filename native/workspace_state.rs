@@ -26,7 +26,7 @@ pub struct Project {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TabKind {
-    /// Follows whatever the project has checked out.
+    /// The permanent working tree; follows whatever the project has checked out.
     Current,
     Branch,
     Pr,
@@ -58,16 +58,59 @@ impl WorkspaceState {
         self.projects.iter().flat_map(|p| p.tabs.iter())
     }
 
-    /// Create or update the review's tab, make it active.
-    /// With no head or `HEAD`, use the Current tab, which follows the checked-out
-    /// branch. Otherwise, use a tab for the requested base and head.
-    /// Switching between branch and working-tree review modes reuses the same tab.
+    /// Upgrade saved workspaces and keep one permanent working tree first in every repo.
+    pub fn normalize(&mut self) {
+        for project in &mut self.projects {
+            ensure_current_tab(project);
+            for tab in project.tabs.iter_mut().skip(1) {
+                if tab.request.mode.as_deref() != Some("branch") {
+                    tab.scope_key = None;
+                }
+                tab.request.mode = Some("branch".into());
+            }
+        }
+        if self.active_tab().is_none() {
+            let first = self.tabs().next().map(|tab| tab.id.clone());
+            self.active_tab_id = first;
+        }
+    }
+
+    pub fn update_checkout(&mut self, repo: &str, branch: &str, sha: &str) -> bool {
+        let Some(project) = self
+            .projects
+            .iter_mut()
+            .find(|project| project.repo == repo)
+        else {
+            return false;
+        };
+        let previous = project.tabs.first().cloned();
+        let tab = current_tab(project, branch, sha);
+        previous.as_ref() != Some(tab)
+    }
+
+    pub fn refresh_working_tree(&mut self, review: &Review, file: Option<String>) {
+        if let Some(project) = self
+            .projects
+            .iter_mut()
+            .find(|p| p.repo == review.request.repo)
+        {
+            let tab = current_tab(project, &review.branch, &review.branch_head_sha);
+            tab.scope_key = Some(review.scope_key.clone());
+            tab.file = file;
+        }
+    }
+
+    /// Working reviews use the permanent entry; branches and PRs are committed comparisons.
     pub fn remember_review(&mut self, review: &Review, request: &ReviewRequest) -> String {
-        let index = match self.projects.iter().position(|p| p.repo == review.repo) {
+        let index = match self
+            .projects
+            .iter()
+            .position(|p| p.repo == review.request.repo)
+        {
             Some(index) => index,
             None => {
                 self.projects.push(Project {
-                    repo: review.repo.clone(),
+                    repo: review.request.repo.clone(),
                     name: review.name.clone(),
                     collapsed: false,
                     tabs: vec![],
@@ -78,25 +121,20 @@ impl WorkspaceState {
 
         let project = &mut self.projects[index];
         project.collapsed = false;
+        ensure_current_tab(project);
 
-        let follows_checkout = request.head.as_deref().is_none_or(|head| head == "HEAD");
+        let follows_checkout = request.mode.as_deref() == Some("working");
         let id = if follows_checkout {
             let tab = current_tab(project, &review.branch, &review.branch_head_sha);
             tab.scope_key = Some(review.scope_key.clone());
-            tab.request = ReviewRequest {
-                repo: review.repo.clone(),
-                // Keep the base unset unless chosen so it's resolved for each branch.
-                base: request.base.clone(),
-                head: Some("HEAD".into()),
-                mode: Some(review.mode.clone()),
-                commit_range: review.commit_range.clone(),
-            };
+            tab.request = ReviewRequest::working_tree(review.request.repo.clone());
             tab.id.clone()
         } else {
-            let head = &review.head;
+            let head = review.request.head.as_deref().unwrap_or("HEAD");
+            let base = review.request.base.as_deref().unwrap_or("main");
             let pr = extract_pr_number(head);
             let tab = ReviewTab {
-                id: format!("{}#{}...{}", review.repo, review.base, head),
+                id: format!("{}#{}...{}", review.request.repo, base, head),
                 kind: if pr.is_some() {
                     TabKind::Pr
                 } else {
@@ -111,11 +149,11 @@ impl WorkspaceState {
                         .to_string(),
                 },
                 request: ReviewRequest {
-                    repo: review.repo.clone(),
-                    base: Some(review.base.clone()),
-                    head: Some(head.clone()),
-                    mode: Some(review.mode.clone()),
-                    commit_range: review.commit_range.clone(),
+                    repo: review.request.repo.clone(),
+                    base: Some(base.to_string()),
+                    head: Some(head.to_string()),
+                    mode: Some("branch".into()),
+                    commit_range: review.request.commit_range.clone(),
                 },
                 scope_key: Some(review.scope_key.clone()),
                 head_sha: None,
@@ -195,51 +233,65 @@ impl WorkspaceState {
     }
 }
 
-fn current_tab<'a>(project: &'a mut Project, branch: &str, sha: &str) -> &'a mut ReviewTab {
-    let label = if branch == DETACHED {
-        format!("Detached {}", &sha[..sha.len().min(7)])
-    } else {
-        branch.to_string()
-    };
-
+fn ensure_current_tab(project: &mut Project) -> &mut ReviewTab {
     let index = match project.tabs.iter().position(|t| t.kind == TabKind::Current) {
-        Some(index) => {
-            let tab = &mut project.tabs[index];
-
-            // The tab now shows a different branch or commit.
-            // Clear selections that belonged to the previous one.
-            if tab.label != label {
-                tab.request.commit_range = None;
-                tab.scope_key = None;
-                tab.file = None;
-            }
-
-            tab.label = label;
-            tab.head_sha = Some(sha.to_string());
-            index
-        }
+        Some(index) => index,
         None => {
             project.tabs.insert(
                 0,
                 ReviewTab {
                     id: format!("{}#current", project.repo),
                     kind: TabKind::Current,
-                    label,
-                    request: ReviewRequest {
-                        repo: project.repo.clone(),
-                        head: Some("HEAD".into()),
-                        ..Default::default()
-                    },
+                    label: "Working tree".into(),
+                    request: ReviewRequest::working_tree(project.repo.clone()),
                     scope_key: None,
-                    head_sha: Some(sha.to_string()),
+                    head_sha: None,
                     file: None,
                 },
             );
             0
         }
     };
+    if index != 0 {
+        let tab = project.tabs.remove(index);
+        project.tabs.insert(0, tab);
+    }
+    let mut first = true;
+    project.tabs.retain(|tab| {
+        if tab.kind != TabKind::Current {
+            return true;
+        }
+        let keep = first;
+        first = false;
+        keep
+    });
+    let tab = &mut project.tabs[0];
+    if !tab.label.starts_with("Working tree") {
+        tab.label = format!("Working tree · {}", tab.label);
+    }
+    let request = ReviewRequest::working_tree(project.repo.clone());
+    if tab.request != request {
+        tab.scope_key = None;
+    }
+    tab.request = request;
+    tab
+}
 
-    &mut project.tabs[index]
+fn current_tab<'a>(project: &'a mut Project, branch: &str, sha: &str) -> &'a mut ReviewTab {
+    let branch = if branch == DETACHED {
+        format!("Detached {}", &sha[..sha.len().min(7)])
+    } else {
+        branch.to_string()
+    };
+    let label = format!("Working tree · {branch}");
+    let tab = ensure_current_tab(project);
+    if tab.label != label {
+        tab.scope_key = None;
+        tab.file = None;
+    }
+    tab.label = label;
+    tab.head_sha = Some(sha.to_owned());
+    tab
 }
 
 /// The PR number in a ref imported as `refs/rev/<owner>/<repo>/<number>/head`.
@@ -264,15 +316,18 @@ mod tests {
 
     fn review(repo: &str, head: &str, mode: &str) -> Review {
         Review {
-            repo: repo.into(),
+            request: ReviewRequest {
+                repo: repo.into(),
+                base: Some("main".into()),
+                head: Some(head.into()),
+                mode: Some(mode.into()),
+                ..Default::default()
+            },
             name: repo.trim_start_matches('/').into(),
-            base: "main".into(),
-            head: head.into(),
-            mode: mode.into(),
             branch: "feature".into(),
             branch_head_sha: "0123456789abcdef".into(),
             scope_key: format!("{repo}:{head}:{mode}"),
-            commit_range: None,
+            ..Default::default()
         }
     }
 
@@ -285,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn tabs_group_by_repo_and_keep_the_selected_file_across_modes() {
+    fn branch_tabs_remain_committed_and_get_a_permanent_working_tree() {
         let mut workspace = WorkspaceState::default();
         let id = workspace.remember_review(
             &review("/a", "feature", "branch"),
@@ -300,8 +355,11 @@ mod tests {
         assert_eq!(reopened, id);
         let tab = workspace.active_tab().unwrap();
         assert_eq!(tab.file.as_deref(), Some("file.ts"));
-        assert_eq!(tab.request.mode.as_deref(), Some("working"));
-        assert_eq!(workspace.projects[0].tabs.len(), 1);
+        assert_eq!(tab.request.mode.as_deref(), Some("branch"));
+        assert_eq!(workspace.projects[0].tabs.len(), 2);
+        let current = &workspace.projects[0].tabs[0];
+        assert_eq!(current.kind, TabKind::Current);
+        assert_eq!(current.request, ReviewRequest::working_tree("/a"));
 
         workspace.remember_review(
             &review("/b", "feature", "branch"),
@@ -313,34 +371,39 @@ mod tests {
     #[test]
     fn reviews_of_the_checkout_share_one_current_tab() {
         let mut workspace = WorkspaceState::default();
-        let first = workspace.remember_review(&review("/a", "HEAD", "branch"), &open("/a", None));
-        let second =
-            workspace.remember_review(&review("/a", "HEAD", "working"), &open("/a", Some("HEAD")));
+        let request = ReviewRequest::working_tree("/a");
+        let first = workspace.remember_review(&review("/a", "HEAD", "working"), &request);
+        let second = workspace.remember_review(&review("/a", "HEAD", "working"), &request);
         assert_eq!(first, second);
         let tab = workspace.active_tab().unwrap();
         assert_eq!(tab.kind, TabKind::Current);
-        assert_eq!(tab.label, "feature");
+        assert_eq!(tab.label, "Working tree · feature");
         assert_eq!(tab.request.base, None);
+        assert_eq!(tab.request.mode.as_deref(), Some("working"));
     }
 
     #[test]
     fn switching_branches_resets_the_current_tab() {
         let mut workspace = WorkspaceState::default();
-        let id = workspace.remember_review(&review("/a", "HEAD", "branch"), &open("/a", None));
+        let request = ReviewRequest::working_tree("/a");
+        let id = workspace.remember_review(&review("/a", "HEAD", "working"), &request);
         workspace.set_file(&id, "file.ts".into());
 
-        let mut detached = review("/a", "HEAD", "branch");
+        let mut detached = review("/a", "HEAD", "working");
         detached.branch = DETACHED.into();
-        workspace.remember_review(&detached, &open("/a", None));
+        workspace.remember_review(&detached, &request);
         let tab = workspace.active_tab().unwrap();
-        assert_eq!(tab.label, "Detached 0123456");
+        assert_eq!(tab.label, "Working tree · Detached 0123456");
         assert_eq!(tab.file, None);
     }
 
     #[test]
     fn pr_tabs_are_labeled_and_closing_the_active_tab_selects_a_neighbour() {
         let mut workspace = WorkspaceState::default();
-        let current = workspace.remember_review(&review("/a", "HEAD", "branch"), &open("/a", None));
+        let current = workspace.remember_review(
+            &review("/a", "HEAD", "working"),
+            &ReviewRequest::working_tree("/a"),
+        );
         let branch = workspace.remember_review(
             &review("/a", "feature", "branch"),
             &open("/a", Some("feature")),
@@ -358,6 +421,9 @@ mod tests {
             2,
             "current tabs stay open"
         );
+        workspace.close_tab(&branch);
+        assert_eq!(workspace.active_tab_id.as_deref(), Some(current.as_str()));
+        assert_eq!(workspace.projects[0].tabs.len(), 1);
 
         workspace.remove_project("/a");
         assert!(workspace.projects.is_empty());
@@ -369,5 +435,48 @@ mod tests {
         assert_eq!(extract_pr_number("refs/rev/o/r/7/head"), Some("7"));
         assert_eq!(extract_pr_number("refs/rev/o/r/x/head"), None);
         assert_eq!(extract_pr_number("refs/heads/7/head"), None);
+    }
+
+    #[test]
+    fn normalizing_legacy_tabs_keeps_active_branch_and_repairs_working_tree() {
+        let mut workspace = WorkspaceState::default();
+        let branch = workspace.remember_review(
+            &review("/a", "feature", "branch"),
+            &open("/a", Some("feature")),
+        );
+        let project = &mut workspace.projects[0];
+        project.tabs[1].request.mode = Some("working".into());
+        project.tabs[0].label = "old-branch".into();
+        project.tabs[0].request.mode = Some("branch".into());
+        project.tabs[0].request.base = Some("old-base".into());
+        project.tabs.swap(0, 1);
+        workspace.normalize();
+        assert_eq!(workspace.active_tab_id.as_deref(), Some(branch.as_str()));
+        let project = &workspace.projects[0];
+        assert_eq!(project.tabs[0].request, ReviewRequest::working_tree("/a"));
+        assert_eq!(project.tabs[0].label, "Working tree · old-branch");
+        assert_eq!(project.tabs[1].request.mode.as_deref(), Some("branch"));
+        let normalized = workspace.clone();
+        workspace.normalize();
+        assert_eq!(workspace, normalized);
+    }
+
+    #[test]
+    fn background_checkout_updates_do_not_navigate_or_expand_repos() {
+        let mut workspace = WorkspaceState::default();
+        let branch = workspace.remember_review(
+            &review("/a", "feature", "branch"),
+            &open("/a", Some("feature")),
+        );
+        workspace.collapse_project("/a", true);
+        assert!(workspace.update_checkout("/a", "new-branch", "new-sha"));
+        assert!(!workspace.update_checkout("/a", "new-branch", "new-sha"));
+        assert_eq!(workspace.active_tab_id.as_deref(), Some(branch.as_str()));
+        assert!(workspace.projects[0].collapsed);
+        assert_eq!(
+            workspace.projects[0].tabs[0].label,
+            "Working tree · new-branch"
+        );
+        assert!(!workspace.update_checkout("/removed", "feature", "sha"));
     }
 }

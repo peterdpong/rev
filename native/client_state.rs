@@ -30,8 +30,11 @@ impl ClientState {
             Err(error) => return Err(error),
         };
 
-        match serde_json::from_str(&text) {
-            Ok(state) => Ok(state),
+        match serde_json::from_str::<Self>(&text) {
+            Ok(mut state) => {
+                state.workspace.normalize();
+                Ok(state)
+            }
             Err(_) => {
                 fs::remove_file(&file)?;
 
@@ -119,6 +122,7 @@ mod tests {
             }],
         });
         state.workspace.active_tab_id = Some("tab".into());
+        state.workspace.normalize();
         state.save(&dir).unwrap();
 
         let loaded = ClientState::load(&dir).unwrap();
@@ -129,6 +133,31 @@ mod tests {
         assert!(saved.get("workspace").is_some());
         assert_eq!(saved.as_object().unwrap().len(), 1);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_repositories_gain_a_permanent_working_tree_on_load() {
+        let dir = temp_dir("legacy-working-tree");
+        fs::create_dir_all(&dir).unwrap();
+        let json = serde_json::json!({ "workspace": {
+            "projects": [{ "repo": "/a", "name": "a", "collapsed": true, "tabs": [] }]
+        }});
+        fs::write(
+            dir.join(CLIENT_STATE_FILE_NAME),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let state = ClientState::load(&dir).unwrap();
+        let project = &state.workspace.projects[0];
+        assert!(project.collapsed);
+        assert_eq!(project.tabs.len(), 1);
+        assert_eq!(project.tabs[0].kind, TabKind::Current);
+        assert_eq!(project.tabs[0].request, ReviewRequest::working_tree("/a"));
+        assert_eq!(
+            state.workspace.active_tab_id.as_deref(),
+            Some(project.tabs[0].id.as_str())
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
