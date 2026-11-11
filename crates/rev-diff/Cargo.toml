@@ -1,0 +1,12 @@
+[package]
+name = "rev-diff"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The review document, parser, index and selection have no runtime dependencies.
+[dependencies]
+
+[[bench]]
+name = "review"
+harness = false
