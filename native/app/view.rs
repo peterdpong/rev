@@ -55,6 +55,118 @@ impl RenderOnce for FolderIcon {
     }
 }
 
+#[derive(IntoElement)]
+struct PrDescription {
+    id: SharedString,
+    title: String,
+    description: String,
+}
+
+#[derive(Default)]
+struct PrDescriptionState {
+    open: bool,
+    trigger_hovered: bool,
+    content_hovered: bool,
+    close_task: Option<Task<()>>,
+}
+
+impl PrDescriptionState {
+    fn update_hover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_task = None;
+        if self.trigger_hovered || self.content_hovered {
+            if !self.open {
+                self.open = true;
+                cx.notify();
+            }
+        } else if self.open {
+            // Allow the pointer to cross the gap before starting the exit fade.
+            self.close_task = Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(150))
+                    .await;
+                let _ = this.update_in(cx, |state, _, cx| {
+                    if !state.trigger_hovered && !state.content_hovered {
+                        state.open = false;
+                        cx.notify();
+                    }
+                });
+            }));
+        }
+    }
+}
+
+impl RenderOnce for PrDescription {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state =
+            window.use_keyed_state((ElementId::from(self.id.clone()), "hover"), cx, |_, _| {
+                PrDescriptionState::default()
+            });
+        let open = state.read(cx).open;
+        // Sample even while closed, so both entrance and exit share a continuous
+        // transition and reversing a fade never restarts from an endpoint.
+        let opacity = motion::transition(
+            (self.id.clone(), "visibility"),
+            if open { 1.0_f32 } else { 0.0_f32 },
+            motion::Transition::new(std::time::Duration::from_millis(110)).ease(ease_out_quint()),
+            window,
+            cx,
+        );
+        let popup = Popup::new(
+            self.id,
+            div()
+                .id("pr-title-text")
+                .debug_selector(|| "pr-title-text".into())
+                .min_w_0()
+                .truncate()
+                .child(self.title.clone())
+                .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
+                    state.trigger_hovered = *hovered;
+                    state.update_hover(window, cx);
+                })),
+        )
+        .anchor(Anchor::TopLeft)
+        .offset(px(
+            (HEADER_PILL_HEIGHT - HEADER_PILL_LINE_HEIGHT) / 2. + PR_DESCRIPTION_GAP
+        ));
+        if !open && opacity <= 0.0 {
+            return popup;
+        }
+        popup.content(
+            column()
+                .id("pr-description-card")
+                .debug_selector(|| "pr-description-content".into())
+                .relative()
+                // The text-only trigger is inset from the surrounding pill.
+                .left(px(-HEADER_PILL_PADDING - 1.))
+                .top(px(-4. * (1. - opacity)))
+                .w(px(444.))
+                .px(px(HEADER_PILL_PADDING))
+                .py_3()
+                .gap(px(10.))
+                .bg(rgb(SURFACE))
+                .border_1()
+                .border_color(rgb(CONTROL_BORDER))
+                .rounded(px(8.))
+                .shadow_lg()
+                .opacity(opacity)
+                .whitespace_normal()
+                .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
+                    state.content_hovered = *hovered;
+                    state.update_hover(window, cx);
+                }))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title))
+                .child(
+                    div()
+                        .id("pull-request-description")
+                        .max_h(px(300.))
+                        .overflow_y_scroll()
+                        .text_color(rgb(MUTED))
+                        .child(self.description),
+                ),
+        )
+    }
+}
+
 fn row() -> Div {
     div().flex().items_center().gap_2()
 }
@@ -141,15 +253,134 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
         })
 }
 
+fn header_pill() -> Div {
+    row()
+        .h(px(HEADER_PILL_HEIGHT))
+        .min_w_0()
+        .px(px(HEADER_PILL_PADDING))
+        .gap(px(6.))
+        .rounded(px(6.))
+        .bg(rgb(SURFACE))
+        .border_1()
+        .border_color(rgb(CONTROL_BORDER))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+}
+
 impl Rev {
-    fn review_header(&self, _: &mut Context<Self>) -> TitleBar {
+    fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
+        let busy = self.loading || self.submitting;
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
             .pl_0()
             .bg(rgb(BG))
             .border_b_1()
             .border_color(rgb(BORDER))
-            .child(div().w(px(SIDEBAR_WIDTH)).h_full().bg(rgb(PANEL)))
+            .child(
+                div()
+                    .w(px(SIDEBAR_WIDTH))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(PANEL))
+                    .border_r_1()
+                    .border_color(rgb(BORDER)),
+            )
+            .child(
+                row()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .pl(px(UI_SPACING))
+                    .pr_4()
+                    .gap(px(UI_SPACING))
+                    .when_some(self.review.as_ref(), |d, review| {
+                        d.child(
+                            header_pill()
+                                .max_w(px(200.))
+                                .flex_shrink_0()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(14.))
+                                        .flex_shrink_0()
+                                        .text_color(rgb(MUTED)),
+                                )
+                                .child(div().min_w_0().truncate().child(review.name.clone())),
+                        )
+                        .child(
+                            div()
+                                .id("pull-request-title")
+                                .flex_shrink_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .map(|d| {
+                                    if let Some(pr) = &review.pull_request {
+                                        let title = format!("{}  #{}", pr.title, pr.number);
+                                        let description = if pr.body.trim().is_empty() {
+                                            "No description provided.".to_owned()
+                                        } else {
+                                            pr.body.trim_end().to_owned()
+                                        };
+                                        d.child(
+                                            header_pill()
+                                                .id("pr-title-pill")
+                                                .debug_selector(|| "pr-title-pill".into())
+                                                .max_w_full()
+                                                .hover(|d| {
+                                                    d.bg(rgb(HOVER))
+                                                        .border_color(rgb(SELECTED_BORDER))
+                                                })
+                                                .child(
+                                                    div().min_w_0().child(PrDescription {
+                                                        id: format!(
+                                                            "pr-description-{}-{}",
+                                                            review.request.repo, pr.number
+                                                        )
+                                                        .into(),
+                                                        title,
+                                                        description,
+                                                    }),
+                                                ),
+                                        )
+                                    } else {
+                                        d.child(header_pill().text_color(rgb(MUTED)).child(
+                                            if review.request.mode.as_deref() == Some("working") {
+                                                "Working tree"
+                                            } else {
+                                                "Branch review"
+                                            },
+                                        ))
+                                    }
+                                }),
+                        )
+                        .child(div().flex_1().min_w_0())
+                        .child(
+                            row()
+                                .id("review-header-actions")
+                                .debug_selector(|| "review-header-actions".into())
+                                .gap_1()
+                                .flex_shrink_0()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(|_, _, cx| cx.stop_propagation())
+                                .child(
+                                    icon_button("refresh", "Refresh", IconName::RefreshCw)
+                                        .disabled(busy)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.refresh(window, cx)
+                                        })),
+                                )
+                                .child(
+                                    icon_button("fetch", "Fetch", IconName::CloudDownload)
+                                        .disabled(busy)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.fetch(window, cx)
+                                        })),
+                                ),
+                        )
+                    }),
+            )
     }
 
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -324,8 +555,96 @@ impl Rev {
             .into_any_element()
     }
 
-    fn diff_view_header(&self, _: &mut Context<Self>) -> AnyElement {
-        div().into_any_element()
+    fn diff_view_header(&self, cx: &mut Context<Self>) -> AnyElement {
+        row()
+            .id("diff-view-header")
+            .bg(rgb(SUBPANEL))
+            .h(px(42.))
+            .flex_shrink_0()
+            .px_3()
+            .border_b_1()
+            .border_color(rgb(BORDER))
+            .child(
+                column()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .line_height(px(16.))
+                    .when_some(self.review.as_ref(), |d, review| {
+                        let comparison = review.comparison_label();
+                        let added = self.file_tree.added;
+                        let removed = self.file_tree.removed;
+                        d.child(
+                            div()
+                                .id("branch-comparison")
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(MUTED))
+                                .child(comparison),
+                        )
+                        .child(
+                            row()
+                                .flex_shrink_0()
+                                .text_size(px(12.))
+                                .line_height(px(14.))
+                                .child(
+                                    div()
+                                        .text_color(rgb(MUTED))
+                                        .child(format!("{} files", review.files.len())),
+                                )
+                                .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
+                                .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
+                        )
+                    }),
+            )
+            .child(
+                icon_button(
+                    "diff-mode",
+                    if self.split {
+                        "Switch to unified diff"
+                    } else {
+                        "Switch to split diff"
+                    },
+                    if self.split {
+                        IconName::Rows2
+                    } else {
+                        IconName::Columns2
+                    },
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.split = !this.split;
+                    let mode = if this.split {
+                        DiffMode::Split
+                    } else {
+                        DiffMode::Unified
+                    };
+                    this.diff.update(cx, |diff, cx| diff.set_mode(mode, cx));
+                    cx.notify();
+                })),
+            )
+            .child(
+                icon_button(
+                    "wrap",
+                    if self.wrap {
+                        "Disable line wrapping"
+                    } else {
+                        "Enable line wrapping"
+                    },
+                    IconName::TextWrap,
+                )
+                .selected(self.wrap)
+                .aria_toggled(if self.wrap {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                })
+                .when(self.wrap, selected_surface)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.wrap = !this.wrap;
+                    cx.notify();
+                })),
+            )
+            .into_any_element()
     }
 
     fn file_list(&mut self, _: &mut Context<Self>) -> AnyElement {
