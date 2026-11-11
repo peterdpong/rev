@@ -267,6 +267,27 @@ fn header_pill() -> Div {
         .line_height(px(HEADER_PILL_LINE_HEIGHT))
 }
 
+fn file_status_icon(id: impl Into<ElementId>, status: &str) -> Stateful<Div> {
+    let (icon, label, color) = match status {
+        "A" => (IconName::FilePlus, "Added", SUCCESS),
+        "M" => (IconName::FilePenLine, "Modified", WARNING),
+        "D" => (IconName::FileMinus, "Deleted", DANGER),
+        "R" => (IconName::FileSymlink, "Renamed", BLUE),
+        "C" => (IconName::Copy, "Copied", BLUE),
+        "T" => (IconName::FileType, "File type changed", PURPLE),
+        "U" => (IconName::FileExclamationPoint, "Unmerged", DANGER),
+        "?" => (IconName::FileQuestionMark, "Untracked", BLUE),
+        _ => (IconName::FileQuestionMark, "Unknown status", MUTED),
+    };
+    div()
+        .id(id)
+        .size(px(14.))
+        .flex_shrink_0()
+        .role(accesskit::Role::Image)
+        .aria_label(label)
+        .child(Icon::new(icon).size(px(14.)).text_color(rgb(color)))
+}
+
 impl Rev {
     fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
@@ -647,8 +668,172 @@ impl Rev {
             .into_any_element()
     }
 
-    fn file_list(&mut self, _: &mut Context<Self>) -> AnyElement {
-        div().into_any_element()
+    fn file_tree_row(&self, entry: &TreeEntry, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(test)]
+        self.file_rows_rendered
+            .borrow_mut()
+            .push(entry.path.clone());
+        let repo = self
+            .review
+            .as_ref()
+            .map(|review| review.request.repo.as_str())
+            .unwrap_or_default();
+        let loading = self.loading;
+        let path = entry.path.clone();
+        let selected =
+            matches!(&entry.kind, EntryKind::File(_)) && self.file.as_ref() == Some(&path);
+        let viewed = self.state.viewed.contains_key(&path);
+        let label = div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .child(entry.label.clone());
+        let item = BaseButton::new(SharedString::from(format!("file-tree-{repo}-{path}")))
+            .w_full()
+            .min_w_0()
+            .h(px(LIST_ROW_HEIGHT))
+            .flex_shrink_0()
+            .justify_start()
+            .gap(px(6.))
+            .pl(px(8. + entry.depth as f32 * 12.))
+            .pr_2()
+            .rounded_md()
+            .border_1()
+            .border_color(rgba(0x00000000))
+            .text_size(px(12.))
+            .when(selected, selected_surface)
+            .hover(move |d| {
+                if selected || loading {
+                    d
+                } else {
+                    d.bg(rgb(HOVER))
+                }
+            })
+            .focus_visible(|d| d.border_color(rgb(FOCUS)))
+            .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+            .disabled(loading)
+            .accessibility_label(path.clone());
+        let item = match &entry.kind {
+            EntryKind::Folder { expanded } => item
+                .aria_expanded(*expanded)
+                .child(
+                    Icon::new(if *expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(12.))
+                    .flex_shrink_0()
+                    .text_color(rgb(MUTED)),
+                )
+                .child(FolderIcon {
+                    id: format!("file-folder-{repo}-{path}").into(),
+                    expanded: *expanded,
+                })
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_file_folder(&path, cx))),
+            EntryKind::File(file) => {
+                item.aria_selected(selected)
+                    .child(div().size(px(12.)).flex_shrink_0())
+                    .child(file_status_icon(
+                        SharedString::from(format!("file-status-{repo}-{path}")),
+                        &file.status,
+                    ))
+                    .child(label)
+                    .when(viewed, |item| {
+                        item.child(
+                            Icon::new(IconName::Check)
+                                .size(px(14.))
+                                .flex_shrink_0()
+                                .text_color(rgb(SUCCESS)),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.load_file(path.clone(), window, cx)
+                    }))
+            }
+        };
+        // Include the gap in the fixed row height so viewport calculations stay exact.
+        div()
+            .w_full()
+            .h(px(LIST_ROW_HEIGHT + 2.))
+            .pb(px(2.))
+            .child(item)
+            .into_any_element()
+    }
+
+    fn file_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let entries = self.file_tree_entries();
+        let empty = entries.is_empty();
+        let count = entries.len();
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .p(px(UI_SPACING))
+            .when(empty, |d| {
+                d.child(div().p_2().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                    if self.file_tree_filter.is_empty() {
+                        "No changed files"
+                    } else {
+                        "No matching files"
+                    },
+                ))
+            })
+            .when(!empty, |d| {
+                d.child(
+                    uniform_list(
+                        "files-scroll",
+                        count,
+                        cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                            range
+                                .map(|index| this.file_tree_row(&entries[index], cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .size_full()
+                    .track_scroll(&self.file_scroll),
+                )
+            });
+        column()
+            .w(px(210.))
+            .bg(rgb(SUBPANEL))
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(rgb(BORDER))
+            .child(
+                div()
+                    .h(px(40.))
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .px(px(UI_SPACING))
+                    .child(
+                        Input::new(&self.filter)
+                            .id("filter-files")
+                            .small()
+                            .min_h(px(28.))
+                            .max_h(px(28.))
+                            .px(px(10.))
+                            .py_0()
+                            .gap(px(6.))
+                            .rounded(px(6.))
+                            .bg(rgb(SURFACE))
+                            .border_1()
+                            .border_color(rgb(BORDER))
+                            .text_size(px(12.))
+                            .prefix(
+                                Icon::new(IconName::Search)
+                                    .size(px(14.))
+                                    .text_color(rgb(MUTED)),
+                            )
+                            .cleanable(true)
+                            .aria_label("Find a file"),
+                    ),
+            )
+            .child(body)
+            .into_any_element()
     }
 
     fn diff_view(&mut self, _: &mut Context<Self>) -> AnyElement {
