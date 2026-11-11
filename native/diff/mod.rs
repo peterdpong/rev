@@ -2,10 +2,10 @@
 //! Parse an externally supplied patch into [`DiffFile`]s, retain one
 //! [`DiffState`] for all of them in the owner, and build [`Diff`] during rendering.
 #![allow(dead_code, unused_imports)]
-mod language;
-mod highlight;
 mod conflict;
 mod document;
+mod highlight;
+mod language;
 mod parser;
 #[cfg(test)]
 mod parser_tests;
@@ -31,6 +31,8 @@ use gpui::{
 use gpui_kit::base::TestSupportExt as _;
 use rust_i18n::t;
 
+use actions::*;
+use conflict::ConflictPart;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
@@ -39,8 +41,6 @@ use gpui_kit::component::{
     scroll::{ScrollableMask, Scrollbar},
     v_flex,
 };
-use actions::*;
-use conflict::ConflictPart;
 use presentation::FilePresentation;
 use selection::{CodeText, SelectionLayer};
 use state::{DisplayRow, FoldExpansion, LayoutKey, SelectedLines};
@@ -975,6 +975,8 @@ fn render_fold(
         .map_or(0..document.pairs().len(), |hunk| hunk.pairs());
     let lines = code.expansion_lines;
     let partial = pairs.len() > lines;
+    let expands_down = pairs.start > hunk.start;
+    let expands_up = pairs.end < hunk.end;
     let expand = |id: (&'static str, usize), expansion: FoldExpansion| {
         let state = code.state.clone();
         let pairs = pairs.clone();
@@ -995,14 +997,14 @@ fn render_fold(
         .px_2()
         .gap_1()
         .bg(cx.theme().muted.opacity(0.35))
-        .when(partial && pairs.start > hunk.start, |this| {
+        .when(partial && expands_down, |this| {
             this.child(
                 expand(("expand-down", pairs.start), FoldExpansion::Down)
                     .icon(IconName::ArrowDown)
                     .accessibility_label(t!("Diff.ExpandBelow", count = lines).to_string()),
             )
         })
-        .when(partial && pairs.end < hunk.end, |this| {
+        .when(partial && expands_up, |this| {
             this.child(
                 expand(("expand-up", pairs.start), FoldExpansion::Up)
                     .icon(IconName::ArrowUp)
@@ -1011,10 +1013,10 @@ fn render_fold(
         })
         .child(
             expand(("expand", pairs.start), FoldExpansion::All)
-                .icon(if partial {
-                    IconName::ChevronsUpDown
-                } else {
-                    IconName::ChevronDown
+                .icon(match (expands_up, expands_down) {
+                    (true, false) => IconName::ChevronUp,
+                    (false, true) => IconName::ChevronDown,
+                    _ => IconName::ChevronsUpDown,
                 })
                 .label(t!("Diff.UnchangedLines", count = pairs.len()).to_string())
                 .accessibility_label(t!("Diff.ExpandLines", count = pairs.len()).to_string()),
@@ -1486,7 +1488,7 @@ fn line_highlights(
             (
                 range,
                 HighlightStyle {
-                    background_color: Some(status.opacity(0.3)),
+                    background_color: Some(status.opacity(0.32)),
                     ..Default::default()
                 },
             )
@@ -1687,7 +1689,7 @@ fn code_line(
         .text_size(code.font_size)
         .line_height(code.row_height)
         .when(changed && code.change_background, |this| {
-            this.bg(status.opacity(0.12))
+            this.bg(status.opacity(0.16))
         })
         .when(selected, |this| this.bg(cx.theme().selection))
         .when(hover_line && !selected, |this| {
