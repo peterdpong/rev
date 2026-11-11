@@ -85,7 +85,7 @@ pub fn host_path() -> std::ffi::OsString {
     if let Some(home) = std::env::var_os("HOME") {
         paths.push(PathBuf::from(home).join(".local/bin"));
     }
-    
+
     // Encode the folders in the platform's PATH format (colon-separated on macOS).
     std::env::join_paths(paths).unwrap_or_default()
 }
@@ -115,7 +115,7 @@ impl Backend {
         let output = child.stdout.take().unwrap();
         let pending: Pending = Arc::default();
         let inbox = pending.clone();
-        
+
         std::thread::spawn(move || {
             // Wait for replies until stdout closes or a read fails.
             for line in BufReader::new(output).lines() {
@@ -127,7 +127,7 @@ impl Backend {
                 let Some(id) = value["id"].as_u64() else {
                     continue;
                 };
-                
+
                 if let Some(sender) = inbox.lock().unwrap().remove(&id) {
                     let reply = match value["error"].as_str() {
                         Some(error) => Err(error.to_string()),
@@ -146,7 +146,7 @@ impl Backend {
             // Wait for the process to exit and collect its exit status.
             let _ = child.wait();
         });
-        
+
         Ok(Self {
             state: Arc::new(BackendState {
                 input: Mutex::new(Some(input)),
@@ -187,7 +187,7 @@ impl Backend {
         let result = receiver
             .recv_timeout(Duration::from_secs(150))
             .map_err(|_| "The local service did not respond in time.".to_string());
-            
+
         // Remove any entry left after a timeout; replies normally remove it first.
         self.state.pending.lock().unwrap().remove(&id);
         result?

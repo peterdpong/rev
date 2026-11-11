@@ -198,7 +198,9 @@ impl Rev {
 
                         this.title = format!(
                             "{} · {} → {}",
-                            response.review.name, response.review.head, response.review.base
+                            response.review.name,
+                            response.review.request.head.as_deref().unwrap_or("HEAD"),
+                            response.review.request.base.as_deref().unwrap_or("main")
                         )
                         .into();
 
