@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { hash } from './util';
-import { runGitText, runCommandText } from './command';
+import { runGitText, runCommand, runCommandText } from './command';
 import {
   branchTips,
   prBaseOf,
@@ -42,6 +42,74 @@ export async function readPullRequest(
     if (error.code !== 'ENOENT') {
       throw error;
     }
+  }
+}
+
+/** Optional header details for a local branch; never fetch or change the checkout. */
+export async function lookupPullRequest(
+  request: ReviewRequest,
+): Promise<PullRequest | undefined> {
+  try {
+    const root = await rootOf(request.repo);
+    const head = request.head || 'HEAD';
+    if (head.startsWith('refs/rev/')) {
+      return await readPullRequest(root, head);
+    }
+    const ref = (
+      await runGitText(root, [
+        'rev-parse',
+        '--symbolic-full-name',
+        '--verify',
+        '--end-of-options',
+        head,
+      ])
+    ).trim();
+    let branch: string;
+    if (ref.startsWith('refs/heads/')) {
+      branch = ref.slice('refs/heads/'.length);
+    } else if (ref.startsWith('refs/remotes/')) {
+      const remoteRef = ref.slice('refs/remotes/'.length);
+      const remotes = (await runGitText(root, ['remote'])).trim().split('\n');
+      const remote = remotes
+        .sort((a, b) => b.length - a.length)
+        .find((name) => remoteRef.startsWith(`${name}/`));
+      if (!remote) return;
+      branch = remoteRef.slice(remote.length + 1);
+    } else {
+      // Commit IDs, tags and detached HEAD have no unambiguous PR association.
+      return;
+    }
+    const details = JSON.parse(
+      (
+        await runCommand(
+          'gh',
+          [
+            'pr',
+            'view',
+            '--json',
+            'number,title,body,author,state,isDraft,headRefName,baseRefName,updatedAt,url',
+            '--',
+            branch,
+          ],
+          { cwd: root, timeout: 5000 },
+        )
+      ).toString('utf8'),
+    );
+    // gh also accepts PR numbers; don't attach a different branch's PR.
+    if (
+      !details ||
+      details.headRefName !== branch ||
+      !Number.isInteger(details.number) ||
+      typeof details.title !== 'string' ||
+      typeof details.body !== 'string' ||
+      typeof details.baseRefName !== 'string'
+    ) {
+      return;
+    }
+    return { ...details, author: details.author?.login || 'Unknown author' };
+  } catch {
+    // Missing gh, authentication, connectivity or a PR must not block a review.
+    return;
   }
 }
 

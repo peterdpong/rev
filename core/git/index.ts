@@ -46,4 +46,9 @@ export {
 export { filePatch, reviewPatches } from './patch';
 export { ignoredPaths } from './ignored';
 export { listCommits } from './commits';
-export { fetchRepo, importPR, refreshPR } from './pull-requests';
+export {
+  fetchRepo,
+  importPR,
+  refreshPR,
+  lookupPullRequest,
+} from './pull-requests';

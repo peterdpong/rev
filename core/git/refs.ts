@@ -90,7 +90,10 @@ export async function defaultBase(repo: string) {
 }
 
 /** List local and locally cached remote branches, excluding remote HEAD aliases. */
-export async function listBranches(repo: string): Promise<string[]> {
+export async function listBranches(
+  repo: string,
+  localOnly = false,
+): Promise<string[]> {
   const root = await rootOf(repo);
   return (
     (
@@ -98,7 +101,7 @@ export async function listBranches(repo: string): Promise<string[]> {
         'for-each-ref',
         '--format=%(refname)%09%(refname:short)', // Full and short ref names, separated by a tab (%09).
         'refs/heads', // Branches in this repository.
-        'refs/remotes', // Locally cached remote branches; no network request is made.
+        ...(!localOnly ? ['refs/remotes'] : []), // Cached remote branches; no network request.
       ])
     )
       .trim()
@@ -110,7 +113,9 @@ export async function listBranches(repo: string): Promise<string[]> {
         ([ref]) => !ref.startsWith('refs/remotes/') || !ref.endsWith('/HEAD'),
       )
       // Return short names such as main or origin/main.
-      .map(([, name]) => name)
+      .map(([ref, name]) =>
+        localOnly ? ref.slice('refs/heads/'.length) : name,
+      )
   );
 }
 

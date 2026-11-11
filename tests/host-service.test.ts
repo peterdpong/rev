@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runGitText as git, inspect, resolveRef } from '../core/git';
@@ -91,6 +91,31 @@ test('the host reports each checkout and the launch request', async (t) => {
   await assert.rejects(service.call('workspace'), /Unknown action/);
 });
 
+test('the branch picker can load only local branches from the requested repo', async (t) => {
+  const f = await fixture(t);
+  const other = await fixture(t);
+  const service = new HostService(f.request);
+  t.after(() => service.close());
+  await git(f.repo, ['branch', 'origin/local-feature']);
+  await git(f.repo, ['tag', 'feature']); // Ambiguous short ref names must still display cleanly.
+  await git(f.repo, ['update-ref', 'refs/remotes/origin/remote-only', f.after]);
+  await git(f.repo, ['update-ref', 'refs/rev/owner/repo/42/head', f.after]);
+  await git(other.repo, ['branch', 'only-in-other-repo']);
+  assert.deepEqual(
+    await service.call('branches', { repo: f.repo, localOnly: true }),
+    ['feature', 'main', 'origin/local-feature'],
+  );
+  assert.deepEqual(
+    await service.call('branches', { repo: other.repo, localOnly: true }),
+    ['feature', 'main', 'only-in-other-repo'],
+  );
+  assert.ok(
+    (await service.call('branches', { repo: f.repo })).includes(
+      'origin/remote-only',
+    ),
+  );
+});
+
 test('the host persists viewed markers and can defer validation to the viewer', async (t) => {
   const f = await fixture(t);
   const service = new HostService();
@@ -133,5 +158,163 @@ test('the host persists viewed markers and can defer validation to the viewer', 
       viewed: true,
     }),
     /This file changed/,
+  );
+});
+
+test('snapshot patches stay pinned to their committed comparison and enforce repository/path identity', async (t) => {
+  const f = await fixture(t);
+  const other = await fixture(t);
+  const service = new HostService();
+  t.after(() => service.close());
+  const opened = await service.call('review', { ...f.request, patches: false });
+  const params = {
+    review: f.request,
+    snapshotId: opened.snapshotId,
+    path: 'app.ts',
+  };
+  await f.commit('app.ts', 'export const answer = 3;\n', 'New commit');
+  const patch = await service.call('patch', params);
+  assert.match(patch.patch, /answer = 2/);
+  assert.doesNotMatch(patch.patch, /answer = 3/);
+  await assert.rejects(
+    service.call('patch', { ...params, review: other.request }),
+    /Invalid review repository/,
+  );
+  await assert.rejects(
+    service.call('patch', { ...params, path: '../outside' }),
+    /not in this comparison/,
+  );
+  await assert.rejects(
+    service.call('patch', {
+      ...params,
+      headSha: f.root,
+      mergeBase: opened.review.mergeBase,
+    }),
+    /comparison changed/,
+  );
+  await assert.rejects(
+    service.call('patch', { ...params, snapshotId: 'unknown' }),
+    /review expired/,
+  );
+  const refreshed = await service.call('review', {
+    ...f.request,
+    patches: false,
+  });
+  assert.match(
+    (
+      await service.call('patch', {
+        ...params,
+        snapshotId: refreshed.snapshotId,
+      })
+    ).patch,
+    /answer = 3/,
+  );
+});
+
+test('working snapshot patches load fresh contents using only path-scoped scans', async (t) => {
+  const f = await fixture(t);
+  const service = new HostService();
+  t.after(() => service.close());
+  const request: ReviewRequest = {
+    repo: f.repo,
+    mode: 'working',
+    head: 'HEAD',
+  };
+  await writeFile(path.join(f.repo, 'scratch.txt'), 'initial untracked\n');
+  const opened = await service.call('workingReview', { repo: f.repo });
+  const params = {
+    review: request,
+    snapshotId: opened.snapshotId,
+    path: 'app.ts',
+  };
+  await writeFile(path.join(f.repo, 'app.ts'), 'fresh tracked content\n');
+  const traceFile = path.join(f.repo, '.git/patch-trace');
+  const previousTrace = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = traceFile;
+  try {
+    assert.match(
+      (await service.call('patch', params)).patch,
+      /\+fresh tracked content/,
+    );
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE;
+    else process.env.GIT_TRACE = previousTrace;
+  }
+  const commands = (await readFile(traceFile, 'utf8'))
+    .split('\n')
+    .filter((line) => line.includes('built-in: git'));
+  assert.ok(commands.length > 0);
+  assert.ok(
+    commands.every(
+      (line) => !/\b(status|for-each-ref|merge-base|log)\b/.test(line),
+    ),
+    commands.join('\n'),
+  );
+  const scans = commands.filter((line) => /\b(diff|ls-files)\b/.test(line));
+  assert.ok(scans.length >= 2);
+  assert.ok(
+    scans.every((line) => line.endsWith(' -- app.ts')),
+    scans.join('\n'),
+  );
+
+  const scratch = { ...params, path: 'scratch.txt' };
+  await writeFile(
+    path.join(f.repo, 'scratch.txt'),
+    'fresh untracked content\n',
+  );
+  assert.match(
+    (await service.call('patch', scratch)).patch,
+    /\+fresh untracked content/,
+  );
+  await git(f.repo, ['add', 'scratch.txt']);
+  assert.match((await service.call('patch', scratch)).patch, /new file mode/);
+  await git(f.repo, ['rm', '--cached', 'scratch.txt']);
+  await writeFile(path.join(f.repo, '.gitignore'), 'scratch.txt\n');
+  await assert.rejects(
+    service.call('patch', scratch),
+    /not in this comparison/,
+  );
+  await git(f.repo, ['switch', '-c', 'same-commit-new-branch']);
+  await assert.rejects(service.call('patch', params), /checkout changed/);
+});
+
+test('working snapshot patches preserve renames and staged deletions with untracked copies', async (t) => {
+  const f = await fixture(t);
+  const service = new HostService();
+  t.after(() => service.close());
+  await git(f.repo, ['mv', 'root.txt', 'renamed.txt']);
+  const request: ReviewRequest = {
+    repo: f.repo,
+    mode: 'working',
+    head: 'HEAD',
+  };
+  const opened = await service.call('workingReview', {
+    repo: f.repo,
+    path: 'renamed.txt',
+  });
+  const params = {
+    review: request,
+    snapshotId: opened.snapshotId,
+    path: 'renamed.txt',
+  };
+  assert.match(
+    (await service.call('patch', params)).patch,
+    /rename from root.txt/,
+  );
+  await git(f.repo, ['reset', '--hard', 'HEAD']);
+  await git(f.repo, ['rm', '--cached', 'root.txt']);
+  const deleted = await service.call('workingReview', {
+    repo: f.repo,
+    path: 'root.txt',
+  });
+  assert.match(
+    (
+      await service.call('patch', {
+        ...params,
+        snapshotId: deleted.snapshotId,
+        path: 'root.txt',
+      })
+    ).patch,
+    /deleted file mode/,
   );
 });

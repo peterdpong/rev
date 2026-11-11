@@ -43,7 +43,7 @@ test('committed files are never marked ignored, even when reviewing another chec
   );
 });
 
-test('working reviews mark only ignored untracked files and can read their patches', async (t) => {
+test('working reviews exclude ignored untracked files but retain tracked and force-added files', async (t) => {
   const repo = await fixture(t);
   await writeFile(path.join(repo, 'tracked.txt'), 'base');
   await save(repo);
@@ -57,8 +57,8 @@ test('working reviews mark only ignored untracked files and can read their patch
   const index = await runGitText(repo, ['diff', '--cached']);
   const review = await inspect({ repo, base: 'main', mode: 'working' });
   assert.deepEqual(
-    review.files.filter((file) => file.ignored).map((file) => file.path),
-    ['hidden.txt'],
+    review.files.map((file) => file.path).sort(),
+    ['.gitignore', 'ordinary.md', 'staged.txt', 'tracked.txt'],
   );
   for (const name of ['tracked.txt', 'staged.txt', 'ordinary.md']) {
     assert.equal(
@@ -66,11 +66,10 @@ test('working reviews mark only ignored untracked files and can read their patch
       false,
     );
   }
-  assert.equal(
-    review.files.find((file) => file.path === 'hidden.txt')?.status,
-    '?',
+  await assert.rejects(
+    filePatch(review, 'hidden.txt'),
+    /That file is not in this comparison/,
   );
-  assert.match((await filePatch(review, 'hidden.txt')).patch, /\+local only/);
   assert.deepEqual(
     [
       ...(await ignoredPaths(repo, [
@@ -92,13 +91,18 @@ test('working reviews mark only ignored untracked files and can read their patch
   assert.equal(await runGitText(repo, ['diff', '--cached']), index);
 });
 
-test('untracked labels respect nested rules, negation, ignored directories and unusual paths', async (t) => {
+test('untracked files respect nested rules, negation, ignored directories and unusual paths', async (t) => {
   const repo = await fixture(t);
   await mkdir(path.join(repo, 'nested'));
   await mkdir(path.join(repo, 'cache/deep'), { recursive: true });
   await writeFile(path.join(repo, '.gitignore'), '*.log\ncache/\n');
   await writeFile(path.join(repo, 'nested/.gitignore'), '!keep.log\n*.tmp\n');
-  for (const file of ['keep.log', 'ignored.log', 'a\tb\nc.tmp']) {
+  for (const file of [
+    'keep.log',
+    'ignored.log',
+    'a\tb\nc.tmp',
+    'visible\tfile\n.md',
+  ]) {
     await writeFile(path.join(repo, 'nested', file), 'data');
   }
   await writeFile(path.join(repo, 'cache/deep/result'), 'generated');
@@ -108,15 +112,17 @@ test('untracked labels respect nested rules, negation, ignored directories and u
     false,
   );
   assert.deepEqual(
-    review.files
-      .filter((file) => file.ignored)
-      .map((file) => file.path)
-      .sort(),
-    ['cache/deep/result', 'nested/a\tb\nc.tmp', 'nested/ignored.log'],
+    review.files.map((file) => file.path).sort(),
+    [
+      '.gitignore',
+      'nested/.gitignore',
+      'nested/keep.log',
+      'nested/visible\tfile\n.md',
+    ],
   );
 });
 
-test('local and global excludes label untracked files; symlink ignore files are not followed', async (t) => {
+test('local and global excludes hide untracked files; symlink ignore files are not followed', async (t) => {
   const repo = await fixture(t);
   await writeFile(path.join(repo, 'rules'), '*.txt\n');
   await symlink('rules', path.join(repo, '.gitignore'));
@@ -133,28 +139,26 @@ test('local and global excludes label untracked files; symlink ignore files are 
     false,
   );
   assert.deepEqual(
-    review.files
-      .filter((file) => file.ignored)
-      .map((file) => file.path)
-      .sort(),
-    ['global.cache', 'local.log'],
+    review.files.map((file) => file.path).sort(),
+    ['.gitignore', 'rules', 'visible.txt'],
   );
 });
 
-test('labels follow local ignore edits and disappear when a file is force-added', async (t) => {
+test('untracked files follow local ignore edits and reappear when force-added', async (t) => {
   const repo = await fixture(t);
   await writeFile(path.join(repo, 'scratch.tmp'), 'data');
   const request = { repo, base: 'main', mode: 'working' as const };
   const scratch = async () =>
-    (await inspect(request)).files.find((file) => file.path === 'scratch.tmp')!;
-  assert.equal((await scratch()).ignored, false);
+    (await inspect(request)).files.find((file) => file.path === 'scratch.tmp');
+  assert.equal((await scratch())?.ignored, false);
   await writeFile(path.join(repo, '.gitignore'), '*.tmp\n');
-  assert.equal((await scratch()).ignored, true);
+  assert.equal(await scratch(), undefined);
   await writeFile(path.join(repo, '.gitignore'), '*.tmp\n!scratch.tmp\n');
-  assert.equal((await scratch()).ignored, false);
+  assert.equal((await scratch())?.ignored, false);
   await writeFile(path.join(repo, '.gitignore'), '*.tmp\n');
   await runGitText(repo, ['add', '-f', 'scratch.tmp']);
   const staged = await scratch();
+  assert.ok(staged);
   assert.equal(staged.status, 'A');
   assert.equal(staged.ignored, false);
 });
