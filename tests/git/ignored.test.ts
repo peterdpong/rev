@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { runGitText, inspect, filePatch } from '../../core/git';
+import {
+  runGitText,
+  inspect,
+  filePatch,
+  listUntrackedFiles,
+} from '../../core/git';
 
 async function fixture(t: TestContext) {
   const repo = await mkdtemp(path.join(tmpdir(), 'rev-ignored-test-'));
@@ -20,6 +25,29 @@ async function save(repo: string) {
   await runGitText(repo, ['add', '-f', '.']);
   await runGitText(repo, ['commit', '-m', 'files']);
 }
+
+test('untracked file lists respect ignore rules and literal path selections', async (t) => {
+  const repo = await fixture(t);
+  await writeFile(path.join(repo, '.gitignore'), '*.log\n');
+  await writeFile(path.join(repo, 'tracked.txt'), 'tracked\n');
+  await save(repo);
+  const names = ['*.txt', 'ordinary.txt', '-option.txt', 'tab\tline\n.txt'];
+  for (const name of [...names, 'ignored.log']) {
+    await writeFile(path.join(repo, name), 'untracked\n');
+  }
+
+  assert.deepEqual((await listUntrackedFiles(repo)).sort(), [...names].sort());
+  assert.deepEqual(await listUntrackedFiles(repo, ['*.txt']), ['*.txt']);
+  assert.deepEqual(
+    (await listUntrackedFiles(repo, ['-option.txt', 'tab\tline\n.txt'])).sort(),
+    ['-option.txt', 'tab\tline\n.txt'],
+  );
+  assert.deepEqual(
+    await listUntrackedFiles(repo, ['tracked.txt', 'ignored.log', 'missing']),
+    [],
+  );
+  assert.deepEqual(await listUntrackedFiles(repo, []), []);
+});
 
 test('committed files remain visible despite ignore rules in another checkout', async (t) => {
   const repo = await fixture(t);

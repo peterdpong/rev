@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   diffArgs,
   filePatch,
+  listUntrackedFiles,
   parseDiffSummary,
   readCheckout,
   rootOf,
@@ -79,14 +80,7 @@ export class ReviewCache {
         ...(file.oldPath ? [file.oldPath] : []),
         fileName,
       ]),
-      runGitText(review.repo, [
-        'ls-files',
-        '--others',
-        '--exclude-standard',
-        '-z',
-        '--',
-        fileName,
-      ]),
+      listUntrackedFiles(review.repo, [fileName]),
     ]);
     
     const files = parseDiffSummary(summary);
@@ -94,7 +88,7 @@ export class ReviewCache {
     // If the file is untracked add the entry.
     if (
       !files.some((file) => file.path === fileName) &&
-      untracked.split('\0').includes(fileName)
+      untracked.includes(fileName)
     ) {
       files.push({ ...file, status: '?' });
     }
