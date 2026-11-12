@@ -69,6 +69,7 @@ pub struct Rev {
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
+    failed_review: Option<ReviewRequest>,
     review_snapshot_id: Option<String>,
     state: ReviewState,
     file: Option<String>,
@@ -138,6 +139,7 @@ impl Rev {
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,
+            failed_review: None,
             review_snapshot_id: None,
             state: ReviewState::default(),
 
@@ -284,6 +286,7 @@ impl Rev {
 
         let request = request.for_tab();
         self.loading = true;
+        self.failed_review = None;
         self.patch_loading = false;
         self.error = None;
         self.notice = None;
@@ -298,6 +301,7 @@ impl Rev {
         // Patches are fetched per file by `load_file`, so skip them here.
         let mut params = json!(request);
         params["patches"] = json!(false);
+        params["recoverStaleRange"] = json!(true);
 
         self.rpc(
             "review",
@@ -311,8 +315,13 @@ impl Rev {
                 this.loading = false;
                 this.pull_request_loading = false;
 
-                let Some(value) = this.result(result) else {
-                    return;
+                let value = match result {
+                    Ok(value) => value,
+                    Err(error) => {
+                        this.error = Some(error);
+                        this.failed_review = Some(request);
+                        return;
+                    }
                 };
                 let review = decode::<Review>(value["review"].clone());
                 let state = decode::<ReviewState>(value["state"].clone());
@@ -320,9 +329,11 @@ impl Rev {
                     (Ok(review), Ok(state)) => (review, state),
                     (Err(e), _) | (_, Err(e)) => {
                         this.error = Some(e);
+                        this.failed_review = Some(request);
                         return;
                     }
                 };
+                this.notice = value["notice"].as_str().map(str::to_owned);
                 this.review_snapshot_id = value["snapshotId"].as_str().map(str::to_owned);
 
                 // Committed tabs keep their branch; working trees continue following HEAD.
@@ -438,6 +449,10 @@ impl Rev {
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(request) = self.failed_review.clone() {
+            self.load_review(request, None, window, cx);
+            return;
+        }
         if let Some(review) = &self.review {
             self.revalidate_pull_request = true;
             let request = self
@@ -447,6 +462,13 @@ impl Rev {
                 .unwrap_or_else(|| review.request.clone());
             self.load_review(request, self.file.clone(), window, cx);
         }
+    }
+
+    fn choose_failed_review_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(request) = &self.failed_review else {
+            return;
+        };
+        self.open_branch_popover(request.repo.clone(), window, cx);
     }
 
     fn save_workspace(&mut self) {
@@ -497,6 +519,7 @@ impl Rev {
                 self.load_review(tab.request, tab.file, window, cx);
             } else {
                 self.review = None;
+                self.failed_review = None;
                 self.review_snapshot_id = None;
                 self.file_list
                     .update(cx, |list, cx| list.set_review("", &[], window, cx));

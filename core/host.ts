@@ -9,6 +9,7 @@ import {
   listCommits,
   listBranches,
   checkouts,
+  StaleCommitRangeError,
 } from './git';
 import { readReviewState, updateReviewState } from './review-state';
 import { ReviewCache } from './review-cache';
@@ -31,7 +32,11 @@ type HostParams = {
   workingReview: { repo: string; path?: string };
   branches: { repo: string; localOnly?: boolean };
   commits: { review: ReviewRequest; offset?: number };
-  review: ReviewRequest & { patches?: boolean; preview?: boolean };
+  review: ReviewRequest & {
+    patches?: boolean;
+    preview?: boolean;
+    recoverStaleRange?: boolean;
+  };
   pullRequest: ReviewRequest;
   patch: {
     review: ReviewRequest;
@@ -70,6 +75,7 @@ type HostResults = {
     snapshotId: string;
     patches?: ReviewPatch[];
     state: ReviewState;
+    notice?: string;
   };
   pullRequest: PullRequest | null;
   patch: FilePatch;
@@ -169,7 +175,19 @@ export class HostService {
         result = await listCommits(p.review, p.offset);
         break;
       case 'review': {
-        const review = await inspect(p);
+        let review: Review;
+        let notice: string | undefined;
+        try {
+          review = await inspect(p);
+        } catch (error) {
+          // Only the viewer opts into repairing stale selections; other callers stay strict.
+          if (!p.recoverStaleRange || !(error instanceof StaleCommitRangeError)) {
+            throw error;
+          }
+          review = await inspect({ ...p, commitRange: undefined });
+          notice =
+            'The selected commits are no longer in this branch. Showing all commits.';
+        }
         // The desktop validates viewed markers against patches as they load.
         // Revalidating every marker here would eagerly read deferred diffs.
         result = {
@@ -179,6 +197,7 @@ export class HostService {
             ? { patches: await reviewPatches(review) }
             : {}),
           state: await readReviewState(review, p.preview !== true),
+          ...(notice ? { notice } : {}),
         };
         break;
       }
