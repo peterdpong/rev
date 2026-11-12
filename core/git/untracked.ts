@@ -1,5 +1,6 @@
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { runGitText } from './command';
 import { MAX_PATCH_BYTES } from './constants';
 
 export type UntrackedFile =
@@ -7,6 +8,22 @@ export type UntrackedFile =
   | { kind: 'binary'; content: Buffer }
   | { kind: 'symlink'; target: string }
   | { kind: 'too-large' };
+
+/** List non-ignored untracked files, optionally limited to literal paths. */
+export async function listUntrackedFiles(
+  repo: string,
+  paths?: string[],
+): Promise<string[]> {
+  if (paths && paths.length === 0) return [];
+  const output = await runGitText(repo, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+    ...(paths ? ['--', ...paths] : []),
+  ]);
+  return output.split('\0').filter(Boolean);
+}
 
 /**
  * Read an untracked file within `repo` (the canonical checkout root).

@@ -2,6 +2,7 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { runGitText } from './command';
 import { readCheckout } from './refs';
+import { listUntrackedFiles } from './untracked';
 import { hash, mapLimit } from './util';
 
 export type WorkingTreeState = {
@@ -37,7 +38,7 @@ export async function workingTrees(
           ]),
 
           // Match the review's committable untracked files.
-          runGitText(repo, ['ls-files', '--others', '--exclude-standard', '-z']),
+          listUntrackedFiles(repo),
           
           // Detect changes to branch tips used in the comparison.
           runGitText(repo, [
@@ -49,7 +50,7 @@ export async function workingTrees(
         ]);
         
         // Combine untracked files with changed tracked paths.
-        const paths = new Set(untracked.split('\0').filter(Boolean));
+        const paths = new Set(untracked);
 
         // Status records use "XY path": X is staged, Y is unstaged.
         const entries = status.split('\0');
