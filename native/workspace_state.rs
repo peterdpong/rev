@@ -333,6 +333,34 @@ mod tests {
     }
 
     #[test]
+    fn reopening_full_branch_repairs_the_saved_commit_selection_in_place() {
+        use crate::model::CommitRange;
+
+        let mut workspace = WorkspaceState::default();
+        let request = open("/a", Some("feature"));
+        let mut selected = review("/a", "feature", "branch");
+        selected.request.commit_range = Some(CommitRange {
+            start: "old-start".into(),
+            end: "old-end".into(),
+        });
+        selected.scope_key = "old-selection".into();
+        let id = workspace.remember_review(&selected, &request);
+        workspace.set_file(&id, "app.ts".into());
+
+        let full = review("/a", "feature", "branch");
+        assert_eq!(workspace.remember_review(&full, &selected.request), id);
+        let saved = serde_json::to_string(&workspace).unwrap();
+        let restored: WorkspaceState = serde_json::from_str(&saved).unwrap();
+        let tab = restored.active_tab().unwrap();
+        assert_eq!(tab.id, id);
+        assert_eq!(tab.request.head.as_deref(), Some("feature"));
+        assert_eq!(tab.request.commit_range, None);
+        assert_eq!(tab.scope_key.as_deref(), Some(full.scope_key.as_str()));
+        assert_eq!(tab.file.as_deref(), Some("app.ts"));
+        assert_eq!(restored.projects[0].tabs.len(), 2);
+    }
+
+    #[test]
     fn reviews_of_the_checkout_share_one_current_tab() {
         let mut workspace = WorkspaceState::default();
         let request = ReviewRequest::working_tree("/a");
