@@ -1,3 +1,4 @@
+use std::{cell::Cell, rc::Rc};
 use super::controls::*;
 use super::{CloseModal, Rev, Submit, decode};
 use crate::{model::ReviewRequest, theme::*};
@@ -23,6 +24,8 @@ pub(super) struct Modal {
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
     pub(super) serial: u64,
+    pub(super) anchor: Option<SharedString>,
+    pub(super) anchor_bounds: Rc<Cell<Bounds<Pixels>>>,
     pub(super) local_branches: Vec<String>,
     pub(super) branches_loading: bool,
     pub(super) branches_error: Option<String>,
@@ -72,6 +75,10 @@ impl Rev {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
             return;
         }
+        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Review && m.request.repo == repo) {
+            self.close_modal(window, cx);
+            return;
+        }
         self.close_modal(window, cx);
         self.error = None;
         let request = ReviewRequest {
@@ -86,6 +93,8 @@ impl Rev {
                 InputState::new(window, cx).placeholder("Branch, #123 or PR URL (default: HEAD)")
             }),
             serial: self.modal_serial,
+            anchor: Some(format!("add-{}", request.repo).into()),
+            anchor_bounds: Default::default(),
             local_branches: Vec::new(),
             branches_loading: self.backend.is_some(),
             branches_error: self
@@ -231,7 +240,7 @@ impl Rev {
             .into_any_element()
     }
 
-    pub(super) fn dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn popover(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
@@ -370,95 +379,85 @@ impl Rev {
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
         }
-        let max_height = (window.viewport_size().height - px(110.)).max(px(220.));
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
+        let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
+        let serial = modal.serial;
+        column()
+            .id("review-popover")
+            .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
+                this.dismiss_popover(serial, event, window, cx)
+            }))
+            .w(px(650.))
+            .max_w_full()
+            .max_h(max_height)
+            .bg(rgb(SURFACE))
+            .border_1()
+            .border_color(rgb(CONTROL_BORDER))
+            .rounded(px(CONTROL_RADIUS))
+            .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context("RevPopover")
+            .on_action(cx.listener(|this, _: &CloseModal, window, cx| this.close_modal(window, cx)))
+            .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
             .child(
-                column()
-                    .w(px(650.))
-                    .max_w_full()
-                    .max_h(max_height)
-                    .m_6()
-                    .bg(rgb(SURFACE))
-                    .border_1()
-                    .border_color(rgb(CONTROL_BORDER))
-                    .rounded(px(CONTROL_RADIUS))
-                    .shadow_lg()
-                    .track_focus(&self.modal_focus)
-                    .key_context("PatchModal")
-                    .on_action(
-                        cx.listener(|this, _: &CloseModal, window, cx| {
-                            this.close_modal(window, cx)
-                        }),
-                    )
-                    .on_action(cx.listener(|this, _: &Submit, window, cx| this.submit(window, cx)))
+                row()
+                    .h(px(HEADER_HEIGHT))
+                    .flex_shrink_0()
+                    .pl(px(POPOVER_PADDING))
+                    .pr(px(UI_SPACING))
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
-                        row()
-                            .h(px(HEADER_HEIGHT))
+                        div()
                             .flex_shrink_0()
-                            .pl(px(POPOVER_PADDING))
-                            .pr(px(UI_SPACING))
-                            .border_b_1()
-                            .border_color(rgb(BORDER))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .map(|d| {
-                                let name = std::path::Path::new(&modal.request.repo)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| modal.request.repo.clone());
-                                d.child(
-                                    header_pill()
-                                        .max_w(px(200.))
-                                        .text_color(rgb(TEXT))
-                                        .child(
-                                            Icon::new(IconName::Folder)
-                                                .size(px(14.))
-                                                .text_color(rgb(MUTED))
-                                                .flex_shrink_0(),
-                                        )
-                                        .child(div().min_w_0().truncate().child(name)),
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .map(|d| {
+                        let name = std::path::Path::new(&modal.request.repo)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| modal.request.repo.clone());
+                        d.child(
+                            header_pill()
+                                .max_w(px(200.))
+                                .text_color(rgb(TEXT))
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(14.))
+                                        .text_color(rgb(MUTED))
+                                        .flex_shrink_0(),
                                 )
-                            })
-                            .child(div().flex_1().min_w_0())
-                            .child(
-                                icon_button("close-modal", "Close", IconName::Close)
-                                    .flex_shrink_0()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_modal(window, cx)
-                                    })),
-                            ),
-                    )
+                                .child(div().min_w_0().truncate().child(name)),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0())
                     .child(
-                        div()
-                            .id("modal-body")
-                            .min_h_0()
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p(px(POPOVER_PADDING))
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .px(px(POPOVER_PADDING))
-                            .py(px(UI_SPACING))
+                        icon_button("close-modal", "Close", IconName::Close)
                             .flex_shrink_0()
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .child(footer),
-                    )
-                    .focus_trap("modal-trap", &self.modal_focus),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_modal(window, cx)),
+                            ),
+                    ),
             )
+            .child(
+                div()
+                    .id("modal-body")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p(px(POPOVER_PADDING))
+                    .child(body),
+            )
+            .child(
+                div()
+                    .px(px(POPOVER_PADDING))
+                    .py(px(UI_SPACING))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .child(footer),
+            )
+            .focus_trap("modal-trap", &self.modal_focus)
             .into_any_element()
     }
 }
@@ -485,6 +484,8 @@ mod tests {
             base_input: cx.new(|cx| InputState::new(window, cx)),
             head_input: cx.new(|cx| InputState::new(window, cx)),
             serial: 1,
+            anchor: None,
+            anchor_bounds: Default::default(),
             local_branches: vec!["feature".into()],
             branches_loading: false,
             branches_error: None,
@@ -541,5 +542,25 @@ mod tests {
                 }
             );
         });
+    }
+}
+
+impl Rev {
+    fn dismiss_popover(
+        &mut self,
+        serial: u64,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(modal) = &self.modal else {
+            return;
+        };
+        if modal.serial != serial
+            || (modal.anchor.is_some() && modal.anchor_bounds.get().contains(&event.position))
+        {
+            return;
+        }
+        self.close_modal(window, cx);
     }
 }
