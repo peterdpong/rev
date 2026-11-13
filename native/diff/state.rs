@@ -196,6 +196,16 @@ impl SelectedLines {
     }
 }
 
+/// A retained source location and pixel offset for navigation history.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiffScrollPosition {
+    path: SharedString,
+    line: Option<DiffLinePosition>,
+    leading_rows: usize,
+    offset: Pixels,
+    horizontal: Pixels,
+}
+
 /// Retained focus, viewport, context expansion and selection for a
 /// [`super::Diff`] showing one or more files of a patch.
 ///
@@ -541,6 +551,45 @@ impl DiffState {
     }
     pub(crate) fn horizontal_scroll(&self) -> &ScrollHandle {
         &self.horizontal_scroll
+    }
+
+    /// Whether a wheel delta can pan code without leaving the content bounds.
+    pub fn can_scroll_horizontally(&self, delta: f32) -> bool {
+        let offset = self.horizontal_scroll.offset().x;
+        if delta > 0. {
+            offset < -px(1.)
+        } else {
+            self.content_width + offset > self.viewport.width + px(1.)
+        }
+    }
+
+    /// A source-based bookmark, independent of virtualized row indexes.
+    pub fn scroll_position(&self) -> Option<DiffScrollPosition> {
+        let top = self.list.logical_scroll_top();
+        let path = self.visible_file()?.clone();
+        let line = self.row_position(top.item_ix);
+        let leading_rows = line.as_ref().and_then(|line| self.source_row(line))
+            .unwrap_or(top.item_ix).saturating_sub(top.item_ix);
+        Some(DiffScrollPosition {
+            path, line, leading_rows, offset: top.offset_in_item,
+            horizontal: self.horizontal_scroll.offset().x,
+        })
+    }
+
+    /// Restores a bookmark, revealing its source if folds or layout changed.
+    pub fn restore_scroll_position(&mut self, position: &DiffScrollPosition, cx: &mut Context<Self>) {
+        self.set_file_collapsed(&position.path, false, cx);
+        if let Some(line) = &position.line {
+            self.scroll_to_line(line.clone(), cx);
+        }
+        let header = self.file_ix(&position.path).and_then(|ix| self.header_rows.get(ix).copied());
+        if let Some(header) = header {
+            let item_ix = position.line.as_ref().and_then(|line| self.source_row(line))
+                .map(|row| row.saturating_sub(position.leading_rows).max(header)).unwrap_or(header);
+            self.list.scroll_to(ListOffset { item_ix, offset_in_item: position.offset });
+            self.horizontal_scroll.set_offset(point(position.horizontal, px(0.)));
+            cx.notify();
+        }
     }
     pub(crate) fn selection(&self) -> &TextSelectionHandle {
         &self.selection

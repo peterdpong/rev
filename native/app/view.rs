@@ -305,6 +305,40 @@ impl Rev {
                             icon_actions()
                                 .id("review-header-actions")
                                 .child(
+                                    icon_button(
+                                        "navigate-back",
+                                        "Back (⌘[)",
+                                        IconName::ChevronLeft,
+                                    )
+                                    .disabled(!self.can_navigate(NavigationDirection::Back))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.navigate_history(
+                                                NavigationDirection::Back,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    icon_button(
+                                        "navigate-forward",
+                                        "Forward (⌘])",
+                                        IconName::ChevronRight,
+                                    )
+                                    .disabled(!self.can_navigate(NavigationDirection::Forward))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.navigate_history(
+                                                NavigationDirection::Forward,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                                .child(
                                     self.popover_button(
                                         "review-details",
                                         icon_button(
@@ -723,6 +757,25 @@ impl Render for Rev {
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
             .key_context("Rev")
+            .child(self.navigation_events(cx))
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(NavigationDirection::Back, window, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| {
+                    this.navigate_history(NavigationDirection::Forward, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| {
+                this.navigate_history(NavigationDirection::Back, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoForward, window, cx| {
+                this.navigate_history(NavigationDirection::Forward, window, cx);
+            }))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )
@@ -739,6 +792,12 @@ impl Render for Rev {
                     this.jump_file(path, window, cx);
                 }
             }))
+            .on_action(
+                cx.listener(|this, _: &NextTab, window, cx| this.navigate_tab(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousTab, window, cx| this.navigate_tab(-1, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -846,6 +905,7 @@ mod tests {
         let diff = cx.new(DiffView::new);
         let subscriptions = Rev::subscribe_to_views(&file_list, &diff, window, cx);
         Rev {
+            navigation: Default::default(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             backend: None,
@@ -1290,10 +1350,19 @@ impl Rev {
             .child(
                 div()
                     .id("diff-surface")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.diff.clone()),
+                    .child(self.diff.clone())
+                    .child({
+                        let bounds = self.navigation.diff_bounds.clone();
+                        canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                    }),
             )
             .child(
                 div()
@@ -1307,6 +1376,7 @@ impl Rev {
                         this.hover_file_sheet(1, *hovered, window, cx);
                     })),
             )
+            .when_some(self.navigation_hint(), |d, hint| d.child(hint))
             .when(self.file_sheet.open || sheet > 0., |d| {
                 d.child(
                     div()
