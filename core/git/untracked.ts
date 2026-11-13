@@ -15,6 +15,7 @@ export type UntrackedFile =
 export async function readUntracked(
   repo: string,
   name: string,
+  maxBytes = MAX_PATCH_BYTES,
 ): Promise<UntrackedFile> {
   const full = path.join(repo, name);
   const parent = await realpath(path.dirname(full));
@@ -33,14 +34,14 @@ export async function readUntracked(
     throw new Error('The untracked path is not a regular file.');
   }
 
-  if (info.size > MAX_PATCH_BYTES) {
+  if (info.size > maxBytes) {
     return { kind: 'too-large' };
   }
 
   const bytes = await readFile(file);
 
   // The file may have grown since lstat.
-  if (bytes.length > MAX_PATCH_BYTES) {
+  if (bytes.length > maxBytes) {
     return { kind: 'too-large' };
   }
 

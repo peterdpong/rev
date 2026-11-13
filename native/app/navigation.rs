@@ -226,12 +226,21 @@ impl Rev {
 
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(location) = self.navigation.restore.take() {
+            let deferred = location
+                .file
+                .as_ref()
+                .filter(|path| self.patches.get(*path).is_some_and(|patch| patch.deferred))
+                .cloned();
             if let Some(path) = location.file {
                 self.reveal_file(path, window, cx);
             }
             if let Some(position) = location.position {
-                self.diff_state(cx)
-                    .update(cx, |diff, cx| diff.restore_scroll_position(&position, cx));
+                if let Some(path) = deferred {
+                    self.pending_file_navigation =
+                        Some(continuous::PendingFileNavigation::History { path, position });
+                } else {
+                    self.diff_state(cx).update(cx, |diff, cx| diff.restore_scroll_position(&position, cx));
+                }
             }
         }
     }
@@ -253,6 +262,7 @@ impl Rev {
             self.navigation.swipe = Swipe::default();
             return;
         }
+        let showing_hint = self.navigation.swipe.claimed;
         if event.touch_phase == TouchPhase::Started {
             let in_diff = self.navigation.diff_bounds.get().contains(&event.position);
             let state = self.diff_state(cx);
@@ -273,7 +283,9 @@ impl Rev {
         if let Some(direction) = direction {
             self.navigate_history(direction, window, cx);
         }
-        cx.notify();
+        if showing_hint || self.navigation.swipe.claimed {
+            cx.notify();
+        }
     }
 
     pub(super) fn navigation_hint(&self) -> Option<AnyElement> {

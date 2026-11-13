@@ -8,10 +8,12 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
-    WindowId, point, px,
+    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task,
+    Window, WindowId, point, px,
 };
-use gpui_kit::base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
+use gpui_kit::base::{
+    TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle,
+};
 
 use super::{
     DiffAnnotation, DiffConflictResolution, DiffFile, DiffFileStatus, DiffInlineUnit,
@@ -529,13 +531,29 @@ impl DiffState {
         let document = self.files.get(file)?;
         let lines = document.lines(side);
         let first = lines.get(lines.partition_point(|line| line.source().end <= range.start))?;
-        let last = lines.get(lines.partition_point(|line| line.source().start < range.end).checked_sub(1)?)?;
-        Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
+        let last = lines.get(
+            lines
+                .partition_point(|line| line.source().start < range.end)
+                .checked_sub(1)?,
+        )?;
+        Some(DiffLineRange::new(
+            document.path().clone(),
+            side,
+            first.line_number(),
+            last.line_number(),
+        ))
+    }
+
+    /// Whether a line-number drag is still active.
+    pub fn is_selecting_lines(&self) -> bool {
+        self.selecting
     }
 
     /// Whether a native text gesture is still held, including an empty range.
     pub fn is_selecting_text(&self, cx: &App) -> bool {
-        self.selection.snapshot(cx).is_some_and(|snapshot| snapshot.is_selecting())
+        self.selection
+            .snapshot(cx)
+            .is_some_and(|snapshot| snapshot.is_selecting())
     }
 
     /// Whether the file at `path` shows only its header.
@@ -568,29 +586,54 @@ impl DiffState {
         let top = self.list.logical_scroll_top();
         let path = self.visible_file()?.clone();
         let line = self.row_position(top.item_ix);
-        let leading_rows = line.as_ref().and_then(|line| self.source_row(line))
-            .unwrap_or(top.item_ix).saturating_sub(top.item_ix);
+        let leading_rows = line
+            .as_ref()
+            .and_then(|line| self.source_row(line))
+            .unwrap_or(top.item_ix)
+            .saturating_sub(top.item_ix);
         Some(DiffScrollPosition {
-            path, line, leading_rows, offset: top.offset_in_item,
+            path,
+            line,
+            leading_rows,
+            offset: top.offset_in_item,
             horizontal: self.horizontal_scroll.offset().x,
         })
     }
 
     /// Restores a bookmark, revealing its source if folds or layout changed.
-    pub fn restore_scroll_position(&mut self, position: &DiffScrollPosition, cx: &mut Context<Self>) {
+    pub fn restore_scroll_position(
+        &mut self,
+        position: &DiffScrollPosition,
+        cx: &mut Context<Self>,
+    ) {
         self.set_file_collapsed(&position.path, false, cx);
         if let Some(line) = &position.line {
             self.scroll_to_line(line.clone(), cx);
         }
-        let header = self.file_ix(&position.path).and_then(|ix| self.header_rows.get(ix).copied());
+        self.restore_viewport(position);
+        cx.notify();
+    }
+
+    fn restore_viewport(&self, position: &DiffScrollPosition) {
+        let header = self
+            .file_ix(&position.path)
+            .and_then(|ix| self.header_rows.get(ix).copied());
         if let Some(header) = header {
-            let item_ix = position.line.as_ref().and_then(|line| self.source_row(line))
-                .map(|row| row.saturating_sub(position.leading_rows).max(header)).unwrap_or(header);
-            self.list.scroll_to(ListOffset { item_ix, offset_in_item: position.offset });
-            self.horizontal_scroll.set_offset(point(position.horizontal, px(0.)));
-            cx.notify();
+            let item_ix = position
+                .line
+                .as_ref()
+                .and_then(|line| self.source_row(line))
+                .map(|row| row.saturating_sub(position.leading_rows).max(header))
+                .unwrap_or(header);
+            self.list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: position.offset,
+            });
+            self.horizontal_scroll
+                .set_offset(point(position.horizontal, px(0.)));
         }
     }
+
     pub(crate) fn selection(&self) -> &TextSelectionHandle {
         &self.selection
     }
@@ -653,6 +696,31 @@ impl DiffState {
         cx.notify();
     }
 
+    /// Replaces a loaded placeholder without resetting other files or the viewport.
+    pub fn replace_file(&mut self, file: DiffFile, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = self.file_ix(file.path()) else {
+            return false;
+        };
+        let position = self.scroll_position();
+        self.resolutions.retain(|(path, _), _| path != file.path());
+        self.files[ix] = file;
+        self.expanded[ix].clear();
+        self.presentations[ix] = None;
+        // Cancel stale preparation, retaining completed work for other files.
+        self.presentation_generation += 1;
+        self.preparing = None;
+        self._presentation = Task::ready(());
+        self.geometry.borrow_mut().clear();
+        self.rebuild(false);
+        if let Some(position) = position {
+            self.restore_viewport(&position);
+        }
+        self.list.remeasure();
+        self.ensure_presentation(cx);
+        cx.notify();
+        true
+    }
+
     /// Changes the display mode while preserving source-line selection and a
     /// nearby source row.
     pub fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
@@ -695,15 +763,28 @@ impl DiffState {
     /// Collapses the file at `path` to its header, or expands it, without
     /// emitting a user event.
     pub fn set_file_collapsed(&mut self, path: &str, collapsed: bool, cx: &mut Context<Self>) {
-        let Some(file) = self.file_ix(path) else {
-            return;
-        };
-        let path = self.files[file].path().clone();
-        let changed = if collapsed {
-            self.collapsed.insert(path)
-        } else {
-            self.collapsed.remove(&path)
-        };
+        self.set_files_collapsed([path], collapsed, cx);
+    }
+
+    /// Changes many file folds with one row rebuild, including large deferred reviews.
+    pub fn set_files_collapsed<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a str>,
+        collapsed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for path in paths {
+            let Some(file) = self.file_ix(path) else {
+                continue;
+            };
+            let path = self.files[file].path().clone();
+            changed |= if collapsed {
+                self.collapsed.insert(path)
+            } else {
+                self.collapsed.remove(&path)
+            };
+        }
         if changed {
             self.rebuild_at_anchor();
             cx.notify();
@@ -851,7 +932,9 @@ impl DiffState {
         let path = self.visible_file().cloned();
         if path != self.visible_file {
             self.visible_file = path.clone();
-            if let Some(path) = path { cx.emit(DiffEvent::VisibleFileChanged(path)); }
+            if let Some(path) = path {
+                cx.emit(DiffEvent::VisibleFileChanged(path));
+            }
         }
     }
 

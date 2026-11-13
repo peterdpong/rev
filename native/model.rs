@@ -163,6 +163,8 @@ pub struct FilePatch {
     pub patch: String,
     pub digest: String,
     pub too_large: bool,
+    #[serde(default)]
+    pub deferred: bool,
 }
 #[derive(Deserialize)]
 pub struct ReviewPatch {
