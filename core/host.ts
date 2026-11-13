@@ -5,15 +5,19 @@ import {
   fetchRepo,
   importPR,
   refreshPR,
+  lookupPullRequest,
   listCommits,
   listBranches,
   checkouts,
 } from './git';
 import { readReviewState, updateReviewState } from './review-state';
+import { ReviewCache } from './review-cache';
+import { workingTrees, type WorkingTreeState } from './git/worktree';
 import type {
   Checkout,
   CommitPage,
   FilePatch,
+  PullRequest,
   Review,
   ReviewPatch,
   ReviewRequest,
@@ -23,12 +27,16 @@ import type {
 type HostParams = {
   init: void;
   checkouts: { repos: string[] };
-  branches: { repo: string };
+  workingTrees: { repos: string[]; activeRepo?: string };
+  workingReview: { repo: string; path?: string };
+  branches: { repo: string; localOnly?: boolean };
   commits: { review: ReviewRequest; offset?: number };
   review: ReviewRequest & { patches?: boolean; preview?: boolean };
+  pullRequest: ReviewRequest;
   patch: {
     review: ReviewRequest;
     path: string;
+    snapshotId?: string;
     headSha?: string;
     mergeBase?: string;
   };
@@ -47,9 +55,23 @@ type HostParams = {
 type HostResults = {
   init: { initial: ReviewRequest | undefined };
   checkouts: (Checkout | null)[];
+  workingTrees: (WorkingTreeState | null)[];
+  workingReview: {
+    review: Review;
+    snapshotId: string;
+    state: ReviewState;
+    path?: string;
+    patch?: FilePatch;
+  };
   branches: string[];
   commits: CommitPage;
-  review: { review: Review; patches?: ReviewPatch[]; state: ReviewState };
+  review: {
+    review: Review;
+    snapshotId: string;
+    patches?: ReviewPatch[];
+    state: ReviewState;
+  };
+  pullRequest: PullRequest | null;
   patch: FilePatch;
   patches: ReviewPatch[];
   viewed: ReviewState;
@@ -65,6 +87,8 @@ type HostCall =
 
 const REPO_METHODS: ReadonlySet<string> = new Set<HostMethod>([
   'review',
+  'workingReview',
+  'pullRequest',
   'branches',
   'commits',
   'patch',
@@ -86,6 +110,7 @@ function repoOf(params: unknown): unknown {
 
 export class HostService {
   private closed = false;
+  private reviewCache = new ReviewCache();
   constructor(readonly initial?: ReviewRequest) {}
   call(method: 'init'): Promise<HostResults['init']>;
   call<M extends HostMethod>(
@@ -113,8 +138,32 @@ export class HostService {
       case 'checkouts':
         result = await checkouts(p.repos);
         break;
+      case 'workingTrees':
+        result = await workingTrees(p.repos, p.activeRepo);
+        break;
+      case 'workingReview': {
+        const review = await inspect({
+          repo: p.repo,
+          mode: 'working',
+          head: 'HEAD',
+        });
+        const path = review.files.some((file) => file.path === p.path)
+          ? p.path
+          : review.files[0]?.path;
+        const state = await readReviewState(review);
+        const patch = path ? await filePatch(review, path) : undefined;
+
+        result = {
+          review,
+          snapshotId: this.reviewCache.storeSnapshot(review),
+          state,
+          path,
+          ...(patch ? { patch } : {}),
+        };
+        break;
+      }
       case 'branches':
-        result = await listBranches(p.repo);
+        result = await listBranches(p.repo, p.localOnly);
         break;
       case 'commits':
         result = await listCommits(p.review, p.offset);
@@ -125,6 +174,7 @@ export class HostService {
         // Revalidating every marker here would eagerly read deferred diffs.
         result = {
           review,
+          snapshotId: this.reviewCache.storeSnapshot(review),
           ...(p.patches !== false
             ? { patches: await reviewPatches(review) }
             : {}),
@@ -132,7 +182,19 @@ export class HostService {
         };
         break;
       }
+      case 'pullRequest':
+        result = (await lookupPullRequest(p)) ?? null;
+        break;
       case 'patch': {
+        if (p.snapshotId !== undefined) {
+          result = await this.reviewCache.patch(
+            p.snapshotId,
+            p.review.repo,
+            p.path,
+            p,
+          );
+          break;
+        }
         const review = await inspect(p.review);
         if (
           (p.headSha !== undefined || p.mergeBase !== undefined) &&
@@ -200,5 +262,6 @@ export class HostService {
   }
   close() {
     this.closed = true;
+    this.reviewCache.clear();
   }
 }

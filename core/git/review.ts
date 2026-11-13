@@ -18,7 +18,6 @@ import {
   resolveRef,
   rootOf,
 } from './refs';
-import { ignoredPaths } from './ignored';
 import { readUntracked, untrackedCounts } from './untracked';
 
 export const REVIEW_MODES: readonly ReviewMode[] = ['branch', 'working'];
@@ -388,7 +387,9 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
 
   const [summary, untracked] = await Promise.all([
     runGitText(repo, diffArgs(review, ['--raw', '--numstat', '-z'])),
-    mode === 'working' ? runGitText(repo, ['ls-files', '--others', '-z']) : '',
+    mode === 'working'
+      ? runGitText(repo, ['ls-files', '--others', '--exclude-standard', '-z'])
+      : '',
   ]);
   review.files = parseDiffSummary(summary);
 
@@ -411,11 +412,6 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
       },
     )),
   );
-
-  const ignored = await ignoredPaths(repo, untrackedPaths);
-  for (const file of review.files) {
-    file.ignored = file.status === '?' && ignored.has(file.path);
-  }
 
   return review;
 }

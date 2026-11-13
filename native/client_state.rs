@@ -30,7 +30,7 @@ impl ClientState {
             Err(error) => return Err(error),
         };
 
-        match serde_json::from_str(&text) {
+        match serde_json::from_str::<Self>(&text) {
             Ok(state) => Ok(state),
             Err(_) => {
                 fs::remove_file(&file)?;
@@ -73,10 +73,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        model::{CommitRange, ReviewRequest},
-        workspace_state::{Project, ReviewTab, TabKind},
-    };
+    use crate::model::{CommitRange, Review, ReviewRequest};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("rev-client-{name}-{}", std::process::id()));
@@ -104,21 +101,17 @@ mod tests {
             }),
         };
         let mut state = ClientState::default();
-        state.workspace.projects.push(Project {
-            repo: "/a".into(),
-            name: "a".into(),
-            collapsed: true,
-            tabs: vec![ReviewTab {
-                id: "tab".into(),
-                kind: TabKind::Branch,
-                label: "feature".into(),
+        let id = state.workspace.remember_review(
+            &Review {
                 request: request.clone(),
-                scope_key: Some("a:feature:branch".into()),
-                head_sha: None,
-                file: Some("src/main.rs".into()),
-            }],
-        });
-        state.workspace.active_tab_id = Some("tab".into());
+                name: "a".into(),
+                scope_key: "a:feature:branch".into(),
+                ..Default::default()
+            },
+            &request,
+        );
+        state.workspace.collapse_project("/a", true);
+        state.workspace.set_file(&id, "src/main.rs".into());
         state.save(&dir).unwrap();
 
         let loaded = ClientState::load(&dir).unwrap();

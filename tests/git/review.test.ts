@@ -218,7 +218,6 @@ test('binary changes are flagged in the file list', async (t) => {
       added: 0,
       removed: 0,
       binary: true,
-      ignored: false,
     },
   ]);
 });
