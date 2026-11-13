@@ -67,6 +67,90 @@ test('the host reviews a commit scope and the full branch', async (t) => {
   assert.ok(full.patches && full.patches.length > 0);
 });
 
+test('viewer reviews recover stale commit selections after a squash, including missing objects', async (t) => {
+  const f = await fixture(t);
+  const service = new HostService();
+  t.after(() => service.close());
+  const request = {
+    ...f.request,
+    commitRange: { start: f.first, end: f.last },
+    recoverStaleRange: true,
+    patches: false,
+  };
+  const selected = await service.call('review', request);
+  assert.deepEqual(selected.review.commitRange, request.commitRange);
+  assert.equal(selected.notice, undefined);
+
+  await git(f.repo, ['reset', '--soft', 'main']);
+  await git(f.repo, ['commit', '-m', 'Squash feature changes']);
+  const squashed = await resolveRef(f.repo, 'HEAD');
+  await assert.rejects(
+    service.call('review', { ...request, recoverStaleRange: false }),
+    /not in this branch’s first-parent history/,
+  );
+  const recovered = await service.call('review', request);
+  assert.equal(recovered.review.head, 'feature');
+  assert.equal(recovered.review.headSha, squashed);
+  assert.equal(recovered.review.commitRange, undefined);
+  assert.equal(recovered.review.scopeKey, recovered.review.key);
+  assert.match(recovered.notice!, /Showing all commits/);
+
+  const clone = await mkdtemp(path.join(tmpdir(), 'rev-squashed-clone-'));
+  t.after(() => rm(clone, { recursive: true, force: true }));
+  await git(f.repo, [
+    'clone', '--no-local', '--single-branch', '--branch', 'feature', f.repo, clone,
+  ]);
+  await assert.rejects(resolveRef(clone, f.first));
+  const restored = await service.call('review', {
+    ...request,
+    repo: clone,
+    base: f.root,
+  });
+  assert.equal(restored.review.headSha, squashed);
+  assert.equal(restored.review.commitRange, undefined);
+  assert.match(restored.notice!, /Showing all commits/);
+  await assert.rejects(
+    service.call('review', {
+      ...request,
+      repo: clone,
+      base: f.root,
+      head: f.after,
+    }),
+    /Cannot find head/,
+    'A missing commit-only review must not silently switch to another branch',
+  );
+});
+
+test('stale-range recovery preserves unrelated validation errors', async (t) => {
+  const f = await fixture(t);
+  const service = new HostService();
+  t.after(() => service.close());
+  const request = { ...f.request, recoverStaleRange: true, patches: false };
+  await assert.rejects(
+    service.call('review', {
+      ...request,
+      commitRange: { start: f.last, end: f.first },
+    }),
+    /start commit must be older/,
+  );
+  await assert.rejects(
+    service.call('review', {
+      ...request,
+      head: 'missing-branch',
+      commitRange: { start: f.first, end: f.last },
+    }),
+    /Cannot find head/,
+  );
+  await assert.rejects(
+    service.call('review', {
+      ...request,
+      mode: 'working',
+      commitRange: { start: f.first, end: f.last },
+    }),
+    /Commit ranges are only supported in committed mode/,
+  );
+});
+
 test('the host reports each checkout and the launch request', async (t) => {
   const f = await fixture(t);
   const service = new HostService(f.request);

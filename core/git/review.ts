@@ -15,6 +15,7 @@ import {
   assertCommitId,
   CommitIdLabel,
   defaultBase,
+  isCommitId,
   resolveRef,
   rootOf,
 } from './refs';
@@ -210,6 +211,15 @@ async function resolveBranchComparison(
   };
 }
 
+export class StaleCommitRangeError extends Error {
+  constructor() {
+    super(
+      'Selected commits are not in this branch’s first-parent history. Choose Full branch diff or select commits from the current branch.',
+    );
+    this.name = 'StaleCommitRangeError';
+  }
+}
+
 /** Resolve an inclusive range on the branch's first-parent history. */
 async function resolveRangeComparison(
   repo: string,
@@ -217,19 +227,23 @@ async function resolveRangeComparison(
   range: CommitRange,
   key: string,
 ): Promise<ResolvedComparison> {
-  const [start, end, history] = await Promise.all([
-    resolveRef(repo, range.start),
-    resolveRef(repo, range.end),
-    runGitText(repo, ['rev-list', '--first-parent', branchHeadSha, '--']),
+  const history = await runGitText(repo, [
+    'rev-list',
+    '--first-parent',
+    branchHeadSha,
+    '--',
   ]);
-
   const shas = history.trim().split('\n');
+  // Saved full hashes can disappear entirely after a rewrite and garbage collection.
+  // Membership in this history validates them without requiring old objects to exist.
+  const [start, end] = await Promise.all([
+    isCommitId(range.start) ? range.start : resolveRef(repo, range.start),
+    isCommitId(range.end) ? range.end : resolveRef(repo, range.end),
+  ]);
   const first = shas.indexOf(start);
   const last = shas.indexOf(end);
   if (first < 0 || last < 0) {
-    throw new Error(
-      'Selected commits are not in this branch’s first-parent history. Choose Full branch diff or select commits from the current branch.',
-    );
+    throw new StaleCommitRangeError();
   }
 
   // History is newest first, so the older start must have the larger index.

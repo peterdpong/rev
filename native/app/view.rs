@@ -793,7 +793,11 @@ impl Render for Rev {
             };
 
         let status = if self.modal.is_none() {
-            self.error.clone()
+            self.error.clone().or_else(|| {
+                self.failed_review.as_ref().map(|_| {
+                    "This review could not be opened. Choose another branch or retry.".into()
+                })
+            })
         } else {
             None
         };
@@ -892,16 +896,51 @@ impl Render for Rev {
                         .border_t_1()
                         .border_color(rgb(BORDER))
                         .child(div().flex_1().text_color(rgb(DANGER)).child(error))
+                        .when(self.failed_review.is_some(), |row| {
+                            row.child(
+                                button("recover-review-branch", "Choose another branch")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_failed_review_branch(window, cx)
+                                    })),
+                            )
+                            .child(
+                                button("retry-review", "Retry")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.refresh(window, cx)
+                                    })),
+                            )
+                        })
                         .child(
                             icon_button("dismiss-error", "Dismiss error", IconName::Close)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.error = None;
+                                    this.failed_review = None;
                                     cx.notify();
                                 })),
                         ),
                 )
             })
 
+            .when_some(
+                self.notice.clone().filter(|_| self.modal.is_none()),
+                |d, notice| {
+                    d.child(
+                        row()
+                            .p(px(UI_SPACING))
+                            .gap(px(UI_SPACING))
+                            .border_t_1()
+                            .border_color(rgb(BORDER))
+                            .child(div().flex_1().child(notice))
+                            .child(
+                                icon_button("dismiss-notice", "Dismiss notice", IconName::Close)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.notice = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                },
+            )
     }
 }
 
@@ -967,6 +1006,7 @@ mod tests {
                 files,
                 ..Default::default()
             }),
+            failed_review: None,
             review_snapshot_id: None,
             state: ReviewState::default(),
             file: None,
@@ -1005,6 +1045,55 @@ mod tests {
             window.refresh();
             _ = window.draw(cx);
         });
+    }
+
+    #[gpui::test]
+    fn failed_review_can_choose_a_branch_without_a_loaded_review(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.review = None;
+            app.failed_review = Some(crate::model::ReviewRequest {
+                repo: "/failed-repository".into(),
+                head: Some("missing-commit".into()),
+                mode: Some("branch".into()),
+                ..Default::default()
+            });
+            app.error = Some("The saved commit is unavailable.".into());
+            app
+        });
+
+        for already_loaded in [false, true] {
+            if already_loaded {
+                view.update(cx, |app, _| {
+                    app.review = Some(Review {
+                        request: crate::model::ReviewRequest::working_tree("/other-repository"),
+                        ..Default::default()
+                    });
+                });
+            }
+            draw(cx);
+            let choose = cx.update(|window, _| {
+                window.find_by_label("Choose another branch").bounds()
+            });
+            cx.simulate_click(choose.center(), Default::default());
+            draw(cx);
+            cx.update(|window, cx| {
+                view.update(cx, |app, cx| {
+                    let modal = app.modal.as_ref().unwrap();
+                    assert_eq!(modal.request.repo, "/failed-repository");
+                    assert!(modal.request.head.is_none());
+                    assert!(modal.request.commit_range.is_none());
+                    app.close_modal(window, cx);
+                });
+            });
+        }
     }
 
     #[gpui::test]
