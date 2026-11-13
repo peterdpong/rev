@@ -15,6 +15,7 @@ use serde_json::json;
 pub(super) enum ModalKind {
     Review,
     Commits,
+    Details,
 }
 
 #[derive(Clone)]
@@ -148,6 +149,9 @@ impl Rev {
     }
 
     pub(super) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Details) {
+            return;
+        }
         if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Commits) {
             self.apply_commit_selection(window, cx);
             return;
@@ -245,7 +249,10 @@ impl Rev {
             return div().into_any_element();
         };
         let is_commits = modal.kind == ModalKind::Commits;
-        let title = if is_commits {
+        let is_details = modal.kind == ModalKind::Details;
+        let title = if is_details {
+            "Review details in"
+        } else if is_commits {
             "Review commits in"
         } else {
             "Open branch or PR in"
@@ -254,6 +261,8 @@ impl Rev {
         let mut footer = icon_actions().justify_end();
         if is_commits {
             body = body.child(self.commit_choices(cx));
+        } else if is_details {
+            body = body.child(self.review_details());
         } else {
             let mut choices = column().gap(px(2.));
             for (i, branch) in modal.local_branches.iter().enumerate() {
@@ -363,7 +372,7 @@ impl Rev {
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
-        {
+        if !is_details {
             let label = if self.submitting {
                 "Working…"
             } else {
@@ -381,7 +390,9 @@ impl Rev {
         }
         let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
         let serial = modal.serial;
+        let reveal = super::motion::enter("review-popover-enter", window, cx);
         column()
+            .opacity(reveal)
             .id("review-popover")
             .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
                 this.dismiss_popover(serial, event, window, cx)
@@ -448,15 +459,17 @@ impl Rev {
                     .p(px(POPOVER_PADDING))
                     .child(body),
             )
-            .child(
-                div()
-                    .px(px(POPOVER_PADDING))
-                    .py(px(UI_SPACING))
-                    .flex_shrink_0()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(footer),
-            )
+            .when(!is_details, |dialog| {
+                dialog.child(
+                    div()
+                        .px(px(POPOVER_PADDING))
+                        .py(px(UI_SPACING))
+                        .flex_shrink_0()
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(footer),
+                )
+            })
             .focus_trap("modal-trap", &self.modal_focus)
             .into_any_element()
     }
