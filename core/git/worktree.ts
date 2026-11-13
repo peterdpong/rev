@@ -1,7 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { runGitText } from './command';
-import { resolveRef } from './refs';
+import { readCheckout } from './refs';
 import { hash, mapLimit } from './util';
 
 export type WorkingTreeState = {
@@ -23,10 +23,7 @@ export async function workingTrees(
   return mapLimit(repos, 4, async (repo) => {
     try {
       // Track branch switches and new commits in every repository.
-      const [branch, sha] = await Promise.all([
-        runGitText(repo, ['branch', '--show-current']),
-        resolveRef(repo, 'HEAD'),
-      ]);
+      const { branch, sha } = await readCheckout(repo);
 
       let fingerprint = '';
       // Only inspect local file changes for the active repository.
@@ -102,7 +99,7 @@ export async function workingTrees(
 
       return {
         repo,
-        branch: branch.trim() || 'detached HEAD',
+        branch,
         sha,
         // Local-state fingerprint used to decide whether the review needs refreshing.
         revision: hash(JSON.stringify([branch, sha, fingerprint])),

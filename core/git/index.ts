@@ -31,6 +31,7 @@ export {
   defaultBase,
   isCommitId,
   listBranches,
+  readCheckout,
   resolveRef,
   resolveReviewRef,
   rootOf,

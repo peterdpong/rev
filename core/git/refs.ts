@@ -119,6 +119,17 @@ export async function listBranches(
   );
 }
 
+/** Read the current branch and HEAD commit, including detached checkouts. */
+export async function readCheckout(
+  repo: string,
+): Promise<Pick<Checkout, 'branch' | 'sha'>> {
+  const [branch, sha] = await Promise.all([
+    runGitText(repo, ['branch', '--show-current']),
+    resolveRef(repo, 'HEAD'),
+  ]);
+  return { branch: branch.trim() || 'detached HEAD', sha };
+}
+
 /** The checked-out branch and HEAD of each repo, or null when unavailable. */
 export async function checkouts(repos: string[]): Promise<(Checkout | null)[]> {
   if (!Array.isArray(repos) || repos.some((repo) => typeof repo !== 'string')) {
@@ -127,11 +138,7 @@ export async function checkouts(repos: string[]): Promise<(Checkout | null)[]> {
   return Promise.all(
     repos.map(async (repo): Promise<Checkout | null> => {
       try {
-        const [branch, sha] = await Promise.all([
-          runGitText(repo, ['branch', '--show-current']),
-          resolveRef(repo, 'HEAD'),
-        ]);
-        return { repo, branch: branch.trim() || 'detached HEAD', sha };
+        return { repo, ...(await readCheckout(repo)) };
       } catch {
         return null;
       }
