@@ -7,7 +7,7 @@ use gpui_kit::{
     component::{Icon, TitleBar},
 };
 
-const SIDEBAR_WIDTH: f32 = 225.;
+use super::motion::SIDEBAR_WIDTH;
 const PR_DESCRIPTION_GAP: f32 = 2.;
 
 #[derive(IntoElement)]
@@ -549,6 +549,21 @@ impl Rev {
 
         row()
             .id("diff-view-header")
+            .child(
+                div()
+                    .id("file-sheet-trigger")
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(0, *hovered, window, cx);
+                    }))
+                    .child(
+                        icon_button("browse-files", "Browse files (⌘P)", IconName::Folder)
+                            .selected(self.file_sheet.open)
+                            .when(self.file_sheet.open, selected_surface)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_file_sheet(window, cx);
+                            })),
+                    ),
+            )
             .bg(rgb(SUBPANEL))
             .h(px(42.))
             .flex_shrink_0()
@@ -643,30 +658,17 @@ impl Render for Rev {
             list.sync_status(self.file.as_deref(), &self.state.viewed, self.loading, cx)
         });
 
-        let counts = self
-            .file
-            .as_deref()
-            .and_then(|path| self.file_list.read(cx).file_counts(path));
-
-        self.diff.update(cx, |diff, cx| {
-            diff.sync_status(
-                DiffViewStatus {
-                    path: self.file.clone(),
-                    counts,
-                    viewed: self
-                        .file
-                        .as_ref()
-                        .is_some_and(|path| self.state.viewed.contains_key(path)),
-                    viewed_disabled: self.loading
-                        || self.patch_loading
-                        || self.submitting
-                        || self.patch.digest.is_empty(),
-                    loading: self.loading || self.patch_loading,
-                    notice: self.notice.clone(),
-                },
-                cx,
-            )
-        });
+        let files = self.review.iter().flat_map(|review| &review.files).map(|file| {
+            let patch = self.patches.get(&file.path);
+            (file.path.clone(), DiffFileStatus {
+                counts: (file.added, file.removed),
+                viewed: patch.is_some_and(|patch| self.state.viewed.get(&file.path) == Some(&patch.digest)),
+                disabled: self.loading || self.patch_loading || patch.is_none_or(|patch| patch.too_large || patch.digest.is_empty()),
+            })
+        }).collect();
+        self.diff.update(cx, |diff, cx| diff.sync_status(DiffViewStatus {
+            path: self.file.clone(), loading: self.loading || self.patch_loading, files,
+        }, cx));
 
         let content =
             if self.review.is_some() {
@@ -681,8 +683,7 @@ impl Render for Rev {
                             .gap_0()
                             .flex_1()
                             .min_h_0()
-                            .child(self.file_list.clone())
-                            .child(self.diff.clone()),
+                            .child(self.diff_panel(window, cx)),
                     )
                     .into_any_element()
             } else {
@@ -728,6 +729,16 @@ impl Render for Rev {
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.pick_folder(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &BrowseFiles, window, cx| {
+                this.show_file_sheet(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ChooseFile, window, cx| {
+                if this.file_sheet.open
+                    && let Some(path) = this.file_list.update(cx, |list, _| list.adjacent_file(None, 1))
+                {
+                    this.jump_file(path, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -847,7 +858,9 @@ mod tests {
             review_snapshot_id: None,
             state: ReviewState::default(),
             file: None,
+            file_sheet: Default::default(),
             patch: FilePatch::default(),
+            patches: Default::default(),
             diff,
             file_list,
             commit_picker: Default::default(),
@@ -1260,5 +1273,68 @@ mod tests {
             cx.debug_bounds("pr-description-content").is_none(),
             "unmount after the fade finishes"
         );
+    }
+}
+
+impl Rev {
+    fn diff_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let sheet = super::motion::reveal("file-sheet-reveal", self.file_sheet.open, window, cx);
+        let sheet_height = (40. + self.file_list.update(cx, |list, _| list.row_count()) as f32 * (LIST_ROW_HEIGHT + 2.))
+            .clamp(140., 520.);
+        column()
+            .id("diff-review")
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                div()
+                    .id("diff-surface")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.diff.clone()),
+            )
+            .child(
+                div()
+                    .id("file-sheet-edge")
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(8.))
+                    .on_hover(cx.listener(|this, hovered, window, cx| {
+                        this.hover_file_sheet(1, *hovered, window, cx);
+                    })),
+            )
+            .when(self.file_sheet.open || sheet > 0., |d| {
+                d.child(
+                    div()
+                        .id("file-sheet")
+                        .absolute()
+                        .left(px(UI_SPACING * sheet))
+                        .top(px(UI_SPACING))
+                        .bottom(px(UI_SPACING))
+                        .w(px(272.))
+                        .max_h(px(sheet_height))
+                        .opacity(sheet)
+                        .rounded(px(CONTROL_RADIUS))
+                        .border_1()
+                        .border_color(rgb(CONTROL_BORDER))
+                        .bg(rgb(SURFACE))
+                        .shadow_lg()
+                        .overflow_hidden()
+                        .occlude()
+                        .key_context("RevFiles")
+                        .on_hover(cx.listener(|this, hovered, window, cx| {
+                            this.hover_file_sheet(2, *hovered, window, cx);
+                        }))
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                            this.hide_file_sheet(window, cx);
+                        }))
+                        .child(self.file_list.clone()),
+                )
+            })
+            .into_any_element()
     }
 }

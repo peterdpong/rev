@@ -15,6 +15,8 @@ use std::{
 };
 
 mod commits;
+mod continuous;
+mod file_sheet;
 mod motion;
 mod review;
 use commits::CommitPicker;
@@ -25,7 +27,7 @@ mod file_tree;
 mod modal;
 mod view;
 mod working_tree;
-use diff_view::{DiffView, DiffViewEvent, DiffViewStatus};
+use diff_view::{DiffFileStatus, DiffView, DiffViewEvent, DiffViewStatus};
 use file_list::{FileList, FileListEvent};
 use modal::{Modal, ModalKind};
 gpui_kit::actions!(
@@ -39,7 +41,9 @@ gpui_kit::actions!(
         ToggleSidebar,
         NextFile,
         PreviousFile,
-        MarkViewed
+        MarkViewed,
+        BrowseFiles,
+        ChooseFile
     ]
 );
 
@@ -49,6 +53,9 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
+        KeyBinding::new("cmd-p", BrowseFiles, Some("Rev")),
+        KeyBinding::new("enter", ChooseFile, Some("RevFiles > Input")),
+        KeyBinding::new("escape", CloseModal, Some("RevFiles > Input")),
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
@@ -70,7 +77,9 @@ pub struct Rev {
     review_snapshot_id: Option<String>,
     state: ReviewState,
     file: Option<String>,
+    file_sheet: file_sheet::FileSheet,
     patch: FilePatch,
+    patches: HashMap<String, FilePatch>,
     diff: Entity<DiffView>,
     file_list: Entity<FileList>,
     commit_picker: CommitPicker,
@@ -134,7 +143,9 @@ impl Rev {
             state: ReviewState::default(),
 
             file: None,
+            file_sheet: file_sheet::FileSheet::default(),
             patch: FilePatch::default(),
+            patches: HashMap::new(),
             diff,
             file_list,
             commit_picker: CommitPicker::default(),
@@ -194,8 +205,10 @@ impl Rev {
                 }
             }),
             cx.subscribe_in(diff, window, |this, _, event, window, cx| {
-                let DiffViewEvent::ToggleViewed = event;
-                this.mark_viewed(window, cx);
+                match event {
+                    DiffViewEvent::ToggleViewed(path) => this.mark_file_viewed(path.clone(), window, cx),
+                    DiffViewEvent::VisibleFileChanged(path) => this.set_active_file(path.clone(), cx),
+                }
             }),
         ]
     }
@@ -270,7 +283,9 @@ impl Rev {
         }
 
         let request = request.for_tab();
+        self.hide_file_sheet(window, cx);
         self.loading = true;
+        self.patch_loading = false;
         self.error = None;
         self.notice = None;
 
@@ -338,13 +353,12 @@ impl Rev {
                     list.set_review(&review.request.repo, &review.files, window, cx)
                 });
                 this.review = Some(review);
-                this.file = None;
+                this.file = selected;
                 this.patch = FilePatch::default();
+                this.patches.clear();
                 this.diff.update(cx, |diff, cx| diff.set_files([], cx));
 
-                if let Some(path) = selected {
-                    this.load_file(path, window, cx);
-                }
+                this.load_patches(window, cx);
                 this.load_pull_request(window, cx);
             },
         );
@@ -376,65 +390,7 @@ impl Rev {
     }
 
     fn load_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(review) = self.review.as_ref() else {
-            return;
-        };
-        let request = review.request.clone();
-        self.file_list
-            .update(cx, |list, cx| list.select_file(&path, cx));
-
-        // Responses from earlier file loads are now stale.
-        self.file_epoch += 1;
-        let epoch = self.file_epoch;
-
-        // Clear the previous file's diff while this one loads.
-        self.file = Some(path.clone());
-        self.patch_loading = true;
-        self.patch = FilePatch::default();
-        self.error = None;
-        self.notice = None;
-        self.diff.update(cx, |diff, cx| diff.set_files([], cx));
-
-        self.rpc(
-            "patch",
-            json!({ "review": request, "path": path, "snapshotId": self.review_snapshot_id }),
-            window,
-            cx,
-            move |this, result, _, cx| {
-                if this.file_epoch != epoch {
-                    return;
-                }
-                this.patch_loading = false;
-
-                let Some(value) = this.result(result) else {
-                    return;
-                };
-                let patch = match decode::<FilePatch>(value) {
-                    Ok(patch) => patch,
-                    Err(e) => {
-                        this.error = Some(e);
-                        return;
-                    }
-                };
-
-                // Large and binary patches show a notice instead of a diff.
-                this.notice = patch.notice();
-                if this.notice.is_none() {
-                    match DiffFile::parse(&patch.patch) {
-                        Ok(files) => this.diff.update(cx, |diff, cx| diff.set_files(files, cx)),
-                        Err(e) => this.error = Some(format!("Could not display this patch: {e}")),
-                    }
-                }
-                this.patch = patch;
-
-                // Remember the file so the tab reopens on it.
-                if let Some(id) = this.workspace.active_tab_id.clone() {
-                    this.workspace.set_file(&id, path);
-                    this.save_workspace();
-                }
-            },
-        );
-        cx.notify();
+        self.jump_file(path, window, cx);
     }
 
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -513,6 +469,7 @@ impl Rev {
                 self.state = ReviewState::default();
                 self.file = None;
                 self.patch = FilePatch::default();
+                self.patches.clear();
                 self.file_epoch += 1;
                 self.patch_loading = false;
                 self.diff.update(cx, |diff, cx| diff.set_files([], cx));
@@ -534,22 +491,9 @@ impl Rev {
     }
 
     fn mark_viewed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.patch_loading || self.loading || self.submitting || self.patch.digest.is_empty() {
-            return;
+        if let Some(path) = self.file.clone() {
+            self.mark_file_viewed(path, window, cx);
         }
-        let (Some(review), Some(path)) = (self.review.clone(), self.file.clone()) else {
-            return;
-        };
-        let epoch = self.review_epoch;
-        let viewed = !self.state.viewed.contains_key(&path);
-        self.file_epoch += 1;
-        self.submitting = true;
-        self.rpc("viewed", json!({ "review": review.request, "path": path, "viewed": viewed, "digest": self.patch.digest }), window, cx,
-            move |this, result, _, _| {
-                this.submitting = false;
-                if this.review_epoch != epoch { return; }
-                if let Some(value) = this.result(result) { match decode(value) { Ok(state) => this.state = state, Err(e) => this.error = Some(e) } }
-            });
     }
 
     fn pick_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -630,4 +574,10 @@ impl Rev {
         );
     }
 
+}
+
+impl Rev {
+    fn diff_state(&self, cx: &App) -> Entity<DiffState> {
+        self.diff.read(cx).state().clone()
+    }
 }

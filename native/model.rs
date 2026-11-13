@@ -164,6 +164,13 @@ pub struct FilePatch {
     pub digest: String,
     pub too_large: bool,
 }
+#[derive(Deserialize)]
+pub struct ReviewPatch {
+    pub path: String,
+    #[serde(flatten)]
+    pub patch: FilePatch,
+    pub error: Option<String>,
+}
 
 impl FilePatch {
     /// Shown instead of a diff when the patch can't be displayed inline.

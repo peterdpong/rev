@@ -59,6 +59,7 @@ impl Modal {
 impl Rev {
     pub(super) fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.modal = None;
+        self.hide_file_sheet(window, cx);
 
         self.modal_serial += 1;
         self.diff.update(cx, |diff, cx| diff.clear_selection(cx));
