@@ -534,7 +534,7 @@ fn render_diff(
         on_line_click: props.on_line_click,
         on_line_hover: props.on_line_hover,
         selection: state.selection().clone(),
-        selected_lines: state.selected_lines(),
+        selected_lines: state.selected_lines().or_else(|| state.selected_text_lines(cx)),
         selected: state.selected_span(),
         geometry: state.geometry().clone(),
         state: cx.entity(),
@@ -1492,7 +1492,7 @@ fn line_highlights(
     side: DiffSide,
     ix: usize,
     changed: bool,
-    selected: bool,
+    _selected: bool,
     inline_background: Hsla,
     code: &CodePresentation,
     cx: &App,
@@ -1515,15 +1515,6 @@ fn line_highlights(
                 },
             )
         }));
-    }
-    if selected {
-        highlights.push((
-            0..line.display().len(),
-            HighlightStyle {
-                background_color: Some(cx.theme().selection),
-                ..Default::default()
-            },
-        ));
     }
     highlights
 }
