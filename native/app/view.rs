@@ -257,6 +257,17 @@ impl Rev {
                         .child(
                             icon_actions()
                                 .id("review-header-actions")
+                                .child(
+                                    icon_button(
+                                        "choose-commits",
+                                        "Choose commits",
+                                        IconName::GitCommitHorizontal,
+                                    )
+                                    .disabled(busy)
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| this.open_commit_picker(window, cx),
+                                    )),
+                                )
                                 .debug_selector(|| "review-header-actions".into())
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -744,6 +755,7 @@ mod tests {
             patch: FilePatch::default(),
             diff,
             file_list,
+            commit_picker: Default::default(),
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             modal: None,
