@@ -51,6 +51,7 @@ impl Rev {
 
         self.modal_serial += 1;
         self.diff.update(cx, |diff, cx| diff.clear_selection(cx));
+        gpui_kit::base::TextSelection::clear(window, cx);
         self.focus.focus(window, cx);
         cx.notify();
     }

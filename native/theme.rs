@@ -52,7 +52,7 @@ pub fn init(cx: &mut App) {
         theme.input = rgb(CONTROL_BORDER).into();
         theme.ring = rgb(FOCUS).into();
         theme.caret = rgb(TEXT).into();
-        theme.selection = rgba(0x8b8b8b55).into();
+        theme.selection = rgba(0x1f6feb40).into();
 
         theme.primary = rgb(TEXT).into();
         theme.primary_foreground = rgb(BG).into();

@@ -8,7 +8,7 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListOffset, ListState, Pixels, ScrollHandle, SharedString, Size, Subscription, Task, Window,
+    ListOffset, ListState, Pixels, Point, ScrollHandle, SharedString, Size, Subscription, Task, Window,
     WindowId, point, px,
 };
 use gpui_kit::base::{TextSelection, TextSelectionContentKey, TextSelectionEvent, TextSelectionHandle};
@@ -165,6 +165,31 @@ impl SelectedLines {
                 file: selected,
                 patch,
             } => *selected == file && patch.contains(&files[file].patch_ix(side, ix)),
+        }
+    }
+
+    /// Whether this is the first selected line.
+    pub(crate) fn is_first(
+        &self,
+        files: &[DiffFile],
+        file: usize,
+        side: DiffSide,
+        ix: usize,
+    ) -> bool {
+        match self {
+            Self::Side {
+                file: selected,
+                side: selected_side,
+                lines,
+            } => {
+                *selected == file
+                    && *selected_side == side
+                    && files[file].line_number(side, ix) == lines.start
+            }
+            Self::Patch {
+                file: selected,
+                patch,
+            } => *selected == file && files[file].patch_ix(side, ix) == patch.start,
         }
     }
 
@@ -508,6 +533,27 @@ impl DiffState {
     pub fn selected_lines(&self) -> Option<DiffLineRange> {
         self.selected_lines.clone()
     }
+
+    /// Where a held line drag started.
+    pub(crate) fn drag_anchor(&self) -> Option<&DiffLinePosition> {
+        self.selection_anchor.as_ref().filter(|_| self.selecting)
+    }
+
+    pub fn selected_text_lines(&self, cx: &App) -> Option<DiffLineRange> {
+        let (file, side, range) = super::selection::selected_source_range(&self.selection, cx)?;
+        let document = self.files.get(file)?;
+        let lines = document.lines(side);
+        let first = lines.get(lines.partition_point(|line| line.source().end <= range.start))?;
+        let last = lines.get(lines.partition_point(|line| line.source().start < range.end).checked_sub(1)?)?;
+
+        Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
+    }
+
+    /// Whether a native text gesture is still held, including an empty range.
+    pub fn is_selecting_text(&self, cx: &App) -> bool {
+        self.selection.snapshot(cx).is_some_and(|snapshot| snapshot.is_selecting())
+    }
+
     /// Whether the file at `path` shows only its header.
     pub fn is_file_collapsed(&self, path: &str) -> bool {
         self.collapsed.contains(path)
@@ -902,14 +948,31 @@ impl DiffState {
             && (anchor.side() == position.side() || self.mode == DiffMode::Unified)
     }
 
-    /// Finishes an active line-number gesture.
-    pub(crate) fn end_line_selection(&mut self, cx: &mut Context<Self>) {
-        if !std::mem::take(&mut self.selecting) {
+    pub(crate) fn drag_line_selection_at(&mut self, point: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.selecting {
             return;
         }
-        if let Some(range) = self.selected_lines.clone() {
-            cx.emit(DiffEvent::SelectionEnded(range));
+
+        let position = self
+            .selection_anchor
+            .as_ref()
+            .and_then(|anchor| self.geometry.borrow().line_at(point, anchor, self.mode));
+
+        if let Some(position) = position {
+            self.drag_line_selection(position, cx);
         }
+    }
+
+    /// Ends the active line drag and returns its range.
+    pub(crate) fn end_line_selection(&mut self, cx: &mut Context<Self>) -> Option<DiffLineRange> {
+        if !std::mem::take(&mut self.selecting) {
+            return None;
+        }
+        // Shows the add buttons hidden during the drag.
+        cx.notify();
+        let range = self.selected_lines.clone()?;
+        cx.emit(DiffEvent::SelectionEnded(range.clone()));
+        Some(range)
     }
 
     /// Selects one line, or extends to it, as a complete gesture.
