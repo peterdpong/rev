@@ -269,12 +269,36 @@ test('history pagination has no gaps or duplicate commits', async (t) => {
 
   assert.equal(first.commits.length, 200);
   assert.equal(first.hasMore, true);
-  assert.equal(second.commits.length, 6);
+  assert.equal(second.commits.length, 5);
   assert.equal(second.hasMore, false);
   assert.equal(
     new Set([...first.commits, ...second.commits].map((c) => c.sha)).size,
-    206,
+    205,
   );
 
   await assert.rejects(listCommits(request, -1), /offset/);
+});
+
+test('history lists only the branch commits after its merge base', async (t) => {
+  const f = await fixture(t);
+  const page = await listCommits(f.request);
+
+  assert.deepEqual(
+    page.commits.map((c) => c.sha),
+    [f.after, f.last, f.first, f.before],
+  );
+  assert.equal(page.hasMore, false);
+
+  // Later commits on the base do not leak into the branch list.
+  await runGitText(f.repo, ['switch', 'main']);
+  await f.commit('main.txt', 'main moved on\n', 'Main change');
+  const moved = await listCommits({ ...f.request, head: f.after });
+  assert.deepEqual(
+    moved.commits.map((c) => c.sha),
+    [f.after, f.last, f.first, f.before],
+  );
+
+  // A branch with nothing of its own lists no commits.
+  const empty = await listCommits({ ...f.request, head: 'main' });
+  assert.deepEqual(empty.commits, []);
 });

@@ -1549,9 +1549,11 @@ fn annotation_bar(
         .filter(|selected| selected.contains(&code.files, file, side, ix))?;
     let first = selected.is_first(&code.files, file, side, ix);
     let last = selected.is_last(&code.files, file, side, ix);
+
     if first && last {
         return None;
     }
+
     let middle = code.row_height / 2.;
     Some(
         div()

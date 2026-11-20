@@ -253,6 +253,11 @@ impl Rev {
                                     }
                                 }),
                         )
+                        .child(self.commit_picker_pill(
+                            review,
+                            busy || self.patch_loading,
+                            cx,
+                        ))
                         .child(div().flex_1().min_w_0())
                         .child(
                             icon_actions()
@@ -744,6 +749,7 @@ mod tests {
             patch: FilePatch::default(),
             diff,
             file_list,
+            commit_picker: Default::default(),
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             modal: None,
@@ -1078,6 +1084,81 @@ mod tests {
             pill.right() <= actions.left(),
             "long titles must leave room for actions"
         );
+    }
+
+    #[gpui::test]
+    fn commit_pill_opens_a_dropdown_beside_the_title(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| HeaderHost {
+            view: cx.new(|cx| {
+                let mut app = fixture(window, cx);
+                let review = app.review.as_mut().unwrap();
+                review.name = "patch".into();
+                review.request.mode = Some("branch".into());
+                review.commit_count = 4;
+                app
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        let pill = cx.debug_bounds("commit-picker-pill").unwrap();
+        let actions = cx.debug_bounds("review-header-actions").unwrap();
+        assert!(pill.right() < actions.left());
+        assert!(cx.debug_bounds("commit-menu").is_none());
+
+        // The menu waits for its commits rather than opening empty and growing.
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).commit_picker.open));
+        assert!(cx.debug_bounds("commit-menu").is_none());
+
+        // Clicking again while they load cancels the open.
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).commit_picker.open));
+
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        view.update(cx, |app, cx| {
+            let picker = &mut app.commit_picker;
+            picker.loading = false;
+            picker.commits = vec![crate::model::Commit {
+                sha: "0123456789".into(),
+                subject: "Add the picker".into(),
+                author: "a".into(),
+                date: "2026-11-01".into(),
+            }];
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        let menu = cx.debug_bounds("commit-menu").unwrap();
+        assert_eq!(menu.left(), pill.left(), "align the menu with its pill");
+        assert!(menu.top() >= pill.bottom());
+
+        // Clicking the pill again closes it rather than reopening.
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).commit_picker.open));
+        assert!(cx.debug_bounds("commit-menu").is_none());
+
+        // Reopening on the same branch reuses the loaded commits, so it opens at once.
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).commit_picker.loading));
+        assert!(cx.debug_bounds("commit-menu").is_some());
+
+        // Clicking elsewhere dismisses an open menu.
+        cx.simulate_click(gpui_kit::point(px(950.), px(350.)), Default::default());
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).commit_picker.open));
+        assert!(cx.debug_bounds("commit-menu").is_none());
     }
 
     #[gpui::test]

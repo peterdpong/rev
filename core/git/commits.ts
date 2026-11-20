@@ -1,5 +1,5 @@
 import { runGitText } from './command';
-import { rootOf, resolveRef } from './refs';
+import { defaultBase, rootOf, resolveRef } from './refs';
 import type { ReviewRequest, CommitPage } from './types';
 
 export async function listCommits(
@@ -11,7 +11,19 @@ export async function listCommits(
   }
 
   const repo = await rootOf(input.repo);
-  const head = await resolveRef(repo, input.head || 'HEAD');
+  const [head, base] = await Promise.all([
+    resolveRef(repo, input.head || 'HEAD'),
+    input.base?.trim()
+      ? resolveRef(repo, input.base.trim())
+      : defaultBase(repo).then(({ baseSha }) => baseSha),
+  ]);
+
+  // List only the branch's own commits: those after its merge base with the base.
+  // Unrelated histories have no merge base, so fall back to the full history.
+  const mergeBase = await runGitText(repo, ['merge-base', base, head])
+    .then((out) => out.trim())
+    .catch(() => '');
+  const revisions = mergeBase ? `${mergeBase}..${head}` : head;
   const parts = (
     await runGitText(repo, [
       'log', 
@@ -20,7 +32,7 @@ export async function listCommits(
       '--format=%H%x00%P%x00%s%x00%an%x00%aI', // Emit SHA, parent SHAs, subject, author name, and author date (strict ISO 8601). %x00 separates fields with NUL bytes for parsing below.
       '--max-count=201', // Fetch one extra commit beyond the 200-item page to determine hasMore.
       `--skip=${offset}`, 
-      head, // Start history at the resolved head commit.
+      revisions, // From the resolved head back to (excluding) the merge base.
       '--', // End revision arguments.
     ])
   ).split('\0');

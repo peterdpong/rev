@@ -84,7 +84,12 @@ impl WorkspaceState {
     }
 
     /// Working reviews use the permanent entry; branches and PRs are committed comparisons.
+    /// Commits chosen from the working tree tab stay in it rather than opening a branch tab.
     pub fn remember_review(&mut self, review: &Review, request: &ReviewRequest) -> String {
+        let commits_in_checkout = request.commit_range.is_some()
+            && self.active_tab().is_some_and(|tab| {
+                tab.kind == TabKind::Current && tab.request.repo == review.request.repo
+            });
         let index = match self
             .projects
             .iter()
@@ -107,10 +112,14 @@ impl WorkspaceState {
         ensure_current_tab(project);
 
         let follows_checkout = request.mode.as_deref() == Some("working");
-        let id = if follows_checkout {
+        let id = if follows_checkout || commits_in_checkout {
             let tab = current_tab(project, &review.branch, &review.branch_head_sha);
             tab.scope_key = Some(review.scope_key.clone());
             tab.request = ReviewRequest::working_tree(review.request.repo.clone());
+            if commits_in_checkout {
+                tab.request = ReviewRequest::working_tree(review.request.repo.clone())
+                    .checkout_commits(request.commit_range.clone());
+            }
             tab.id.clone()
         } else {
             let head = review.request.head.as_deref().unwrap_or("HEAD");
@@ -249,6 +258,8 @@ fn current_tab<'a>(project: &'a mut Project, branch: &str, sha: &str) -> &'a mut
     let tab = ensure_current_tab(project);
 
     if tab.label != label {
+        // A commit selection belongs to the previous checkout.
+        tab.request = ReviewRequest::working_tree(tab.request.repo.clone());
         tab.scope_key = None;
         tab.file = None;
     }
@@ -344,6 +355,43 @@ mod tests {
         assert_eq!(tab.label, "Working tree · feature");
         assert_eq!(tab.request.base, None);
         assert_eq!(tab.request.mode.as_deref(), Some("working"));
+    }
+
+    #[test]
+    fn commits_chosen_in_the_working_tree_tab_stay_in_it() {
+        let mut workspace = WorkspaceState::default();
+        let working = ReviewRequest::working_tree("/a");
+        let current = workspace.remember_review(&review("/a", "HEAD", "working"), &working);
+
+        let range = Some(crate::model::CommitRange {
+            start: "a".into(),
+            end: "b".into(),
+        });
+        let request = working.clone().checkout_commits(range.clone());
+        let mut selection = review("/a", "feature", "branch");
+        selection.request.commit_range = range.clone();
+        assert_eq!(workspace.remember_review(&selection, &request), current);
+        assert_eq!(workspace.projects[0].tabs.len(), 1, "no branch tab is opened");
+        let tab = workspace.active_tab().unwrap();
+        assert_eq!(tab.request.commit_range, range);
+        assert_eq!(tab.request.mode.as_deref(), Some("branch"));
+
+        // "All commits" returns the tab to the live working tree.
+        workspace.remember_review(&review("/a", "HEAD", "working"), &working);
+        assert_eq!(workspace.active_tab().unwrap().request, working);
+
+        // A selection is dropped when the checkout moves to another branch.
+        workspace.remember_review(&selection, &request);
+        workspace.update_checkout("/a", "other", "0123456789");
+        assert_eq!(workspace.projects[0].tabs[0].request, working);
+
+        // From a branch tab, a selection stays in that branch tab.
+        let branch = workspace.remember_review(
+            &review("/a", "feature", "branch"),
+            &open("/a", Some("feature")),
+        );
+        assert_eq!(workspace.remember_review(&selection, &selection.request), branch);
+        assert_eq!(workspace.projects[0].tabs.len(), 2);
     }
 
     #[test]

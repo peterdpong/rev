@@ -220,3 +220,7 @@ pub(super) fn icon_button(
         .accessibility_label(label.clone())
         .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
 }
+
+pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
+    button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
+}

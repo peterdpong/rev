@@ -25,6 +25,19 @@ impl ReviewRequest {
         }
     }
 
+    /// Commits of the checked-out branch, as chosen from the working tree tab. Without a
+    /// range this is the working tree itself.
+    pub fn checkout_commits(self, commit_range: Option<CommitRange>) -> Self {
+        match commit_range {
+            None => Self::working_tree(self.repo),
+            Some(range) => Self {
+                mode: Some("branch".into()),
+                commit_range: Some(range),
+                ..Self::working_tree(self.repo)
+            },
+        }
+    }
+
     pub fn for_tab(self) -> Self {
         if self.mode.as_deref() == Some("working")
             || (self.mode.is_none()
@@ -48,6 +61,19 @@ pub struct CommitRange {
     pub end: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct Commit {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitPage {
+    pub commits: Vec<Commit>,
+    pub has_more: bool,
+}
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct File {
     pub path: String,
@@ -66,7 +92,18 @@ pub struct Review {
     pub branch: String,
     pub branch_head_sha: String,
     pub scope_key: String,
+    #[serde(default)]
+    pub commit_count: usize,
+    /// The newest compared commit, which is the selected commit for a single-commit review.
+    #[serde(default)]
+    pub head_commit: Option<HeadCommit>,
     pub pull_request: Option<PullRequest>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HeadCommit {
+    pub sha: String,
+    pub subject: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
