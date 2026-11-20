@@ -14,6 +14,8 @@ use std::{
     path::PathBuf,
 };
 
+mod branches;
+use branches::BranchPicker;
 mod commits;
 use commits::CommitPicker;
 mod controls;
@@ -68,6 +70,7 @@ pub struct Rev {
     diff: Entity<DiffView>,
     file_list: Entity<FileList>,
     commit_picker: CommitPicker,
+    branch_picker: BranchPicker,
     /// Pull request details by review key, which stays the same across commit selections.
     pull_requests: HashMap<String, PullRequest>,
     /// Reviews whose last lookup found no PR. They are retried, since a PR may be opened
@@ -138,6 +141,7 @@ impl Rev {
             diff,
             file_list,
             commit_picker: CommitPicker::default(),
+            branch_picker: BranchPicker::default(),
             pull_requests: HashMap::new(),
             without_pull_request: Default::default(),
             pull_request_loading: false,

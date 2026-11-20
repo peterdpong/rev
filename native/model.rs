@@ -25,6 +25,16 @@ impl ReviewRequest {
         }
     }
 
+    /// A committed review of a local branch.
+    pub fn local_branch(repo: impl Into<String>, branch: &str) -> Self {
+        Self {
+            repo: repo.into(),
+            head: Some(format!("refs/heads/{branch}")),
+            mode: Some("branch".into()),
+            ..Default::default()
+        }
+    }
+
     /// Commits of the checked-out branch, as chosen from the working tree tab. Without a
     /// range this is the working tree itself.
     pub fn checkout_commits(self, commit_range: Option<CommitRange>) -> Self {
@@ -218,6 +228,15 @@ pub struct WorkingReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_branch_requests_review_the_committed_branch() {
+        let request = ReviewRequest::local_branch("/repo", "feature");
+        assert_eq!(request.head.as_deref(), Some("refs/heads/feature"));
+        assert_eq!(request.mode.as_deref(), Some("branch"));
+        assert_eq!(request.base, None);
+        assert_eq!(request.commit_range, None);
+    }
 
     #[test]
     fn branch_label_names_the_checkout_or_head_ref() {

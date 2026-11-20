@@ -36,12 +36,7 @@ impl Modal {
     }
 
     fn local_branch_request(&self, branch: &str) -> ReviewRequest {
-        ReviewRequest {
-            repo: self.request.repo.clone(),
-            head: Some(format!("refs/heads/{branch}")),
-            mode: Some("branch".into()),
-            ..Default::default()
-        }
+        ReviewRequest::local_branch(self.request.repo.clone(), branch)
     }
 }
 
