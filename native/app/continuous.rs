@@ -113,11 +113,15 @@ impl Rev {
                         if let Some(path) = this.file.clone() {
                             this.patch = this.patches.get(&path).cloned().unwrap_or_default();
                             if !preserve_scroll {
-                                this.jump_file(path, window, cx);
+                                this.reveal_file(path, window, cx);
                             }
                         }
+                        this.restore_navigation(window, cx);
                     }
-                    Err(error) => this.error = Some(error),
+                    Err(error) => {
+                        this.navigation.restore = None;
+                        this.error = Some(error);
+                    }
                 }
                 cx.notify();
             });
@@ -127,6 +131,17 @@ impl Rev {
     }
 
     pub(super) fn jump_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = self.navigation_location(cx);
+        self.reveal_file(path, window, cx);
+        self.record_file_navigation(previous, cx);
+    }
+
+    pub(super) fn reveal_file(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(review) = self.review.as_ref() else {
             return;
         };
