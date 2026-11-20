@@ -198,7 +198,6 @@ impl FileList {
         self.rows_rendered.borrow_mut().push(entry.path.clone());
 
         let repo = &self.repo;
-        let loading = self.loading;
         let path = entry.path.clone();
         let selected =
             matches!(&entry.kind, EntryKind::File(_)) && self.selected.as_ref() == Some(&path);
@@ -224,16 +223,9 @@ impl FileList {
             .border_color(rgba(0x00000000))
             .text_size(px(12.))
             .when(selected, selected_surface)
-            .hover(move |d| {
-                if selected || loading {
-                    d
-                } else {
-                    d.bg(rgb(HOVER))
-                }
-            })
+            // Selections made while a review loads are ignored upstream, not dimmed here.
+            .hover(move |d| if selected { d } else { d.bg(rgb(HOVER)) })
             .focus_visible(|d| d.border_color(rgb(FOCUS)))
-            .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
-            .disabled(loading)
             .accessibility_label(path.clone());
 
         let item = match &entry.kind {
@@ -271,8 +263,10 @@ impl FileList {
                             .text_color(rgb(SUCCESS)),
                     )
                 })
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.emit(FileListEvent::Selected(path.clone()));
+                .on_click(cx.listener(move |list, _, _, cx| {
+                    if !list.loading {
+                        cx.emit(FileListEvent::Selected(path.clone()));
+                    }
                 })),
         };
 
@@ -495,7 +489,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn file_clicks_emit_selection_and_loading_disables_them(cx: &mut TestAppContext) {
+    fn file_clicks_emit_selection_and_are_ignored_while_loading(cx: &mut TestAppContext) {
         use gpui_kit::test::TestQueryExt;
 
         cx.update(|cx| {

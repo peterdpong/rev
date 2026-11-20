@@ -631,6 +631,9 @@ impl Rev {
     }
 
     fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.submitting {
+            return;
+        }
         let Some(review) = &self.review else { return };
         let request = review.request.clone();
         let epoch = self.review_epoch;
