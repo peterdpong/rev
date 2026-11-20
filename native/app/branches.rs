@@ -3,29 +3,56 @@ use super::*;
 use crate::theme::*;
 use gpui_kit::{
     assets::IconName,
-    base::{Button as BaseButton, Popover},
-    component::Icon,
+    base::{Button as BaseButton, Popover, motion},
+    component::{
+        Icon, Sizable,
+        input::{Input, InputEvent, InputState},
+    },
 };
 
 const MENU_WIDTH: f32 = 320.;
 const MENU_VISIBLE_ROWS: usize = 10;
 const MENU_ROW_HEIGHT: f32 = CONTROL_HEIGHT + 2.;
+/// Matches the PR description card, so one fades out as the other fades in.
+const MENU_REVEAL: std::time::Duration = std::time::Duration::from_millis(110);
 
 #[derive(Default)]
 pub(super) struct BranchPicker {
     pub open: bool,
     pub branches: Vec<String>,
     pub loading: bool,
+    pub(super) query: Option<Entity<InputState>>,
     /// The repository the loaded branches belong to, so reopening the menu shows
     /// them at once while a fresh list loads.
     repo: Option<String>,
     serial: u64,
+    _query_events: Option<Subscription>,
 }
 
 impl BranchPicker {
     /// Like the commit menu, this stays closed until it has branches to show.
     pub fn ready(&self) -> bool {
         self.open && (!self.loading || !self.branches.is_empty())
+    }
+
+    /// Branches matching the search, case-insensitively, with the current one first.
+    fn visible(&self, current: &str, cx: &App) -> Vec<String> {
+        let query = self
+            .query
+            .as_ref()
+            .map(|query| query.read(cx).value().trim().to_lowercase())
+            .unwrap_or_default();
+        let mut visible: Vec<String> = self
+            .branches
+            .iter()
+            .filter(|branch| branch.to_lowercase().contains(&query))
+            .cloned()
+            .collect();
+        if let Some(index) = visible.iter().position(|branch| branch == current) {
+            let branch = visible.remove(index);
+            visible.insert(0, branch);
+        }
+        visible
     }
 }
 
@@ -39,6 +66,24 @@ impl Rev {
             return;
         }
         let repo = review.request.repo.clone();
+        match self.branch_picker.query.clone() {
+            Some(query) => query.update(cx, |query, cx| query.set_value("", window, cx)),
+            None => {
+                let query =
+                    cx.new(|cx| InputState::new(window, cx).placeholder("Find a branch…"));
+                self.branch_picker._query_events = Some(cx.subscribe_in(
+                    &query,
+                    window,
+                    |this, _, event: &InputEvent, window, cx| match event {
+                        InputEvent::Change => cx.notify(),
+                        InputEvent::PressEnter { .. } => this.choose_first_branch(window, cx),
+                        _ => {}
+                    },
+                ));
+                self.branch_picker.query = Some(query);
+            }
+        }
+
         let picker = &mut self.branch_picker;
         if picker.repo.as_ref() != Some(&repo) {
             picker.branches.clear();
@@ -96,10 +141,21 @@ impl Rev {
         self.load_review(request, None, window, cx);
     }
 
-    fn open_branch_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_branch_picker(cx);
-        if let Some(review) = self.review.as_ref() {
-            self.open_branch_modal(review.request.repo.clone(), window, cx);
+    /// Enter in the search field opens the best match, the first listed branch.
+    fn choose_first_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(review) = self.review.as_ref() else {
+            return;
+        };
+        if !self.branch_picker.ready() {
+            return;
+        }
+        let first = self
+            .branch_picker
+            .visible(&review.branch_label(), cx)
+            .into_iter()
+            .next();
+        if let Some(branch) = first {
+            self.choose_branch(branch, window, cx);
         }
     }
 
@@ -108,10 +164,19 @@ impl Rev {
         &self,
         pill: AnyElement,
         review: &Review,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let requested = self.branch_picker.open;
         let open = self.branch_picker.ready();
+        // Fade and drop in like the PR description card, which fades out as this opens.
+        let reveal = motion::transition(
+            "branch-menu-reveal",
+            if open { 1.0_f32 } else { 0.0_f32 },
+            motion::Transition::new(MENU_REVEAL).ease(ease_out_quint()),
+            window,
+            cx,
+        );
         let this = cx.entity().downgrade();
         let trigger = BaseButton::new("branch-picker-trigger")
             .debug_selector(|| "branch-picker-trigger".into())
@@ -124,14 +189,20 @@ impl Rev {
             .accessibility_label(format!("Switch branch: {}", review.branch_label()))
             .child(pill);
 
-        let current = review.branch_label();
-        let content = open.then(|| self.branch_menu(current, cx));
+        let content = open.then(|| self.branch_menu(review.branch_label(), reveal, cx));
+        let focus = self
+            .branch_picker
+            .query
+            .as_ref()
+            .map(|query| query.read(cx).focus_handle(cx));
         Popover::new("branch-picker")
             .flex_shrink_1()
             .min_w_0()
             .anchor(Anchor::TopLeft)
             .offset(px(UI_SPACING))
             .open(open)
+            // Type to filter as soon as the menu opens.
+            .when_some(focus, |popover, focus| popover.track_focus(&focus))
             .on_open_change(move |open, window, cx| {
                 let open = *open;
                 _ = this.update(cx, |this, cx| {
@@ -150,8 +221,14 @@ impl Rev {
             .into_any_element()
     }
 
-    fn branch_row(&self, index: usize, current: &str, cx: &mut Context<Self>) -> AnyElement {
-        let branch = self.branch_picker.branches[index].clone();
+    fn branch_row(
+        &self,
+        index: usize,
+        branch: &str,
+        current: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let branch = branch.to_owned();
         let selected = branch == current;
         div()
             .h(px(MENU_ROW_HEIGHT))
@@ -175,11 +252,19 @@ impl Rev {
             .into_any_element()
     }
 
-    fn branch_menu(&self, current: String, cx: &mut Context<Self>) -> AnyElement {
-        let branches = &self.branch_picker.branches;
+    fn branch_menu(&self, current: String, reveal: f32, cx: &mut Context<Self>) -> AnyElement {
+        let visible = self.branch_picker.visible(&current, cx);
+        let empty = if self.branch_picker.branches.is_empty() {
+            "No local branches yet."
+        } else {
+            "No branches match."
+        };
         column()
             .id("branch-menu")
             .debug_selector(|| "branch-menu".into())
+            .relative()
+            .top(px(-4. * (1. - reveal)))
+            .opacity(reveal)
             .w(px(MENU_WIDTH))
             .p(px(UI_SPACING))
             .gap(px(UI_SPACING))
@@ -189,47 +274,57 @@ impl Rev {
             .rounded(px(8.))
             .shadow_lg()
             .text_color(rgb(TEXT))
-            .when(branches.is_empty(), |menu| {
+            .when_some(self.branch_picker.query.as_ref(), |menu, query| {
+                menu.child(
+                    Input::new(query)
+                        .id("filter-branches")
+                        .focus_bordered(false)
+                        .small()
+                        .min_h(px(CONTROL_HEIGHT))
+                        .max_h(px(CONTROL_HEIGHT))
+                        .px(px(CONTROL_PADDING))
+                        .py_0()
+                        .gap(px(6.))
+                        .rounded(px(CONTROL_RADIUS))
+                        .bg(rgb(BG))
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .text_size(px(12.))
+                        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+                        .prefix(
+                            Icon::new(IconName::Search)
+                                .size(px(14.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .aria_label("Find a branch"),
+                )
+            })
+            .when(visible.is_empty(), |menu| {
                 menu.child(
                     div()
                         .px(px(CONTROL_PADDING))
                         .py(px(UI_SPACING))
                         .text_size(px(12.))
                         .text_color(rgb(MUTED))
-                        .child("No local branches yet."),
+                        .child(empty),
                 )
             })
-            .when(!branches.is_empty(), |menu| {
+            .when(!visible.is_empty(), |menu| {
+                let rows = visible.len();
                 menu.child(
                     uniform_list(
                         "branch-list",
-                        branches.len(),
+                        rows,
                         cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                             range
-                                .map(|index| this.branch_row(index, &current, cx))
+                                .map(|index| this.branch_row(index, &visible[index], &current, cx))
                                 .collect::<Vec<_>>()
                         }),
                     )
-                    .h(px(branches.len().min(MENU_VISIBLE_ROWS) as f32 * MENU_ROW_HEIGHT))
+                    .h(px(rows.min(MENU_VISIBLE_ROWS) as f32 * MENU_ROW_HEIGHT))
                     .w_full(),
                 )
             })
-            .child(div().h(px(1.)).flex_shrink_0().bg(rgb(BORDER)))
-            .child(
-                choice_button("open-branch-dialog", false)
-                    .h(px(CONTROL_HEIGHT))
-                    .accessibility_label("Open a branch or PR")
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(px(14.))
-                            .flex_shrink_0()
-                            .text_color(rgb(MUTED)),
-                    )
-                    .child("Open branch or PR…")
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.open_branch_dialog(window, cx)),
-                    ),
-            )
             .into_any_element()
     }
 }

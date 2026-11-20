@@ -316,7 +316,7 @@ impl Rev {
                                         )
                                         .into_any_element()
                                     };
-                                    d.child(self.branch_picker(pill, review, cx))
+                                    d.child(self.branch_picker(pill, review, window, cx))
                                 }),
                         )
                         .child(self.commit_picker_pill(review, window, cx))
@@ -1261,6 +1261,8 @@ mod tests {
 
     #[gpui::test]
     fn title_pill_opens_a_branch_dropdown_and_hides_the_pr_card(cx: &mut TestAppContext) {
+        use gpui_kit::{Focusable, test::TestQueryExt};
+
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::diff::init(cx);
@@ -1295,7 +1297,7 @@ mod tests {
         assert!(cx.debug_bounds("branch-menu").is_none());
         view.update(cx, |app, cx| {
             app.branch_picker.loading = false;
-            app.branch_picker.branches = vec!["feature".into(), "main".into()];
+            app.branch_picker.branches = vec!["main".into(), "feature".into(), "fix".into()];
             cx.notify();
         });
         draw(cx);
@@ -1303,6 +1305,31 @@ mod tests {
         let menu = cx.debug_bounds("branch-menu").unwrap();
         assert_eq!(menu.left(), pill.left(), "align the menu with the title pill");
         assert!(menu.top() >= pill.bottom());
+
+        // The current branch leads the list, and the search field takes focus.
+        let row = |cx: &mut VisualTestContext, branch: &str| {
+            cx.update(|window, _| {
+                window
+                    .try_find_by_label(&format!("Review branch {branch}"))
+                    .map(|node| node.bounds())
+            })
+        };
+        let feature = row(cx, "feature").unwrap();
+        let main = row(cx, "main").unwrap();
+        assert!(feature.top() < main.top(), "current branch first");
+        let query = cx.update(|_, cx| view.read(cx).branch_picker.query.clone().unwrap());
+        assert!(cx.update(|window, cx| query.read(cx).focus_handle(cx).is_focused(window)));
+
+        // Typing filters the list.
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("MA", window, cx)));
+        draw(cx);
+        assert!(row(cx, "main").is_some());
+        assert!(row(cx, "feature").is_none() && row(cx, "fix").is_none());
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("zzz", window, cx)));
+        draw(cx);
+        assert!(row(cx, "main").is_none());
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("", window, cx)));
+        draw(cx);
 
         // Hovering the title while the menu is open does not stack the PR card on it.
         let text = cx.debug_bounds("pr-title-text").unwrap();
