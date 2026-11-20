@@ -36,9 +36,11 @@ pub fn resource_dir() -> PathBuf {
         }
     }
 
-    // During development, npm run build:host writes host.mjs to the project's
-    // dist folder and Cargo embeds the Cargo.toml directory here at compile time.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dist")
+    // Use Cargo's runtime path so cached builds work after moving the project.
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("dist")
 }
 
 pub fn node_binary() -> PathBuf {
@@ -105,7 +107,10 @@ impl Backend {
     pub fn start() -> Result<Self, String> {
         let script = resource_dir().join("host.mjs");
         if !script.is_file() {
-            return Err("Build the local service first with npm run build:host.".into());
+            return Err(format!(
+                "Could not find the local service at {}. Run npm run build:host in the Rev project, then restart Rev. If REV_RESOURCES is set, check that folder.",
+                script.display()
+            ));
         }
 
         let mut child = Command::new(node_binary()).arg(script).env("PATH", host_path())
