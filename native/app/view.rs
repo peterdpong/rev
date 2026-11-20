@@ -174,7 +174,7 @@ fn sidebar_item(
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
-fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stateful<Div> {
+fn sidebar_row(id: impl Into<ElementId>, selected: bool) -> Stateful<Div> {
     row()
         .id(id)
         .h(px(LIST_ROW_HEIGHT))
@@ -185,18 +185,11 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
         .border_1()
         .border_color(rgba(0x00000000))
         .when(selected, selected_surface)
-        .hover(move |d| {
-            if selected || disabled {
-                d
-            } else {
-                d.bg(rgb(HOVER))
-            }
-        })
+        .hover(move |d| if selected { d } else { d.bg(rgb(HOVER)) })
 }
 
 impl Rev {
     fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
-        let busy = self.loading || self.submitting;
         const BRANCH_FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 14. + 6.;
         let title_pill_width = self.review.as_ref().map(|review| {
             let pr_title = review
@@ -310,12 +303,7 @@ impl Rev {
                                     }
                                 }),
                         )
-                        .child(self.commit_picker_pill(
-                            review,
-                            busy || self.patch_loading,
-                            window,
-                            cx,
-                        ))
+                        .child(self.commit_picker_pill(review, window, cx))
                         .child(div().flex_1().min_w_0())
                         .child(
                             icon_actions()
@@ -326,14 +314,12 @@ impl Rev {
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(
                                     icon_button("refresh", "Refresh", IconName::RefreshCw)
-                                        .disabled(busy)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.refresh(window, cx)
                                         })),
                                 )
                                 .child(
                                     icon_button("fetch", "Fetch", IconName::CloudDownload)
-                                        .disabled(busy)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.fetch(window, cx)
                                         })),
@@ -344,7 +330,6 @@ impl Rev {
     }
 
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let blocked = self.loading || self.workspace_busy;
         let mut projects = column().gap_1();
 
         for project in self.workspace.projects.clone() {
@@ -359,7 +344,7 @@ impl Rev {
             let collapsed = project.collapsed;
 
             let mut group = column().gap(px(2.)).child(
-                sidebar_row(hover_group.clone(), false, blocked)
+                sidebar_row(hover_group.clone(), false)
                     .group(hover_group.clone())
                     .child(
                         sidebar_item(
@@ -372,7 +357,6 @@ impl Rev {
                         )
                         .font_weight(FontWeight::MEDIUM)
                         .aria_expanded(!collapsed)
-                        .disabled(blocked)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.workspace_action(
                                 json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }),
@@ -390,7 +374,6 @@ impl Rev {
                                     format!("Remove {} from sidebar", project.name),
                                     IconName::Close,
                                 )
-                                .disabled(blocked)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.workspace_action(
                                         json!({ "type": "removeProject", "repo": remove_repo }),
@@ -404,7 +387,6 @@ impl Rev {
                                     format!("Open a branch or PR in {}", project.name),
                                     IconName::Plus,
                                 )
-                                .disabled(blocked)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_branch_modal(repo.clone(), window, cx)
                                 })),
@@ -423,7 +405,7 @@ impl Rev {
                     let hover_group = SharedString::from(format!("review-row-{id}"));
 
                     group = group.child(
-                        sidebar_row(hover_group.clone(), active, blocked)
+                        sidebar_row(hover_group.clone(), active)
                             .group(hover_group.clone())
                             .pl(px(16.))
                             .child(
@@ -440,7 +422,6 @@ impl Rev {
                                     .text_color(rgb(MUTED)),
                                 )
                                 .aria_selected(active)
-                                .disabled(blocked)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.load_review(request.clone(), file.clone(), window, cx)
@@ -456,7 +437,6 @@ impl Rev {
                                     )
                                     .invisible()
                                     .group_hover(hover_group, |button| button.visible())
-                                    .disabled(blocked)
                                     .on_click(cx.listener(
                                         move |this, _, window, cx| {
                                             this.workspace_action(
@@ -499,7 +479,6 @@ impl Rev {
                     )
                     .child(
                         icon_button("add-project", "Open repository", IconName::Plus)
-                            .disabled(blocked)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
                             ),
@@ -631,10 +610,9 @@ impl Render for Rev {
                         .file
                         .as_ref()
                         .is_some_and(|path| self.state.viewed.contains_key(path)),
-                    viewed_disabled: self.loading
-                        || self.patch_loading
-                        || self.submitting
-                        || self.patch.digest.is_empty(),
+                    viewed_disabled: !self.loading
+                        && !self.patch_loading
+                        && self.patch.digest.is_empty(),
                     loading: self.loading || self.patch_loading,
                     notice: self.notice.clone(),
                 },
