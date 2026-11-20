@@ -95,7 +95,8 @@ impl Rev {
         let Some(review) = self.review.as_ref() else {
             return;
         };
-        if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
+        // A file loading in the background does not stop the menu opening.
+        if self.loading || self.submitting || self.folder_picker_open {
             cx.notify();
             return;
         }
@@ -201,7 +202,7 @@ impl Rev {
 
     fn apply_commit_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_commit_picker(cx);
-        if self.loading || self.patch_loading {
+        if self.loading {
             return;
         }
         let Some(review) = self.review.as_ref() else {
@@ -244,7 +245,6 @@ impl Rev {
     pub(super) fn commit_picker_pill(
         &self,
         review: &Review,
-        disabled: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -279,16 +279,11 @@ impl Rev {
             .text_size(px(12.))
             .line_height(px(HEADER_PILL_LINE_HEIGHT))
             .text_color(rgb(TEXT))
-            .when(!disabled, |d| {
-                d.hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
-            })
+            .hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
             .styles(|styles| {
-                styles
-                    .selected(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
-                    .disabled(|d| d.opacity(0.5))
+                styles.selected(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
             })
             .focus_visible(|d| d.border_color(rgb(FOCUS)))
-            .disabled(disabled)
             .selected(requested)
             .aria_expanded(open)
             .accessibility_label(format!("Commits: {label}"))
