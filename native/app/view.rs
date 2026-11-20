@@ -16,6 +16,8 @@ struct PrDescription {
     id: SharedString,
     title: String,
     description: String,
+    /// Hide the card, for example while the branch dropdown below it is open.
+    suppressed: bool,
 }
 
 #[derive(Default)]
@@ -57,6 +59,16 @@ impl RenderOnce for PrDescription {
             window.use_keyed_state((ElementId::from(self.id.clone()), "hover"), cx, |_, _| {
                 PrDescriptionState::default()
             });
+        if self.suppressed {
+            // Forget the hover too, so the card waits for the pointer to come back
+            // rather than popping up again the moment the menu closes.
+            state.update(cx, |state, _| {
+                state.open = false;
+                state.trigger_hovered = false;
+                state.content_hovered = false;
+                state.close_task = None;
+            });
+        }
         let open = state.read(cx).open;
         let opacity = motion::transition(
             (self.id.clone(), "visibility"),
@@ -249,14 +261,20 @@ impl Rev {
                                 .items_center()
                                 .map(|d| {
                                     let width = title_pill_width.flatten();
-                                    if let Some(pr) = &review.pull_request {
+                                    let menu_open = self.branch_picker.open;
+                                    let open_style = |d: Stateful<Div>| {
+                                        d.when(menu_open, |d| {
+                                            d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER))
+                                        })
+                                    };
+                                    let pill = if let Some(pr) = &review.pull_request {
                                         let title = format!("{}  #{}", pr.title, pr.number);
                                         let description = if pr.body.trim().is_empty() {
                                             "No description provided.".to_owned()
                                         } else {
                                             pr.body.trim_end().to_owned()
                                         };
-                                        d.child(
+                                        open_style(
                                             header_pill()
                                                 .id("pr-title-pill")
                                                 .debug_selector(|| "pr-title-pill".into())
@@ -275,18 +293,26 @@ impl Rev {
                                                         .into(),
                                                         title,
                                                         description,
+                                                        // Hand over to the menu only once it
+                                                        // can show, so they crossfade.
+                                                        suppressed: self.branch_picker.ready(),
                                                     }),
                                                 ),
                                         )
+                                        .into_any_element()
                                     } else if self.pull_request_loading {
-                                        d.child(pull_request_skeleton(width))
+                                        pull_request_skeleton(width).into_any_element()
                                     } else {
-                                        d.child(
+                                        open_style(
                                             header_pill()
                                                 .id("branch-pill")
                                                 .debug_selector(|| "branch-pill".into())
                                                 .max_w_full()
                                                 .when_some(width, |d, w| d.w(w))
+                                                .hover(|d| {
+                                                    d.bg(rgb(HOVER))
+                                                        .border_color(rgb(SELECTED_BORDER))
+                                                })
                                                 .child(
                                                     Icon::new(IconName::GitBranch)
                                                         .size(px(14.))
@@ -300,7 +326,9 @@ impl Rev {
                                                         .child(review.branch_label()),
                                                 ),
                                         )
-                                    }
+                                        .into_any_element()
+                                    };
+                                    d.child(self.branch_picker(pill, review, window, cx))
                                 }),
                         )
                         .child(self.commit_picker_pill(review, window, cx))
@@ -788,6 +816,7 @@ mod tests {
             diff,
             file_list,
             commit_picker: Default::default(),
+            branch_picker: Default::default(),
             pull_requests: Default::default(),
             without_pull_request: Default::default(),
             pull_request_loading: false,
@@ -1243,6 +1272,120 @@ mod tests {
     }
 
     #[gpui::test]
+    fn title_pill_opens_a_branch_dropdown_and_hides_the_pr_card(cx: &mut TestAppContext) {
+        use gpui_kit::{Focusable, test::TestQueryExt};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| HeaderHost {
+            view: cx.new(|cx| {
+                let mut app = fixture(window, cx);
+                let review = app.review.as_mut().unwrap();
+                review.request.repo = "/repo".into();
+                review.branch = "feature".into();
+                review.pull_request = Some(crate::model::PullRequest {
+                    number: 14,
+                    title: "Refine the UI".into(),
+                    body: "The PR description.".into(),
+                    head_ref_name: "feature".into(),
+                    base_ref_name: "main".into(),
+                    comparison_base_ref_name: None,
+                });
+                app
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        let pill = cx.debug_bounds("pr-title-pill").unwrap();
+        let text = cx.debug_bounds("pr-title-text").unwrap();
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        // The menu waits for the branch list, and the PR card stays up meanwhile so
+        // there is no empty gap between them.
+        cx.simulate_click(text.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).branch_picker.open));
+        assert!(cx.debug_bounds("branch-menu").is_none());
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        // Once the branches arrive the two swap.
+        view.update(cx, |app, cx| {
+            app.branch_picker.loading = false;
+            app.branch_picker.branches = vec!["main".into(), "feature".into(), "fix".into()];
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+        let menu = cx.debug_bounds("branch-menu").unwrap();
+        assert_eq!(menu.left(), pill.left(), "align the menu with the title pill");
+        assert!(menu.top() >= pill.bottom());
+
+        // The current branch leads the list, and the search field takes focus.
+        let row = |cx: &mut VisualTestContext, branch: &str| {
+            cx.update(|window, _| {
+                window
+                    .try_find_by_label(&format!("Review branch {branch}"))
+                    .map(|node| node.bounds())
+            })
+        };
+        let feature = row(cx, "feature").unwrap();
+        let main = row(cx, "main").unwrap();
+        assert!(feature.top() < main.top(), "current branch first");
+        let query = cx.update(|_, cx| view.read(cx).branch_picker.query.clone().unwrap());
+        assert!(cx.update(|window, cx| query.read(cx).focus_handle(cx).is_focused(window)));
+
+        // Typing filters the list.
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("MA", window, cx)));
+        draw(cx);
+        assert!(row(cx, "main").is_some());
+        assert!(row(cx, "feature").is_none() && row(cx, "fix").is_none());
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("zzz", window, cx)));
+        draw(cx);
+        assert!(row(cx, "main").is_none());
+        cx.update(|window, cx| query.update(cx, |query, cx| query.set_value("", window, cx)));
+        draw(cx);
+
+        // Hovering the title while the menu is open does not stack the PR card on it.
+        let outside = gpui_kit::point(px(950.), px(350.));
+        cx.simulate_mouse_move(outside, None, Default::default());
+        draw(cx);
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+
+        // Closing the menu from the pill leaves the card down until the pointer
+        // comes back, instead of popping it straight up again.
+        cx.simulate_click(text.center(), Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).branch_picker.open));
+        assert!(cx.debug_bounds("branch-menu").is_none());
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+        cx.simulate_mouse_move(outside, None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        cx.simulate_click(outside, Default::default());
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).branch_picker.open));
+        assert!(cx.debug_bounds("branch-menu").is_none());
+    }
+
+    #[gpui::test]
     fn commit_pill_opens_a_dropdown_beside_the_title(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -1332,6 +1475,7 @@ mod tests {
                                 id: "animated-pr-description".into(),
                                 title: "Refine the UI #14".into(),
                                 description: "The PR description.".into(),
+                                suppressed: false,
                             }),
                     )
             }
