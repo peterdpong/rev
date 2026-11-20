@@ -25,7 +25,7 @@ mod view;
 mod working_tree;
 use diff_view::{DiffView, DiffViewEvent, DiffViewStatus};
 use file_list::{FileList, FileListEvent};
-use modal::{Modal, ModalKind};
+use modal::Modal;
 gpui_kit::actions!(
     rev,
     [

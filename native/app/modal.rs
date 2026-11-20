@@ -10,15 +10,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
 
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum ModalKind {
-    Review,
-    Commits,
-}
-
 #[derive(Clone)]
 pub(super) struct Modal {
-    pub(super) kind: ModalKind,
     pub(super) request: ReviewRequest,
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
@@ -79,7 +72,6 @@ impl Rev {
             ..Default::default()
         };
         let modal = Modal {
-            kind: ModalKind::Review,
             request: request.clone(),
             base_input: cx.new(|cx| InputState::new(window, cx).placeholder("Auto-detect base")),
             head_input: cx.new(|cx| {
@@ -139,10 +131,6 @@ impl Rev {
     }
 
     pub(super) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Commits) {
-            self.apply_commit_selection(window, cx);
-            return;
-        }
         if self.submitting {
             return;
         }
@@ -235,17 +223,10 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
-        let is_commits = modal.kind == ModalKind::Commits;
-        let title = if is_commits {
-            "Review commits in"
-        } else {
-            "Open branch or PR in"
-        };
+        let title = "Open branch or PR in";
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
-        if is_commits {
-            body = body.child(self.commit_choices(cx));
-        } else {
+        {
             let mut choices = column().gap(px(2.));
             for (i, branch) in modal.local_branches.iter().enumerate() {
                 let branch = branch.clone();
@@ -358,11 +339,7 @@ impl Rev {
             let label = if self.submitting {
                 "Working…"
             } else {
-                if is_commits {
-                    "Review selection"
-                } else {
-                    "Open diff"
-                }
+                "Open diff"
             };
             footer = footer.child(
                 primary_button("submit-modal", label)
@@ -465,13 +442,12 @@ impl Rev {
 
 #[cfg(test)]
 mod tests {
-    use super::{Modal, ModalKind};
+    use super::Modal;
     use crate::model::{CommitRange, ReviewRequest};
     use gpui_kit::{App, AppContext, TestAppContext, Window, component::input::InputState};
 
     fn repo_modal(window: &mut Window, cx: &mut App) -> Modal {
         Modal {
-            kind: ModalKind::Review,
             request: ReviewRequest {
                 repo: "/selected-repo".into(),
                 base: Some("old-base".into()),

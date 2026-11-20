@@ -23,6 +23,7 @@ impl Rev {
             && !self.submitting
             && !self.workspace_busy
             && self.modal.is_none()
+            && !self.commit_picker.open
             && self
                 .workspace
                 .active_tab()
