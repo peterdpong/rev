@@ -11,8 +11,15 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::json;
 
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ModalKind {
+    Review,
+    Details,
+}
+
 #[derive(Clone)]
 pub(super) struct Modal {
+    pub(super) kind: ModalKind,
     pub(super) request: ReviewRequest,
     pub(super) base_input: Entity<InputState>,
     pub(super) head_input: Entity<InputState>,
@@ -68,7 +75,7 @@ impl Rev {
         if self.loading || self.patch_loading || self.submitting || self.folder_picker_open {
             return;
         }
-        if self.modal.as_ref().is_some_and(|m| m.request.repo == repo) {
+        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Review && m.request.repo == repo) {
             self.close_modal(window, cx);
             return;
         }
@@ -79,6 +86,7 @@ impl Rev {
             ..Default::default()
         };
         let modal = Modal {
+            kind: ModalKind::Review,
             request: request.clone(),
             base_input: cx.new(|cx| InputState::new(window, cx).placeholder("Auto-detect base")),
             head_input: cx.new(|cx| {
@@ -140,6 +148,9 @@ impl Rev {
     }
 
     pub(super) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.as_ref().is_some_and(|m| m.kind == ModalKind::Details) {
+            return;
+        }
         if self.submitting {
             return;
         }
@@ -232,10 +243,17 @@ impl Rev {
         let Some(modal) = self.modal.clone() else {
             return div().into_any_element();
         };
-        let title = "Open branch or PR in";
+        let is_details = modal.kind == ModalKind::Details;
+        let title = if is_details {
+            "Review details in"
+        } else {
+            "Open branch or PR in"
+        };
         let mut body = column().gap(px(POPOVER_PADDING));
         let mut footer = icon_actions().justify_end();
-        {
+        if is_details {
+            body = body.child(self.review_details());
+        } else {
             let mut choices = column().gap(px(2.));
             for (i, branch) in modal.local_branches.iter().enumerate() {
                 let branch = branch.clone();
@@ -344,7 +362,7 @@ impl Rev {
         if let Some(error) = &self.error {
             body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
         }
-        {
+        if !is_details {
             let label = if self.submitting {
                 "Working…"
             } else {
@@ -358,7 +376,9 @@ impl Rev {
         }
         let max_height = (window.viewport_size().height - px(80.)).max(px(220.));
         let serial = modal.serial;
+        let reveal = super::motion::enter("review-popover-enter", window, cx);
         column()
+            .opacity(reveal)
             .id("review-popover")
             .on_mouse_down_out(cx.listener(move |this, event, window, cx| {
                 this.dismiss_popover(serial, event, window, cx)
@@ -425,15 +445,17 @@ impl Rev {
                     .p(px(POPOVER_PADDING))
                     .child(body),
             )
-            .child(
-                div()
-                    .px(px(POPOVER_PADDING))
-                    .py(px(UI_SPACING))
-                    .flex_shrink_0()
-                    .border_t_1()
-                    .border_color(rgb(BORDER))
-                    .child(footer),
-            )
+            .when(!is_details, |dialog| {
+                dialog.child(
+                    div()
+                        .px(px(POPOVER_PADDING))
+                        .py(px(UI_SPACING))
+                        .flex_shrink_0()
+                        .border_t_1()
+                        .border_color(rgb(BORDER))
+                        .child(footer),
+                )
+            })
             .focus_trap("modal-trap", &self.modal_focus)
             .into_any_element()
     }
@@ -441,12 +463,13 @@ impl Rev {
 
 #[cfg(test)]
 mod tests {
-    use super::Modal;
+    use super::{Modal, ModalKind};
     use crate::model::{CommitRange, ReviewRequest};
     use gpui_kit::{App, AppContext, TestAppContext, Window, component::input::InputState};
 
     fn repo_modal(window: &mut Window, cx: &mut App) -> Modal {
         Modal {
+            kind: ModalKind::Review,
             request: ReviewRequest {
                 repo: "/selected-repo".into(),
                 base: Some("old-base".into()),

@@ -496,6 +496,7 @@ mod tests {
         single.head_commit = Some(HeadCommit {
             sha: "abcdef123".into(),
             subject: "Fix the thing".into(),
+            ..Default::default()
         });
         assert_eq!(CommitPicker::label(&single), "abcdef1 Fix the thing");
     }
