@@ -8,7 +8,8 @@ use gpui_kit::{
 };
 
 const SIDEBAR_WIDTH: f32 = 225.;
-const PR_DESCRIPTION_GAP: f32 = 2.;
+// Match the spacing between header pills.
+const PR_DESCRIPTION_GAP: f32 = UI_SPACING;
 
 #[derive(IntoElement)]
 struct PrDescription {
@@ -122,6 +123,33 @@ impl RenderOnce for PrDescription {
     }
 }
 
+const PR_SKELETON_WIDTH: f32 = 220.;
+
+fn pull_request_skeleton(width: Option<Pixels>) -> impl IntoElement {
+    header_pill()
+        .id("pr-title-loading")
+        .debug_selector(|| "pr-title-loading".into())
+        .w(width.unwrap_or(px(PR_SKELETON_WIDTH)))
+        .max_w_full()
+        .flex_shrink_1()
+        .role(accesskit::Role::ProgressIndicator)
+        .aria_label("Loading pull request")
+        .child(
+            div()
+                .flex_1()
+                .h(px(8.))
+                .rounded_full()
+                .bg(rgb(SELECTED))
+                .with_animation(
+                    "pr-title-pulse",
+                    Animation::new(std::time::Duration::from_millis(1200))
+                        .repeat()
+                        .with_easing(pulsating_between(0.45, 1.)),
+                    |bar, delta| bar.opacity(delta),
+                ),
+        )
+}
+
 fn sidebar_item(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -167,8 +195,21 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool, disabled: bool) -> Stat
 }
 
 impl Rev {
-    fn review_header(&self, cx: &mut Context<Self>) -> TitleBar {
+    fn review_header(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let busy = self.loading || self.submitting;
+        const BRANCH_FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 14. + 6.;
+        let title_pill_width = self.review.as_ref().map(|review| {
+            let pr_title = review
+                .pull_request
+                .as_ref()
+                .map(|pr| format!("{}  #{}", pr.title, pr.number));
+            let (label, fixed_width) = match pr_title {
+                Some(title) => (title, HEADER_PILL_PADDING * 2. + 2.),
+                None if self.pull_request_loading => (String::new(), PR_SKELETON_WIDTH),
+                None => (review.branch_label(), BRANCH_FIXED_WIDTH),
+            };
+            sliding_pill_width("title-pill-width", &label, fixed_width, None, window, cx)
+        });
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
             .pl_0()
@@ -214,6 +255,7 @@ impl Rev {
                                 .flex()
                                 .items_center()
                                 .map(|d| {
+                                    let width = title_pill_width.flatten();
                                     if let Some(pr) = &review.pull_request {
                                         let title = format!("{}  #{}", pr.title, pr.number);
                                         let description = if pr.body.trim().is_empty() {
@@ -226,6 +268,7 @@ impl Rev {
                                                 .id("pr-title-pill")
                                                 .debug_selector(|| "pr-title-pill".into())
                                                 .max_w_full()
+                                                .when_some(width, |d, w| d.w(w))
                                                 .hover(|d| {
                                                     d.bg(rgb(HOVER))
                                                         .border_color(rgb(SELECTED_BORDER))
@@ -242,20 +285,35 @@ impl Rev {
                                                     }),
                                                 ),
                                         )
+                                    } else if self.pull_request_loading {
+                                        d.child(pull_request_skeleton(width))
                                     } else {
-                                        d.child(header_pill().text_color(rgb(MUTED)).child(
-                                            if review.request.mode.as_deref() == Some("working") {
-                                                "Working tree"
-                                            } else {
-                                                "Branch review"
-                                            },
-                                        ))
+                                        d.child(
+                                            header_pill()
+                                                .id("branch-pill")
+                                                .debug_selector(|| "branch-pill".into())
+                                                .max_w_full()
+                                                .when_some(width, |d, w| d.w(w))
+                                                .child(
+                                                    Icon::new(IconName::GitBranch)
+                                                        .size(px(14.))
+                                                        .flex_shrink_0()
+                                                        .text_color(rgb(MUTED)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .child(review.branch_label()),
+                                                ),
+                                        )
                                     }
                                 }),
                         )
                         .child(self.commit_picker_pill(
                             review,
                             busy || self.patch_loading,
+                            window,
                             cx,
                         ))
                         .child(div().flex_1().min_w_0())
@@ -655,7 +713,7 @@ impl Render for Rev {
                     this.mark_viewed(window, cx);
                 }
             }))
-            .child(self.review_header(cx))
+            .child(self.review_header(window, cx))
             .child(
                 row()
                     .items_start()
@@ -708,8 +766,8 @@ mod tests {
     }
 
     impl Render for HeaderHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let header = self.view.update(cx, |view, cx| view.review_header(cx));
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self.view.update(cx, |view, cx| view.review_header(window, cx));
             div().w(px(1000.)).h(px(400.)).child(header)
         }
     }
@@ -750,6 +808,10 @@ mod tests {
             diff,
             file_list,
             commit_picker: Default::default(),
+            pull_requests: Default::default(),
+            without_pull_request: Default::default(),
+            pull_request_loading: false,
+            revalidate_pull_request: false,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             modal: None,
@@ -1046,8 +1108,8 @@ mod tests {
         let settled = cx.debug_bounds("pr-description-content").unwrap();
         assert_eq!(settled.left(), pill.left(), "align with the title pill");
         assert!(
-            (settled.top() - pill.bottom() - px(2.)).abs() <= px(1.),
-            "leave a 2px gap, allowing for pixel rounding: {pill:?}, {settled:?}"
+            (settled.top() - pill.bottom() - px(super::PR_DESCRIPTION_GAP)).abs() <= px(1.),
+            "leave the pill gap, allowing for pixel rounding: {pill:?}, {settled:?}"
         );
 
         // Crossing the gap onto the card keeps the description available.
@@ -1083,6 +1145,120 @@ mod tests {
         assert!(
             pill.right() <= actions.left(),
             "long titles must leave room for actions"
+        );
+    }
+
+    #[gpui::test]
+    fn pull_request_title_is_cached_across_commit_selections(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| HeaderHost {
+            view: cx.new(|cx| {
+                let mut app = fixture(window, cx);
+                app.review.as_mut().unwrap().key = "review".into();
+                app.pull_request_loading = true;
+                app
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        assert!(cx.debug_bounds("pr-title-loading").is_some());
+        assert!(cx.debug_bounds("pr-title-pill").is_none());
+
+        let pr = crate::model::PullRequest {
+            number: 14,
+            title: "Refine the UI".into(),
+            body: String::new(),
+            head_ref_name: "feature".into(),
+            base_ref_name: "main".into(),
+            comparison_base_ref_name: None,
+        };
+        view.update(cx, |app, cx| {
+            app.pull_requests.insert("review".into(), pr.clone());
+
+            // A new commit selection keeps the review key, so it reuses the title
+            // without fetching it again.
+            let mut selection = Review {
+                key: "review".into(),
+                ..Default::default()
+            };
+            assert!(!app.apply_cached_pull_request(&mut selection));
+            assert_eq!(selection.pull_request.as_ref(), Some(&pr));
+
+            // A review whose last lookup found no PR is looked up again, since one may
+            // have been opened since, but keeps its branch pill instead of a placeholder.
+            app.without_pull_request.insert("plain".into());
+            let mut plain = Review {
+                key: "plain".into(),
+                ..Default::default()
+            };
+            assert!(app.apply_cached_pull_request(&mut plain));
+            assert_eq!(plain.pull_request, None);
+
+            // Unknown reviews fetch, and Refresh revalidates a cached one.
+            let mut other = Review {
+                key: "other".into(),
+                ..Default::default()
+            };
+            assert!(app.apply_cached_pull_request(&mut other));
+            app.revalidate_pull_request = true;
+            let mut refreshed = Review {
+                key: "review".into(),
+                ..Default::default()
+            };
+            assert!(app.apply_cached_pull_request(&mut refreshed));
+            assert_eq!(refreshed.pull_request.as_ref(), Some(&pr));
+
+            app.review = Some(selection);
+            app.pull_request_loading = false;
+            cx.notify();
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("pr-title-loading").is_none());
+        assert!(cx.debug_bounds("pr-title-pill").is_some());
+    }
+
+    #[gpui::test]
+    fn title_pill_slides_between_loading_and_loaded_widths(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| HeaderHost {
+            view: cx.new(|cx| {
+                let mut app = fixture(window, cx);
+                app.review.as_mut().unwrap().branch = "a".into();
+                app.pull_request_loading = true;
+                app
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        draw(cx);
+        let loading = cx.debug_bounds("pr-title-loading").unwrap().size.width;
+
+        view.update(cx, |app, cx| {
+            app.pull_request_loading = false;
+            cx.notify();
+        });
+        draw(cx);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(60));
+        draw(cx);
+        let midway = cx.debug_bounds("branch-pill").unwrap().size.width;
+
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        draw(cx);
+        draw(cx);
+        let settled = cx.debug_bounds("branch-pill").unwrap().size.width;
+        assert!(settled < loading, "a one-letter branch is narrower: {settled:?}");
+        assert!(
+            midway < loading && midway > settled,
+            "slide rather than snap: {loading:?} → {midway:?} → {settled:?}"
         );
     }
 

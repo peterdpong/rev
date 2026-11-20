@@ -150,6 +150,8 @@ impl Rev {
                 }
 
                 let review_changed = previous != &update.review;
+                let fetch_pull_request =
+                    !same_checkout && this.apply_cached_pull_request(&mut update.review);
                 let same_file = this.file == update.path;
 
                 // The digest covers the patch text and the too-large flag.
@@ -197,7 +199,7 @@ impl Rev {
                 cx.notify();
 
                 // Update pull request information if checkout changed.
-                if !same_checkout {
+                if fetch_pull_request {
                     this.load_pull_request(window, cx);
                 }
             },
