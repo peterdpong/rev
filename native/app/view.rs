@@ -59,7 +59,17 @@ impl RenderOnce for PrDescription {
             window.use_keyed_state((ElementId::from(self.id.clone()), "hover"), cx, |_, _| {
                 PrDescriptionState::default()
             });
-        let open = state.read(cx).open && !self.suppressed;
+        if self.suppressed {
+            // Forget the hover too, so the card waits for the pointer to come back
+            // rather than popping up again the moment the menu closes.
+            state.update(cx, |state, _| {
+                state.open = false;
+                state.trigger_hovered = false;
+                state.content_hovered = false;
+                state.close_task = None;
+            });
+        }
+        let open = state.read(cx).open;
         let opacity = motion::transition(
             (self.id.clone(), "visibility"),
             if open { 1.0_f32 } else { 0.0_f32 },
@@ -283,7 +293,9 @@ impl Rev {
                                                         .into(),
                                                         title,
                                                         description,
-                                                        suppressed: menu_open,
+                                                        // Hand over to the menu only once it
+                                                        // can show, so they crossfade.
+                                                        suppressed: self.branch_picker.ready(),
                                                     }),
                                                 ),
                                         )
@@ -1289,12 +1301,21 @@ mod tests {
         let view = cx.update(|_, cx| host.read(cx).view.clone());
         draw(cx);
         let pill = cx.debug_bounds("pr-title-pill").unwrap();
+        let text = cx.debug_bounds("pr-title-text").unwrap();
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
 
-        // The menu waits for the branch list, then opens under the pill.
-        cx.simulate_click(pill.center(), Default::default());
+        // The menu waits for the branch list, and the PR card stays up meanwhile so
+        // there is no empty gap between them.
+        cx.simulate_click(text.center(), Default::default());
         draw(cx);
         assert!(cx.update(|_, cx| view.read(cx).branch_picker.open));
         assert!(cx.debug_bounds("branch-menu").is_none());
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        // Once the branches arrive the two swap.
         view.update(cx, |app, cx| {
             app.branch_picker.loading = false;
             app.branch_picker.branches = vec!["main".into(), "feature".into(), "fix".into()];
@@ -1302,6 +1323,7 @@ mod tests {
         });
         draw(cx);
         draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_none());
         let menu = cx.debug_bounds("branch-menu").unwrap();
         assert_eq!(menu.left(), pill.left(), "align the menu with the title pill");
         assert!(menu.top() >= pill.bottom());
@@ -1332,13 +1354,32 @@ mod tests {
         draw(cx);
 
         // Hovering the title while the menu is open does not stack the PR card on it.
-        let text = cx.debug_bounds("pr-title-text").unwrap();
+        let outside = gpui_kit::point(px(950.), px(350.));
+        cx.simulate_mouse_move(outside, None, Default::default());
+        draw(cx);
         cx.simulate_mouse_move(text.center(), None, Default::default());
         draw(cx);
         draw(cx);
         assert!(cx.debug_bounds("pr-description-content").is_none());
 
-        cx.simulate_click(gpui_kit::point(px(950.), px(350.)), Default::default());
+        // Closing the menu from the pill leaves the card down until the pointer
+        // comes back, instead of popping it straight up again.
+        cx.simulate_click(text.center(), Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(!cx.update(|_, cx| view.read(cx).branch_picker.open));
+        assert!(cx.debug_bounds("branch-menu").is_none());
+        assert!(cx.debug_bounds("pr-description-content").is_none());
+        cx.simulate_mouse_move(outside, None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        cx.simulate_mouse_move(text.center(), None, Default::default());
+        draw(cx);
+        draw(cx);
+        assert!(cx.debug_bounds("pr-description-content").is_some());
+
+        cx.simulate_click(outside, Default::default());
         draw(cx);
         assert!(!cx.update(|_, cx| view.read(cx).branch_picker.open));
         assert!(cx.debug_bounds("branch-menu").is_none());
