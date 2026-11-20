@@ -245,9 +245,20 @@ impl Rev {
         &self,
         review: &Review,
         disabled: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let label = CommitPicker::label(review);
+        // Padding, border, chevron and the gap before it.
+        const FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 12. + 6.;
+        let width = sliding_pill_width(
+            "commit-pill-width",
+            &label,
+            FIXED_WIDTH,
+            Some(MAX_PILL_WIDTH),
+            window,
+            cx,
+        );
         // Requested opens highlight the pill straight away; the menu itself waits
         // for its commits.
         let requested = self.commit_picker.open;
@@ -257,6 +268,7 @@ impl Rev {
             .debug_selector(|| "commit-picker-pill".into())
             .h(px(HEADER_PILL_HEIGHT))
             .max_w(px(MAX_PILL_WIDTH))
+            .when_some(width, |d, w| d.w(w))
             .min_w_0()
             .px(px(HEADER_PILL_PADDING))
             .gap(px(6.))

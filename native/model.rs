@@ -117,7 +117,33 @@ pub struct PullRequest {
     pub comparison_base_ref_name: Option<String>,
 }
 
+fn short_ref(name: &str) -> String {
+    let name = name
+        .strip_prefix("refs/heads/")
+        .or_else(|| name.strip_prefix("refs/remotes/"))
+        .unwrap_or(name);
+    name.strip_prefix("origin/").unwrap_or(name).to_owned()
+}
+
 impl Review {
+    /// The branch being reviewed: the checkout for working trees, else the head ref.
+    pub fn branch_label(&self) -> String {
+        let head = self.request.head.as_deref().unwrap_or("HEAD");
+        if let Some(pr) = &self.pull_request
+            && head.starts_with("refs/rev/")
+        {
+            return pr.head_ref_name.clone();
+        }
+        if head != "HEAD" {
+            return short_ref(head);
+        }
+        if self.branch == "detached HEAD" || self.branch.is_empty() {
+            let sha = &self.branch_head_sha;
+            return format!("Detached {}", sha.get(..7).unwrap_or(sha));
+        }
+        self.branch.clone()
+    }
+
     pub fn comparison_label(&self) -> String {
         let mut base = self.request.base.as_deref().unwrap_or("main");
         let mut head = self.request.head.as_deref().unwrap_or("HEAD");
@@ -140,14 +166,7 @@ impl Review {
             }
             head = &pr.head_ref_name;
         }
-        let short = |name: &str| {
-            let name = name
-                .strip_prefix("refs/heads/")
-                .or_else(|| name.strip_prefix("refs/remotes/"))
-                .unwrap_or(name);
-            name.strip_prefix("origin/").unwrap_or(name).to_owned()
-        };
-        format!("{}  ←  {}", short(base), short(head))
+        format!("{}  ←  {}", short_ref(base), short_ref(head))
     }
 }
 
@@ -199,6 +218,23 @@ pub struct WorkingReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_label_names_the_checkout_or_head_ref() {
+        let mut review = Review {
+            request: ReviewRequest::working_tree("/repo"),
+            branch: "feature".into(),
+            branch_head_sha: "0123456789".into(),
+            ..Default::default()
+        };
+        assert_eq!(review.branch_label(), "feature");
+        review.branch = "detached HEAD".into();
+        assert_eq!(review.branch_label(), "Detached 0123456");
+        review.request.head = Some("refs/remotes/origin/topic".into());
+        assert_eq!(review.branch_label(), "topic");
+        review.request.head = Some("refs/heads/topic".into());
+        assert_eq!(review.branch_label(), "topic");
+    }
 
     #[test]
     fn tab_requests_separate_working_trees_from_committed_comparisons() {

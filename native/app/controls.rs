@@ -224,3 +224,52 @@ pub(super) fn icon_button(
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
     button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
 }
+
+const PILL_RESIZE: std::time::Duration = std::time::Duration::from_millis(180);
+const PILL_TEXT_SIZE: f32 = 12.;
+
+/// Slides a header pill to its new width when its content changes. Returns the
+/// width while sliding, or `None` once settled. `fixed_width` is everything
+/// except the label: padding, border, icons and gaps.
+pub(super) fn sliding_pill_width(
+    id: &'static str,
+    label: &str,
+    fixed_width: f32,
+    max_width: Option<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Pixels> {
+    let label_width = if label.is_empty() {
+        0.
+    } else {
+        let run = TextRun {
+            len: label.len(),
+            font: font(".AppleSystemUIFont"),
+            color: rgb(TEXT).into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_line(label.to_owned().into(), px(PILL_TEXT_SIZE), &[run], None)
+            .width
+            / px(1.)
+    };
+    let content_width = label_width + fixed_width;
+    let target_width = max_width
+        .map_or(content_width, |max| content_width.min(max))
+        .ceil();
+    let transition = motion::transition_with_status(
+        id,
+        target_width,
+        motion::Transition::new(PILL_RESIZE).ease(ease_out_quint()),
+        window,
+        cx,
+    );
+    matches!(
+        transition.status,
+        motion::MotionStatus::Running | motion::MotionStatus::Delayed
+    )
+    .then(|| px(transition.value))
+}

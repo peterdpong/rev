@@ -68,6 +68,13 @@ pub struct Rev {
     diff: Entity<DiffView>,
     file_list: Entity<FileList>,
     commit_picker: CommitPicker,
+    /// Pull request details by review key, which stays the same across commit selections.
+    pull_requests: HashMap<String, PullRequest>,
+    /// Reviews whose last lookup found no PR. They are retried, since a PR may be opened
+    /// later or the lookup may have failed, but without a loading placeholder.
+    without_pull_request: std::collections::HashSet<String>,
+    pull_request_loading: bool,
+    revalidate_pull_request: bool,
     focus: FocusHandle,
     modal_focus: FocusHandle,
     modal: Option<Modal>,
@@ -131,6 +138,10 @@ impl Rev {
             diff,
             file_list,
             commit_picker: CommitPicker::default(),
+            pull_requests: HashMap::new(),
+            without_pull_request: Default::default(),
+            pull_request_loading: false,
+            revalidate_pull_request: false,
 
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
@@ -288,6 +299,7 @@ impl Rev {
                     return;
                 }
                 this.loading = false;
+                this.pull_request_loading = false;
 
                 let Some(value) = this.result(result) else {
                     return;
@@ -314,6 +326,7 @@ impl Rev {
                     });
                 }
 
+                let fetch_pull_request = this.apply_cached_pull_request(&mut review);
                 this.workspace.remember_review(&review, &request);
                 this.save_workspace();
                 this.working_tree_revisions.remove(&review.request.repo);
@@ -338,18 +351,36 @@ impl Rev {
                 if let Some(path) = selected {
                     this.load_file(path, window, cx);
                 }
-                this.load_pull_request(window, cx);
+                if fetch_pull_request {
+                    this.load_pull_request(window, cx);
+                }
             },
         );
         cx.notify();
     }
 
+    fn apply_cached_pull_request(&mut self, review: &mut Review) -> bool {
+        let revalidate = std::mem::take(&mut self.revalidate_pull_request);
+        if let Some(pr) = &review.pull_request {
+            self.pull_requests.insert(review.key.clone(), pr.clone());
+            return false;
+        }
+        match self.pull_requests.get(&review.key) {
+            Some(cached) => {
+                review.pull_request = Some(cached.clone());
+                revalidate
+            }
+            // "No PR" is never final: one may have been opened since, or gh failed.
+            None => true,
+        }
+    }
+
     fn load_pull_request(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(review) = &self.review else { return };
-        if review.pull_request.is_some() {
-            return;
-        }
         let epoch = self.review_epoch;
+        let key = review.key.clone();
+        self.pull_request_loading =
+            review.pull_request.is_none() && !self.without_pull_request.contains(&key);
         // Optional GitHub details load separately so they never delay the diff.
         self.rpc(
             "pullRequest",
@@ -357,10 +388,24 @@ impl Rev {
             window,
             cx,
             move |this, result, _, _| {
-                if this.review_epoch == epoch
-                    && let Ok(value) = result
-                    && let Ok(pr) = decode::<Option<PullRequest>>(value)
-                    && let Some(review) = &mut this.review
+                let pr = result.and_then(decode::<Option<PullRequest>>);
+                match &pr {
+                    Ok(Some(found)) => {
+                        this.pull_requests.insert(key.clone(), found.clone());
+                        this.without_pull_request.remove(&key);
+                    }
+                    Ok(None) => {
+                        this.pull_requests.remove(&key);
+                        this.without_pull_request.insert(key.clone());
+                    }
+                    Err(_) => {}
+                }
+                if this.review_epoch != epoch {
+                    return;
+                }
+                this.pull_request_loading = false;
+                if let Ok(pr) = pr
+                    && let Some(review) = this.review.as_mut().filter(|r| r.key == key)
                 {
                     review.pull_request = pr;
                 }
@@ -432,6 +477,7 @@ impl Rev {
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(review) = &self.review {
+            self.revalidate_pull_request = true;
             let request = self
                 .workspace
                 .active_tab()
