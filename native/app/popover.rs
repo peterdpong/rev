@@ -4,7 +4,7 @@ use gpui_kit::base::{Popover, Popup, motion};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-const POPOVER_RADIUS: f32 = 8.;
+pub(super) const POPOVER_RADIUS: f32 = 8.;
 const POPOVER_RISE: f32 = 6.;
 
 pub(super) fn popover_surface() -> Div {
