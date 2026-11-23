@@ -4,13 +4,15 @@ use std::time::Duration;
 #[derive(Default)]
 pub(super) struct FileSheet {
     pub(super) open: bool,
+    pub(super) floating: bool,
     hovered: [bool; 3],
     epoch: u64,
 }
 
 impl Rev {
     fn can_show_file_sheet(&self, cx: &App) -> bool {
-        self.review.is_some()
+        self.file_sheet.floating
+            && self.review.is_some()
             && !self.loading
             && !self.submitting
             && !self.diff.read(cx).is_selecting(cx)
@@ -19,6 +21,11 @@ impl Rev {
 
     pub(super) fn show_file_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.review.is_none() || self.loading || self.submitting {
+            return;
+        }
+        if !self.file_sheet.floating {
+            self.file_list
+                .update(cx, |list, cx| list.focus_filter(window, cx));
             return;
         }
         if self.branch_popover.is_open() {
@@ -40,6 +47,16 @@ impl Rev {
         if self.file_list.read(cx).filter_focused(window, cx) {
             self.focus.focus(window, cx);
         }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_file_list_floating(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_file_sheet(window, cx);
+        self.file_sheet.floating = !self.file_sheet.floating;
         cx.notify();
     }
 

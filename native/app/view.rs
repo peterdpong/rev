@@ -10,6 +10,7 @@ use gpui_kit::{
 };
 
 pub(super) const SIDEBAR_WIDTH: f32 = 225.;
+const FILE_LIST_WIDTH: f32 = 210.;
 
 fn sidebar_item(
     id: impl Into<ElementId>,
@@ -293,6 +294,18 @@ impl Render for Rev {
             path: self.file.clone(), loading: self.loading || self.patch_loading, files,
         }, cx));
 
+        let file_list_openness = motion::transition(
+            "file-list-openness",
+            if self.file_sheet.floating {
+                0.0_f32
+            } else {
+                1.0_f32
+            },
+            motion_transition(),
+            window,
+            cx,
+        );
+
         let content =
             if self.review.is_some() {
                 column()
@@ -306,7 +319,10 @@ impl Render for Rev {
                             .gap_0()
                             .flex_1()
                             .min_h_0()
-                            .child(self.diff_panel(window, cx)),
+                            .when(file_list_openness > 0., |row| {
+                                row.child(self.docked_file_list(file_list_openness, cx))
+                            })
+                            .child(self.diff_panel(file_list_openness == 0., window, cx)),
                     )
                     .into_any_element()
             } else {
@@ -368,7 +384,7 @@ impl Render for Rev {
                 this.show_file_sheet(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ChooseFile, window, cx| {
-                if this.file_sheet.open
+                if (this.file_sheet.open || !this.file_sheet.floating)
                     && let Some(path) = this.file_list.update(cx, |list, _| list.adjacent_file(None, 1))
                 {
                     this.jump_file(path, window, cx);
@@ -569,6 +585,48 @@ mod tests {
             assert!(app.review.is_none());
             assert!(app.error.is_none());
         });
+    }
+
+    #[gpui::test]
+    fn file_list_collapses_into_a_hover_sheet_and_docks_again(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(fixture);
+        draw(cx);
+
+        let docked = cx.debug_bounds("docked-file-list").unwrap();
+        assert_eq!(docked.size.width, px(super::FILE_LIST_WIDTH));
+        let trigger = cx.debug_bounds("file-sheet-trigger").unwrap();
+        cx.simulate_mouse_move(trigger.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(
+            cx.debug_bounds("file-sheet").is_none(),
+            "a docked list never floats"
+        );
+
+        cx.simulate_click(trigger.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).file_sheet.floating));
+        assert!(cx.debug_bounds("docked-file-list").is_none());
+
+        let trigger = cx.debug_bounds("file-sheet-trigger").unwrap();
+        cx.simulate_mouse_move(trigger.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(cx.debug_bounds("file-sheet").is_some());
+
+        cx.simulate_click(trigger.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| !view.read(cx).file_sheet.floating));
+        assert!(cx.debug_bounds("file-sheet").is_none());
+        assert!(cx.debug_bounds("docked-file-list").is_some());
     }
 
     #[gpui::test]
@@ -1278,10 +1336,46 @@ mod tests {
 }
 
 impl Rev {
-    fn diff_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn docked_file_list(&self, openness: f32, cx: &mut Context<Self>) -> AnyElement {
+        // Clip a full-width list and slide it with the closing edge so its rows never reflow.
+        div()
+            .id("docked-file-list")
+            .debug_selector(|| "docked-file-list".into())
+            .w(px(FILE_LIST_WIDTH * openness))
+            .h_full()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .child(
+                div()
+                    .relative()
+                    .left(px(-FILE_LIST_WIDTH * (1. - openness)))
+                    .w(px(FILE_LIST_WIDTH))
+                    .h_full()
+                    .bg(rgb(SUBPANEL))
+                    .border_r_1()
+                    .border_color(rgb(BORDER))
+                    .key_context("RevFiles")
+                    .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
+                        this.focus.focus(window, cx);
+                    }))
+                    .child(self.file_list.clone()),
+            )
+            .into_any_element()
+    }
+
+    fn diff_panel(
+        &mut self,
+        floating: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let sheet = motion::transition(
             "file-sheet-reveal",
-            if self.file_sheet.open { 1.0_f32 } else { 0.0_f32 },
+            if self.file_sheet.open {
+                1.0_f32
+            } else {
+                0.0_f32
+            },
             motion_transition(),
             window,
             cx,
@@ -1302,22 +1396,25 @@ impl Rev {
                     .overflow_hidden()
                     .child(self.diff.clone()),
             )
-            .child(
-                div()
-                    .id("file-sheet-edge")
-                    .absolute()
-                    .left_0()
-                    .top_0()
-                    .bottom_0()
-                    .w(px(8.))
-                    .on_hover(cx.listener(|this, hovered, window, cx| {
-                        this.hover_file_sheet(1, *hovered, window, cx);
-                    })),
-            )
-            .when(self.file_sheet.open || sheet > 0., |d| {
+            .when(floating, |d| {
+                d.child(
+                    div()
+                        .id("file-sheet-edge")
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(8.))
+                        .on_hover(cx.listener(|this, hovered, window, cx| {
+                            this.hover_file_sheet(1, *hovered, window, cx);
+                        })),
+                )
+            })
+            .when(floating && (self.file_sheet.open || sheet > 0.), |d| {
                 d.child(
                     popover_surface()
                         .id("file-sheet")
+                        .debug_selector(|| "file-sheet".into())
                         .absolute()
                         .left(px(UI_SPACING * sheet))
                         .top(px(UI_SPACING))

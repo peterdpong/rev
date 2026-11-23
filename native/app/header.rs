@@ -385,6 +385,7 @@ impl Rev {
         let split = self.diff.read(cx).is_split(cx);
         let wrap = self.diff.read(cx).wraps_lines();
         let single_file = self.diff.read(cx).is_single_file();
+        let floating = self.file_sheet.floating;
 
         row()
             .id("diff-view-header")
@@ -392,16 +393,31 @@ impl Rev {
             .child(
                 div()
                     .id("file-sheet-trigger")
-                    .on_hover(cx.listener(|this, hovered, window, cx| {
-                        this.hover_file_sheet(0, *hovered, window, cx);
-                    }))
+                    .debug_selector(|| "file-sheet-trigger".into())
+                    .when(floating, |d| {
+                        d.on_hover(cx.listener(|this, hovered, window, cx| {
+                            this.hover_file_sheet(0, *hovered, window, cx);
+                        }))
+                    })
                     .child(
-                        icon_button("browse-files", "Browse files (⌘P)", IconName::Folder)
-                            .selected(self.file_sheet.open)
-                            .when(self.file_sheet.open, selected_surface)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_file_sheet(window, cx);
-                            })),
+                        icon_button(
+                            "file-list-mode",
+                            if floating {
+                                "Dock file list"
+                            } else {
+                                "Collapse file list"
+                            },
+                            if floating {
+                                IconName::PanelLeft
+                            } else {
+                                IconName::PanelLeftDashed
+                            },
+                        )
+                        .selected(self.file_sheet.open)
+                        .when(self.file_sheet.open, selected_surface)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_file_list_floating(window, cx);
+                        })),
                     ),
             )
             .bg(rgb(SUBPANEL))
