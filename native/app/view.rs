@@ -602,8 +602,6 @@ impl Rev {
                 column()
                     .flex_1()
                     .min_w_0()
-                    // Match the content inset inside the repo pill and search field.
-                    .pl(px(HEADER_PILL_PADDING + 1.))
                     .gap(px(2.))
                     .line_height(px(16.))
                     .when_some(self.review.as_ref(), |d, review| {
