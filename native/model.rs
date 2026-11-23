@@ -106,7 +106,7 @@ pub struct HeadCommit {
     pub subject: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {
     pub number: usize,
@@ -115,6 +115,34 @@ pub struct PullRequest {
     pub head_ref_name: String,
     pub base_ref_name: String,
     pub comparison_base_ref_name: Option<String>,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub is_draft: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PullRequestStatus {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+impl PullRequest {
+    pub fn status(&self) -> Option<PullRequestStatus> {
+        match self.state.to_ascii_uppercase().as_str() {
+            "OPEN" if self.is_draft => Some(PullRequestStatus::Draft),
+            "OPEN" => Some(PullRequestStatus::Open),
+            "MERGED" => Some(PullRequestStatus::Merged),
+            "CLOSED" => Some(PullRequestStatus::Closed),
+            _ => None,
+        }
+    }
 }
 
 fn short_ref(name: &str) -> String {
@@ -218,6 +246,23 @@ pub struct WorkingReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_request_status_follows_state_and_draft() {
+        let status = |state: &str, is_draft| {
+            PullRequest {
+                state: state.into(),
+                is_draft,
+                ..Default::default()
+            }
+            .status()
+        };
+        assert_eq!(status("OPEN", false), Some(PullRequestStatus::Open));
+        assert_eq!(status("OPEN", true), Some(PullRequestStatus::Draft));
+        assert_eq!(status("MERGED", false), Some(PullRequestStatus::Merged));
+        assert_eq!(status("CLOSED", false), Some(PullRequestStatus::Closed));
+        assert_eq!(status("", false), None);
+    }
 
     #[test]
     fn branch_label_names_the_checkout_or_head_ref() {

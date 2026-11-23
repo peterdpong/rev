@@ -2,23 +2,30 @@ use super::*;
 use super::branch_popover::BranchForm;
 use super::controls::*;
 use super::popover::*;
+use crate::model::{PullRequest, PullRequestStatus};
 use crate::theme::*;
 use gpui_kit::{
     assets::IconName,
     base::{Button as BaseButton, Popover, Popup, motion},
-    component::{Icon, TitleBar},
+    component::{
+        Icon, TitleBar,
+        text::{TextView, TextViewStyle},
+    },
 };
 
 const SIDEBAR_WIDTH: f32 = 225.;
 const COLLAPSED_HEADER_WIDTH: f32 = 112.;
 // Match the spacing between header pills.
 const PR_DESCRIPTION_GAP: f32 = UI_SPACING;
+const PR_CARD_LINE_HEIGHT: f32 = 16.;
+const PR_CARD_GAP: f32 = 2.;
+const PR_CARD_PADDING_Y: f32 = 8.;
+const PR_CARD_LINK_INSET: f32 = 4.;
 
 #[derive(IntoElement)]
 struct PrDescription {
     id: SharedString,
-    title: String,
-    description: String,
+    pull_request: PullRequest,
 }
 
 #[derive(Default)]
@@ -62,6 +69,7 @@ impl RenderOnce for PrDescription {
             });
         let open = state.read(cx).open;
         let motion = PopoverMotion::new(format!("{}-motion", self.id), open, window, cx);
+        let pr = self.pull_request;
 
         let popup = Popup::new(
             self.id,
@@ -70,7 +78,7 @@ impl RenderOnce for PrDescription {
                 .debug_selector(|| "pr-title-text".into())
                 .min_w_0()
                 .truncate()
-                .child(self.title.clone())
+                .child(format!("{}  #{}", pr.title, pr.number))
                 .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
                     state.trigger_hovered = *hovered;
                     state.update_hover(window, cx);
@@ -95,25 +103,92 @@ impl RenderOnce for PrDescription {
                     .left(px(-HEADER_PILL_PADDING - 1.))
                     .w(px(444.))
                     .px(px(HEADER_PILL_PADDING))
-                    .py_3()
-                    .gap(px(10.))
+                    .py(px(PR_CARD_PADDING_Y))
+                    .gap(px(PR_CARD_GAP))
+                    .text_size(px(12.))
+                    .line_height(px(PR_CARD_LINE_HEIGHT))
                     .whitespace_normal()
                     .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
                         state.content_hovered = *hovered;
                         state.update_hover(window, cx);
                     }))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title))
+                    .child(
+                        row()
+                            .items_start()
+                            .gap(px(UI_SPACING))
+                            .child(
+                                column()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(PR_CARD_GAP))
+                                    .child(
+                                        div()
+                                            .debug_selector(|| "pr-card-title".into())
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(pr.title.clone()),
+                                    )
+                                    .child(
+                                        pull_request_meta(&pr)
+                                            .debug_selector(|| "pr-card-meta".into()),
+                                    ),
+                            )
+                            .when(!pr.url.is_empty(), |d| {
+                                let url = pr.url.clone();
+                                d.child(
+                                    button("open-pr-browser", "GitHub ↗")
+                                        .debug_selector(|| "open-pr-browser".into())
+                                        .h(px(22.))
+                                        .px(px(8.))
+                                        .rounded(px(POPOVER_RADIUS - PR_CARD_LINK_INSET))
+                                        .mt(px(PR_CARD_LINK_INSET - PR_CARD_PADDING_Y - 1.))
+                                        .mr(px(PR_CARD_LINK_INSET - HEADER_PILL_PADDING - 1.))
+                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .id("pull-request-description")
+                            .debug_selector(|| "pr-card-description".into())
                             .max_h(px(300.))
                             .overflow_y_scroll()
-                            .text_color(rgb(MUTED))
-                            .child(self.description),
+                            .map(|d| {
+                                if pr.body.trim().is_empty() {
+                                    d.text_color(rgb(MUTED)).child("No description provided.")
+                                } else {
+                                    let body = pr.body.trim_end().to_owned();
+                                    d.child(
+                                        TextView::markdown("pr-description-markdown", body).style(
+                                            TextViewStyle::default()
+                                                .paragraph_gap(rems(PR_CARD_GAP / 16.)),
+                                        ),
+                                    )
+                                }
+                            }),
                     ),
             ),
         )
     }
+}
+
+fn pull_request_meta(pr: &PullRequest) -> Div {
+    let status = pr.status().map(|status| match status {
+        PullRequestStatus::Open => ("Open", SUCCESS),
+        PullRequestStatus::Draft => ("Draft", MUTED),
+        PullRequestStatus::Merged => ("Merged", PURPLE),
+        PullRequestStatus::Closed => ("Closed", DANGER),
+    });
+    row()
+        .gap(px(4.))
+        .text_color(rgb(MUTED))
+        .child(format!("#{}", pr.number))
+        .when(!pr.author.is_empty(), |d| {
+            d.child("·").child(pr.author.clone())
+        })
+        .when_some(status, |d, (label, color)| {
+            d.child("·")
+                .child(div().text_color(rgb(color)).child(label))
+        })
 }
 
 const PR_SKELETON_WIDTH: f32 = 220.;
@@ -329,12 +404,6 @@ impl Rev {
                                 .map(|d| {
                                     let width = title_pill_width.flatten();
                                     if let Some(pr) = &review.pull_request {
-                                        let title = format!("{}  #{}", pr.title, pr.number);
-                                        let description = if pr.body.trim().is_empty() {
-                                            "No description provided.".to_owned()
-                                        } else {
-                                            pr.body.trim_end().to_owned()
-                                        };
                                         d.child(
                                             header_pill()
                                                 .id("pr-title-pill")
@@ -352,8 +421,7 @@ impl Rev {
                                                             review.request.repo, pr.number
                                                         )
                                                         .into(),
-                                                        title,
-                                                        description,
+                                                        pull_request: pr.clone(),
                                                     }),
                                                 ),
                                         )
@@ -592,6 +660,7 @@ impl Rev {
                 column()
                     .flex_1()
                     .min_w_0()
+                    .pl(px(HEADER_PILL_PADDING + 1.))
                     .gap(px(2.))
                     .line_height(px(16.))
                     .when_some(self.review.as_ref(), |d, review| {
@@ -1240,10 +1309,14 @@ mod tests {
                 review.pull_request = Some(crate::model::PullRequest {
                     number: 14,
                     title: "Refine the UI".into(),
-                    body: "The PR description.".into(),
+                    body: "The PR description.\n\nA second paragraph.".into(),
                     head_ref_name: "feature".into(),
                     base_ref_name: "main".into(),
                     comparison_base_ref_name: None,
+                    url: "https://github.com/owner/repo/pull/14".into(),
+                    author: "octocat".into(),
+                    state: "OPEN".into(),
+                    ..Default::default()
                 });
                 app
             }),
@@ -1272,6 +1345,30 @@ mod tests {
         draw(cx);
         draw(cx);
         let settled = cx.debug_bounds("pr-description-content").unwrap();
+        let link = cx.debug_bounds("open-pr-browser").unwrap();
+        let inset = px(super::PR_CARD_LINK_INSET);
+        assert_eq!(
+            (link.top() - settled.top(), settled.right() - link.right()),
+            (inset, inset),
+            "inset the GitHub link equally from the card's top and right edges"
+        );
+        let title = cx.debug_bounds("pr-card-title").unwrap();
+        let meta = cx.debug_bounds("pr-card-meta").unwrap();
+        let description = cx.debug_bounds("pr-card-description").unwrap();
+        let line = px(super::PR_CARD_LINE_HEIGHT);
+        let gap = px(super::PR_CARD_GAP);
+        assert_eq!((title.size.height, meta.size.height), (line, line));
+        assert_eq!(meta.top() - title.bottom(), gap, "title to meta");
+        assert_eq!(
+            description.top() - meta.bottom(),
+            gap,
+            "meta to description"
+        );
+        assert_eq!(
+            description.size.height,
+            line * 2. + gap,
+            "two one-line paragraphs, one gap apart"
+        );
         assert_eq!(settled.left(), pill.left(), "align with the title pill");
         assert!(
             (settled.top() - pill.bottom() - px(super::PR_DESCRIPTION_GAP)).abs() <= px(1.),
@@ -1341,6 +1438,7 @@ mod tests {
             head_ref_name: "feature".into(),
             base_ref_name: "main".into(),
             comparison_base_ref_name: None,
+            ..Default::default()
         };
         view.update(cx, |app, cx| {
             app.pull_requests.insert("review".into(), pr.clone());
@@ -1523,12 +1621,20 @@ mod tests {
                             .w(px(200.))
                             .child(super::PrDescription {
                                 id: "animated-pr-description".into(),
-                                title: "Refine the UI #14".into(),
-                                description: "The PR description.".into(),
+                                pull_request: crate::model::PullRequest {
+                                    number: 14,
+                                    title: "Refine the UI".into(),
+                                    body: "The PR description.".into(),
+                                    ..Default::default()
+                                },
                             }),
                     )
             }
         }
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
         let (_, cx) = cx.add_window_view(|_, _| Host);
         draw(cx);
         assert!(cx.debug_bounds("pr-description-content").is_none());
