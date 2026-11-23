@@ -176,7 +176,7 @@ impl Review {
         self.branch.clone()
     }
 
-    pub fn comparison_label(&self) -> String {
+    pub fn comparison_refs(&self) -> (String, String) {
         let mut base = self.request.base.as_deref().unwrap_or("main");
         let mut head = self.request.head.as_deref().unwrap_or("HEAD");
 
@@ -198,7 +198,7 @@ impl Review {
             }
             head = &pr.head_ref_name;
         }
-        format!("{}  ←  {}", short_ref(base), short_ref(head))
+        (short_ref(base), short_ref(head))
     }
 }
 
@@ -348,15 +348,21 @@ mod tests {
         assert_eq!(pr.number, 42);
         assert_eq!(pr.title, "Improve the header");
         assert_eq!(pr.body, "Description\nwith details.");
-        assert_eq!(review.comparison_label(), "parent-feature  ←  feature");
+        assert_eq!(
+            review.comparison_refs(),
+            ("parent-feature".into(), "feature".into())
+        );
         review
             .pull_request
             .as_mut()
             .unwrap()
             .comparison_base_ref_name = None;
-        assert_eq!(review.comparison_label(), "main  ←  feature");
+        assert_eq!(review.comparison_refs(), ("main".into(), "feature".into()));
         review.request.base = Some("refs/remotes/origin/custom-base".into());
-        assert_eq!(review.comparison_label(), "custom-base  ←  feature");
+        assert_eq!(
+            review.comparison_refs(),
+            ("custom-base".into(), "feature".into())
+        );
     }
 
     #[test]
@@ -364,12 +370,20 @@ mod tests {
         let mut review = imported_review();
         review.request.base = Some("origin/main".into());
         review.request.head = Some("refs/heads/local-feature".into());
-        assert_eq!(review.comparison_label(), "main  ←  local-feature");
+        assert_eq!(
+            review.comparison_refs(),
+            ("main".into(), "local-feature".into())
+        );
         review.pull_request = None;
-        assert_eq!(review.comparison_label(), "main  ←  local-feature");
+        assert_eq!(
+            review.comparison_refs(),
+            ("main".into(), "local-feature".into())
+        );
         review.request.head = Some("HEAD".into());
         review.branch = "checked-out-feature".into();
-        assert_eq!(review.comparison_label(), "main  ←  checked-out-feature");
+        assert_eq!(
+            review.comparison_refs(),
+            ("main".into(), "checked-out-feature".into())
+        );
     }
-
 }
