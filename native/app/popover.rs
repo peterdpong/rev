@@ -5,6 +5,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 const POPOVER_RADIUS: f32 = 8.;
+const POPOVER_RISE: f32 = 6.;
 
 pub(super) fn popover_surface() -> Div {
     column()
@@ -15,11 +16,59 @@ pub(super) fn popover_surface() -> Div {
         .shadow_lg()
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct PopoverMotion {
+    progress: f32,
+    visible: bool,
+}
+
+impl PopoverMotion {
+    pub(super) fn new(
+        id: impl Into<SharedString>,
+        open: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let sample = motion::Presence::new(id.into(), open)
+            .transition(motion_transition())
+            .sample(window, cx);
+
+        Self {
+            progress: sample.progress,
+            visible: sample.should_render() && (open || sample.progress > 0.),
+        }
+    }
+
+    pub(super) fn visible(&self) -> bool {
+        self.visible
+    }
+
+    pub(super) fn apply(&self, content: impl IntoElement) -> Div {
+        self.surface(content.into_any_element(), true)
+    }
+
+    fn surface(&self, content: AnyElement, interactive: bool) -> Div {
+        div()
+            .relative()
+            .top(px(-POPOVER_RISE * (1. - self.progress)))
+            .opacity(self.progress)
+            .child(content)
+            .when(!interactive, |d| {
+                d.child(
+                    div()
+                        .id("popover-exit-shield")
+                        .absolute()
+                        .inset_0()
+                        .occlude(),
+                )
+            })
+    }
+}
+
 pub(super) struct AnimatedPopover {
     id: SharedString,
     open: bool,
-    progress: f32,
-    visible: bool,
+    motion: PopoverMotion,
 }
 
 impl AnimatedPopover {
@@ -30,20 +79,13 @@ impl AnimatedPopover {
         cx: &mut App,
     ) -> Self {
         let id = id.into();
-        let sample = motion::Presence::new(SharedString::from(format!("{id}-motion")), open)
-            .transition(motion_transition())
-            .sample(window, cx);
+        let motion = PopoverMotion::new(format!("{id}-motion"), open, window, cx);
 
-        Self {
-            id,
-            open,
-            progress: sample.progress,
-            visible: sample.should_render() && (open || sample.progress > 0.),
-        }
+        Self { id, open, motion }
     }
 
     pub(super) fn visible(&self) -> bool {
-        self.visible
+        self.motion.visible()
     }
 
     pub(super) fn open(&self) -> bool {
@@ -51,11 +93,9 @@ impl AnimatedPopover {
     }
 
     pub(super) fn render(self, popover: Popover, content: Option<impl IntoElement>) -> AnyElement {
-        let Self {
-            id, open, progress, ..
-        } = self;
+        let Self { id, open, motion } = self;
         let content = content
-            .filter(|_| self.visible)
+            .filter(|_| motion.visible())
             .map(IntoElement::into_any_element);
 
         let (live, closing) = if open {
@@ -69,7 +109,7 @@ impl AnimatedPopover {
             .offset(px(UI_SPACING))
             .open(open)
             .when_some(live, |popover, content| {
-                popover.content(move |_, _, _| surface_motion(content, progress, true))
+                popover.content(move |_, _, _| motion.surface(content, true))
             });
 
         Popup::new(SharedString::from(format!("{id}-closing")), popover)
@@ -78,25 +118,8 @@ impl AnimatedPopover {
             .anchor(Anchor::TopLeft)
             .offset(px(UI_SPACING))
             .when_some(closing, |popup, content| {
-                popup.content(surface_motion(content, progress, false))
+                popup.content(motion.surface(content, false))
             })
             .into_any_element()
     }
-}
-
-fn surface_motion(content: AnyElement, progress: f32, interactive: bool) -> Div {
-    div()
-        .relative()
-        .top(px(-6. * (1. - progress)))
-        .opacity(progress)
-        .child(content)
-        .when(!interactive, |d| {
-            d.child(
-                div()
-                    .id("popover-exit-shield")
-                    .absolute()
-                    .inset_0()
-                    .occlude(),
-            )
-        })
 }

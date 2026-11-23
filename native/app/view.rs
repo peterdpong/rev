@@ -61,13 +61,8 @@ impl RenderOnce for PrDescription {
                 PrDescriptionState::default()
             });
         let open = state.read(cx).open;
-        let opacity = motion::transition(
-            (self.id.clone(), "visibility"),
-            if open { 1.0_f32 } else { 0.0_f32 },
-            motion::Transition::new(std::time::Duration::from_millis(110)).ease(ease_out_quint()),
-            window,
-            cx,
-        );
+        let motion = PopoverMotion::new(format!("{}-motion", self.id), open, window, cx);
+
         let popup = Popup::new(
             self.id,
             div()
@@ -86,42 +81,37 @@ impl RenderOnce for PrDescription {
             (HEADER_PILL_HEIGHT - HEADER_PILL_LINE_HEIGHT) / 2. + PR_DESCRIPTION_GAP
         ));
 
-        if !open && opacity <= 0.0 {
+        if !motion.visible() {
             return popup;
         }
 
         popup.content(
-            column()
-                .id("pr-description-card")
-                .debug_selector(|| "pr-description-content".into())
-                .relative()
-                // The text-only trigger is inset from the surrounding pill.
-                .left(px(-HEADER_PILL_PADDING - 1.))
-                .top(px(-4. * (1. - opacity)))
-                .w(px(444.))
-                .px(px(HEADER_PILL_PADDING))
-                .py_3()
-                .gap(px(10.))
-                .bg(rgb(SURFACE))
-                .border_1()
-                .border_color(rgb(CONTROL_BORDER))
-                .rounded(px(8.))
-                .shadow_lg()
-                .opacity(opacity)
-                .whitespace_normal()
-                .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
-                    state.content_hovered = *hovered;
-                    state.update_hover(window, cx);
-                }))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title))
-                .child(
-                    div()
-                        .id("pull-request-description")
-                        .max_h(px(300.))
-                        .overflow_y_scroll()
-                        .text_color(rgb(MUTED))
-                        .child(self.description),
-                ),
+            motion.apply(
+                popover_surface()
+                    .id("pr-description-card")
+                    .debug_selector(|| "pr-description-content".into())
+                    .relative()
+                    // The text-only trigger is inset from the surrounding pill.
+                    .left(px(-HEADER_PILL_PADDING - 1.))
+                    .w(px(444.))
+                    .px(px(HEADER_PILL_PADDING))
+                    .py_3()
+                    .gap(px(10.))
+                    .whitespace_normal()
+                    .on_hover(window.listener_for(&state, |state, hovered, window, cx| {
+                        state.content_hovered = *hovered;
+                        state.update_hover(window, cx);
+                    }))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title))
+                    .child(
+                        div()
+                            .id("pull-request-description")
+                            .max_h(px(300.))
+                            .overflow_y_scroll()
+                            .text_color(rgb(MUTED))
+                            .child(self.description),
+                    ),
+            ),
         )
     }
 }
@@ -1548,8 +1538,7 @@ mod tests {
         let outside = gpui_kit::point(px(700.), px(400.));
         cx.simulate_mouse_move(title.center(), None, Default::default());
         draw(cx);
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(120));
+        cx.executor().advance_clock(MOTION_DURATION);
         draw(cx);
         let settled = cx.debug_bounds("pr-description-content").unwrap();
 
@@ -1572,8 +1561,7 @@ mod tests {
         // Re-enter during the fade; the pending close must not remove it later.
         cx.simulate_mouse_move(title.center(), None, Default::default());
         draw(cx);
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(120));
+        cx.executor().advance_clock(MOTION_DURATION);
         draw(cx);
         assert_eq!(cx.debug_bounds("pr-description-content"), Some(settled));
         cx.simulate_mouse_move(settled.center(), None, Default::default());
@@ -1587,8 +1575,7 @@ mod tests {
             .advance_clock(std::time::Duration::from_millis(150));
         draw(cx);
         assert!(cx.debug_bounds("pr-description-content").is_some());
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(120));
+        cx.executor().advance_clock(MOTION_DURATION);
         draw(cx);
         assert!(
             cx.debug_bounds("pr-description-content").is_none(),
