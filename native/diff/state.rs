@@ -842,6 +842,10 @@ impl DiffState {
         }
     }
 
+    pub(crate) fn header_row(&self, file: usize) -> Option<usize> {
+        self.header_rows.get(file).copied()
+    }
+
     /// The file containing the first visible row.
     pub fn visible_file(&self) -> Option<&SharedString> {
         let row = self.rows.get(self.list.logical_scroll_top().item_ix)?;
