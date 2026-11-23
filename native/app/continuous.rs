@@ -142,11 +142,7 @@ impl Rev {
 
         self.set_active_file(path.clone(), cx);
         gpui_kit::base::TextSelection::clear(window, cx);
-        self.diff_state(cx).update(cx, |diff, cx| {
-            diff.set_selected_lines(None, cx);
-            diff.set_file_collapsed(&path, false, cx);
-            diff.scroll_to_file(&path, cx);
-        });
+        self.diff.update(cx, |diff, cx| diff.focus_file(&path, cx));
         self.workspace.set_file(&tab_id, path);
         self.save_workspace();
     }
