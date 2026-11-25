@@ -384,6 +384,7 @@ impl Rev {
     pub(super) fn diff_view_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let split = self.diff.read(cx).is_split(cx);
         let wrap = self.diff.read(cx).wraps_lines();
+        let single_file = self.diff.read(cx).is_single_file();
 
         row()
             .id("diff-view-header")
@@ -418,6 +419,25 @@ impl Rev {
                                 .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
                         )
                     }),
+            )
+            .child(
+                icon_button(
+                    "file-view-mode",
+                    if single_file {
+                        "Show all files"
+                    } else {
+                        "Show one file at a time"
+                    },
+                    if single_file {
+                        IconName::Files
+                    } else {
+                        IconName::File
+                    },
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.diff.update(cx, |diff, cx| diff.toggle_single_file(cx));
+                    cx.notify();
+                })),
             )
             .child(
                 icon_button(

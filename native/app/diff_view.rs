@@ -30,6 +30,8 @@ pub(super) struct DiffView {
     state: Entity<DiffState>,
     status: DiffViewStatus,
     wrap: bool,
+    files: Vec<DiffFile>,
+    single_file: bool,
     _state_subscriptions: Vec<Subscription>,
 }
 
@@ -51,6 +53,8 @@ impl DiffView {
             state,
             status: DiffViewStatus::default(),
             wrap: false,
+            files: Vec::new(),
+            single_file: false,
             _state_subscriptions: subscriptions,
         }
     }
@@ -76,8 +80,9 @@ impl DiffView {
         files: impl IntoIterator<Item = DiffFile>,
         cx: &mut Context<Self>,
     ) {
-        self.state
-            .update(cx, |state, cx| state.set_files(files, cx));
+        self.files = files.into_iter().collect();
+        let path = self.status.path.clone();
+        self.show_files(path.as_deref(), false, cx);
     }
 
     pub(super) fn refresh_files(
@@ -86,6 +91,21 @@ impl DiffView {
         preserve_scroll: bool,
         cx: &mut Context<Self>,
     ) {
+        self.files = files;
+        let path = self.status.path.clone();
+        self.show_files(path.as_deref(), preserve_scroll, cx);
+    }
+
+    fn show_files(&mut self, path: Option<&str>, preserve_scroll: bool, cx: &mut Context<Self>) {
+        let files = if self.single_file {
+            path.and_then(|path| self.files.iter().find(|file| file.path().as_str() == path))
+                .cloned()
+                .into_iter()
+                .collect()
+        } else {
+            self.files.clone()
+        };
+
         self.state.update(cx, |state, cx| {
             let scroll = state.list().logical_scroll_top();
             let horizontal = state.horizontal_scroll().offset();
@@ -95,6 +115,33 @@ impl DiffView {
                 state.horizontal_scroll().set_offset(horizontal);
             }
         });
+    }
+
+    pub(super) fn focus_file(&mut self, path: &str, cx: &mut Context<Self>) {
+        let shown = self.state.read(cx).files().first().map(|file| file.path().to_string());
+        if self.single_file && shown.as_deref() != Some(path) {
+            self.show_files(Some(path), false, cx);
+        }
+
+        self.state.update(cx, |state, cx| {
+            state.set_selected_lines(None, cx);
+            state.set_file_collapsed(path, false, cx);
+            state.scroll_to_file(path, cx);
+        });
+    }
+
+    pub(super) fn is_single_file(&self) -> bool {
+        self.single_file
+    }
+
+    pub(super) fn toggle_single_file(&mut self, cx: &mut Context<Self>) {
+        self.single_file = !self.single_file;
+        let path = self.status.path.clone();
+        self.show_files(path.as_deref(), false, cx);
+        if let Some(path) = path {
+            self.state
+                .update(cx, |state, cx| state.scroll_to_file(&path, cx));
+        }
     }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
@@ -283,6 +330,40 @@ mod tests {
             let heading = cx.debug_bounds("diff-heading-file.rs").unwrap();
             assert_eq!(heading.right(), px(width) - inset, "at {width}px");
         }
+    }
+
+    #[gpui::test]
+    fn single_file_mode_shows_only_the_current_file(cx: &mut TestAppContext) {
+        let view = cx.new(DiffView::new);
+        let shown = |cx: &mut TestAppContext| {
+            view.read_with(cx, |view, cx| {
+                view.state()
+                    .read(cx)
+                    .files()
+                    .iter()
+                    .map(|file| file.path().to_string())
+                    .collect::<Vec<_>>()
+            })
+        };
+        view.update(cx, |view, cx| {
+            let files = DiffFile::parse(
+                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n\
+                 diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-a\n+b\n",
+            )
+            .unwrap();
+            view.refresh_files(files, false, cx);
+            view.focus_file("b.rs", cx);
+            view.sync_status(DiffViewStatus { path: Some("b.rs".into()), ..Default::default() }, cx);
+        });
+        assert_eq!(shown(cx), ["a.rs", "b.rs"]);
+
+        view.update(cx, |view, cx| view.toggle_single_file(cx));
+        assert_eq!(shown(cx), ["b.rs"]);
+        view.update(cx, |view, cx| view.focus_file("a.rs", cx));
+        assert_eq!(shown(cx), ["a.rs"]);
+
+        view.update(cx, |view, cx| view.toggle_single_file(cx));
+        assert_eq!(shown(cx), ["a.rs", "b.rs"]);
     }
 
     #[gpui::test]
