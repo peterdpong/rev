@@ -22,6 +22,7 @@ mod controls;
 mod diff_view;
 mod file_list;
 mod file_tree;
+mod header;
 mod popover;
 mod branch_popover;
 mod view;
