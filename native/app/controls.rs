@@ -279,3 +279,84 @@ pub(super) fn sliding_pill_width(
     )
     .then(|| px(transition.value))
 }
+
+const COPIED_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
+
+#[derive(IntoElement)]
+pub(super) struct CopyButton {
+    id: SharedString,
+    text: SharedString,
+    label: SharedString,
+    style: StyleRefinement,
+}
+
+impl CopyButton {
+    pub(super) fn new(
+        id: impl Into<SharedString>,
+        text: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            text: text.into(),
+            label: label.into(),
+            style: StyleRefinement::default(),
+        }
+    }
+}
+
+impl Styled for CopyButton {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+#[derive(Default)]
+struct CopyButtonState {
+    copied: bool,
+    reset: Option<Task<()>>,
+}
+
+impl RenderOnce for CopyButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state(
+            (ElementId::from(self.id.clone()), "copied"),
+            cx,
+            |_, _| CopyButtonState::default(),
+        );
+        let copied = state.read(cx).copied;
+        let label = if copied { "Copied".into() } else { self.label };
+        let selector = self.id.clone();
+        let text = self.text;
+        let mut button = BaseButton::new(self.id)
+            .debug_selector(move || selector.to_string())
+            .flex_shrink_0()
+            .text_color(rgb(MUTED))
+            .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+            .focus_visible(|d| d.border_color(rgb(FOCUS)))
+            .accessibility_label(label.clone())
+            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+            .child(
+                Icon::new(if copied {
+                    IconName::Check
+                } else {
+                    IconName::Copy
+                })
+                .size(px(12.)),
+            )
+            .on_click(window.listener_for(&state, move |state, _, window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+                state.copied = true;
+                state.reset = Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(COPIED_DURATION).await;
+                    let _ = this.update(cx, |state, cx| {
+                        state.copied = false;
+                        cx.notify();
+                    });
+                }));
+                cx.notify();
+            }));
+        button.style().refine(&self.style);
+        button
+    }
+}

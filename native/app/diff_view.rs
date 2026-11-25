@@ -7,6 +7,8 @@ use crate::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+const COPY_PATH_BUTTON_SIZE: f32 = 20.;
+
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
     VisibleFileChanged(String),
@@ -195,6 +197,13 @@ impl DiffView {
                     .min_w_0()
                     .child(div().min_w_0().truncate().child(path.clone()))
                     .child(
+                        CopyButton::new(format!("copy-path-{path}"), path.clone(), "Copy file path")
+                            .size(px(COPY_PATH_BUTTON_SIZE))
+                            .rounded(px(CONTROL_RADIUS))
+                            .border_1()
+                            .border_color(rgba(0x00000000)),
+                    )
+                    .child(
                         row()
                             .flex_shrink_0()
                             .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
@@ -364,6 +373,56 @@ mod tests {
 
         view.update(cx, |view, cx| view.toggle_single_file(cx));
         assert_eq!(shown(cx), ["a.rs", "b.rs"]);
+    }
+
+    #[gpui::test]
+    fn file_header_copies_its_path(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                let files = DiffFile::parse("diff --git a/src/app/view.rs b/src/app/view.rs\n--- a/src/app/view.rs\n+++ b/src/app/view.rs\n@@ -1 +1 @@\n-old\n+new\n").unwrap();
+                view.set_files(files, cx);
+                view.sync_status(DiffViewStatus { path: Some("src/app/view.rs".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        draw(cx);
+        let heading = cx.debug_bounds("diff-heading-src/app/view.rs").unwrap();
+        let copy = cx.debug_bounds("copy-path-src/app/view.rs").unwrap();
+        assert!(
+            copy.left() > heading.left() && copy.right() < heading.right(),
+            "sit inside the file header: {heading:?}, {copy:?}"
+        );
+        assert_eq!(copy.size.height, px(super::COPY_PATH_BUTTON_SIZE));
+        let labelled = cx.update(|window, _| window.find_by_label("Copy file path").bounds());
+        assert_eq!(labelled, copy);
+
+        cx.simulate_click(copy.center(), Default::default());
+        draw(cx);
+        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(copied.as_deref(), Some("src/app/view.rs"));
+        let collapsed = cx.update(|_, cx| {
+            let view = host.read(cx).view.clone();
+            let state = view.read(cx).state.clone();
+            state.read(cx).is_file_collapsed("src/app/view.rs")
+        });
+        assert!(!collapsed, "copying leaves the file expanded");
+        let copied_label = cx.update(|window, _| window.find_by_label("Copied").bounds());
+        assert_eq!(copied_label, copy, "relabel the button after copying");
     }
 
     #[gpui::test]
