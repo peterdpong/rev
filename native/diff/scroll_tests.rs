@@ -4,6 +4,8 @@ use gpui::{
 };
 
 use super::{Diff, DiffState, document::fixture};
+use gpui::TouchPhase;
+use std::time::Duration;
 
 /// Every line changed, so the unified patch is two rows per line.
 const LINES: usize = 300;
@@ -81,4 +83,49 @@ fn the_wheel_scrolls_past_the_rows_rendered_so_far(cx: &mut TestAppContext) {
     let top = cx.update(|_, cx| state.read(cx).list().logical_scroll_top().item_ix);
     // 2000 px of wheel travel crosses far more than the first screen of rows.
     assert!(top > 40, "scrolled to row {top}");
+}
+
+fn swipe(cx: &mut VisualTestContext, dy: f32, packets: usize) {
+    let wheel = |cx: &mut VisualTestContext, dy: f32, touch_phase| {
+        cx.simulate_event(ScrollEvent {
+            position: point(px(100.), px(120.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            touch_phase,
+            ..Default::default()
+        });
+    };
+    wheel(cx, 0., TouchPhase::Started);
+    for _ in 0..packets {
+        wheel(cx, dy, TouchPhase::Moved);
+        frame(cx);
+    }
+    wheel(cx, 0., TouchPhase::Ended);
+}
+
+fn frame(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(Duration::from_millis(16));
+    draw(cx);
+}
+
+#[gpui::test]
+fn a_flick_released_mid_patch_scrolls_without_dragging_the_viewport(cx: &mut TestAppContext) {
+    let (state, cx) = long_patch(cx);
+    let list = cx.update(|_, cx| state.read(cx).list().clone());
+    let top = list.viewport_bounds().top();
+    swipe(cx, -40., 30);
+    for _ in 0..60 {
+        frame(cx);
+    }
+
+    swipe(cx, -60., 5);
+    for _ in 0..6 {
+        frame(cx);
+        assert_eq!(list.viewport_bounds().top(), top, "the viewport stays put");
+    }
+
+    // A swipe that starts straight away scrolls the patch.
+    let before = list.scroll_px_offset_for_scrollbar().y;
+    swipe(cx, -30., 5);
+    assert_eq!(list.scroll_px_offset_for_scrollbar().y, before - px(150.));
+    assert_eq!(list.viewport_bounds().top(), top);
 }
