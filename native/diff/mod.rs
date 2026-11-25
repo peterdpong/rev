@@ -70,6 +70,11 @@ mod actions {
 }
 
 pub(crate) fn init(cx: &mut App) {
+    let (copy, select_all) = if cfg!(target_os = "macos") {
+        ("cmd-c", "cmd-a")
+    } else {
+        ("ctrl-c", "ctrl-a")
+    };
     cx.bind_keys([
         KeyBinding::new("up", ScrollUp, Some("RevDiff")),
         KeyBinding::new("down", ScrollDown, Some("RevDiff")),
@@ -81,8 +86,8 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("end", Last, Some("RevDiff")),
         KeyBinding::new("shift-up", ExtendUp, Some("RevDiff")),
         KeyBinding::new("shift-down", ExtendDown, Some("RevDiff")),
-        KeyBinding::new("secondary-c", Copy, Some("RevDiff")),
-        KeyBinding::new("secondary-a", SelectAll, Some("RevDiff")),
+        KeyBinding::new(copy, Copy, Some("RevDiff")),
+        KeyBinding::new(select_all, SelectAll, Some("RevDiff")),
     ]);
 }
 
