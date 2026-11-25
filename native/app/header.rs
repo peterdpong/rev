@@ -365,6 +365,40 @@ impl Rev {
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(
+                                    icon_button(
+                                        "navigate-back",
+                                        "Back (⌘[)",
+                                        IconName::ChevronLeft,
+                                    )
+                                    .disabled(!self.can_navigate(NavigationDirection::Back))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.navigate_history(
+                                                NavigationDirection::Back,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    icon_button(
+                                        "navigate-forward",
+                                        "Forward (⌘])",
+                                        IconName::ChevronRight,
+                                    )
+                                    .disabled(!self.can_navigate(NavigationDirection::Forward))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.navigate_history(
+                                                NavigationDirection::Forward,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                                .child(
                                     icon_button("refresh", "Refresh", IconName::RefreshCw)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.refresh(window, cx)

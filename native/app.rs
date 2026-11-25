@@ -17,6 +17,8 @@ use std::{
 mod branch_comparison;
 mod commits;
 mod continuous;
+mod navigation;
+mod projects;
 use commits::CommitPicker;
 mod controls;
 mod diff_view;
@@ -39,6 +41,10 @@ gpui_kit::actions!(
         ClosePopover,
         Submit,
         ToggleSidebar,
+        NextTab,
+        PreviousTab,
+        GoBack,
+        GoForward,
         NextFile,
         PreviousFile,
         MarkViewed
@@ -51,6 +57,10 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),
         KeyBinding::new("cmd-r", Refresh, Some("Rev")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Rev")),
+        KeyBinding::new("alt-tab", NextTab, Some("Rev")),
+        KeyBinding::new("alt-shift-tab", PreviousTab, Some("Rev")),
+        KeyBinding::new("cmd-[", GoBack, Some("Rev")),
+        KeyBinding::new("cmd-]", GoForward, Some("Rev")),
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
@@ -66,6 +76,7 @@ pub struct Rev {
     backend: Option<Backend>,
     workspace: WorkspaceState,
     data_dir: PathBuf,
+    navigation: navigation::Navigation,
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
@@ -135,6 +146,7 @@ impl Rev {
             backend,
             workspace,
             data_dir,
+            navigation: navigation::Navigation::default(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,
@@ -283,6 +295,9 @@ impl Rev {
         }
 
         let request = request.for_tab();
+        let previous = self.navigation_location(cx);
+        let travel = self.navigation.travel.take();
+
         self.loading = true;
         self.patch_loading = false;
         self.error = None;
@@ -343,10 +358,17 @@ impl Rev {
 
                 // Open the requested file, else the tab's last file, if it's still in the
                 // review. Otherwise open the first file.
-                let previous = file.or_else(|| this.workspace.active_tab()?.file.clone());
-                let selected = previous
+                let previous_file = file.or_else(|| this.workspace.active_tab()?.file.clone());
+                let selected = previous_file
                     .filter(|path| review.files.iter().any(|f| &f.path == path))
                     .or_else(|| review.files.first().map(|f| f.path.clone()));
+
+                this.navigation.loaded(
+                    previous,
+                    this.workspace.active_tab().map(|tab| tab.request.clone()).unwrap_or_else(|| review.request.clone()),
+                    &review.scope_key,
+                    travel,
+                );
 
                 // Show the new review with no diff until the selected file loads.
                 this.state = state;
