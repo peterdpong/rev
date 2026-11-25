@@ -1017,19 +1017,23 @@ fn render_fold(
     code: &CodePresentation,
     cx: &App,
 ) -> AnyElement {
+    use gpui_kit::assets::IconName as Lucide;
+
     let document = &code.files[file];
     // A fold bordering the hunk start has no source above it, and one
     // bordering the hunk end has none below; offer only the meaningful sides.
-    let hunk = document
-        .hunks()
-        .iter()
-        .find(|hunk| hunk.pairs().contains(&pairs.start))
-        .map_or(0..document.pairs().len(), |hunk| hunk.pairs());
+    let hunk_of = |pair: usize| {
+        document
+            .hunks()
+            .iter()
+            .find(|hunk| hunk.pairs().contains(&pair))
+            .map_or(0..document.pairs().len(), |hunk| hunk.pairs())
+    };
     let lines = code.expansion_lines;
+    let expands_down = pairs.start > hunk_of(pairs.start).start;
+    let expands_up = pairs.end < hunk_of(pairs.end - 1).end;
     let partial = pairs.len() > lines;
-    let expands_down = pairs.start > hunk.start;
-    let expands_up = pairs.end < hunk.end;
-    let expand = |id: (&'static str, usize), expansion: FoldExpansion| {
+    let expand = |id: (&'static str, usize), expansion: FoldExpansion, icon: Lucide| {
         let state = code.state.clone();
         let pairs = pairs.clone();
         Button::new(id)
@@ -1037,43 +1041,70 @@ fn render_fold(
             .xsmall()
             .w_auto()
             .text_color(cx.theme().muted_foreground)
+            .icon(Icon::new(icon))
             .on_click(move |_, _, cx| {
                 state.update(cx, |state, cx| {
                     state.expand_fold(file, pairs.clone(), expansion, cx)
                 })
             })
     };
-    h_flex()
+    let row = h_flex()
         .w_full()
-        .h_6()
+        .py(px(2.))
         .px(px(UI_SPACING))
         .gap(px(UI_SPACING))
         .bg(cx.theme().muted.opacity(0.35))
-        .when(partial && expands_down, |this| {
+        .text_xs()
+        .text_color(cx.theme().muted_foreground);
+    let label = t!("Diff.UnchangedLines", count = pairs.len()).to_string();
+    if !partial {
+        let state = code.state.clone();
+        return row
+            .id(("expand", pairs.start))
+            .test_support()
+            .cursor_pointer()
+            .hover(|this| this.bg(cx.theme().muted).text_color(cx.theme().foreground))
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(t!("Diff.ExpandLines", count = pairs.len()).to_string())
+            .on_click(move |_, _, cx| {
+                state.update(cx, |state, cx| {
+                    state.expand_fold(file, pairs.clone(), FoldExpansion::All, cx)
+                })
+            })
+            .child(
+                div()
+                    .size_5()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(match (expands_up, expands_down) {
+                            (true, false) => Lucide::ArrowUpFromLine,
+                            (false, true) => Lucide::ArrowDownFromLine,
+                            _ => Lucide::UnfoldVertical,
+                        })
+                        .xsmall(),
+                    ),
+            )
+            .child(label)
+            .into_any_element();
+    }
+    let buttons = v_flex()
+        .flex_shrink_0()
+        .when(expands_down, |this| {
             this.child(
-                expand(("expand-down", pairs.start), FoldExpansion::Down)
-                    .icon(IconName::ArrowDown)
+                expand(("expand-down", pairs.start), FoldExpansion::Down, Lucide::ArrowDownFromLine)
                     .accessibility_label(t!("Diff.ExpandBelow", count = lines).to_string()),
             )
         })
-        .when(partial && expands_up, |this| {
+        .when(expands_up, |this| {
             this.child(
-                expand(("expand-up", pairs.start), FoldExpansion::Up)
-                    .icon(IconName::ArrowUp)
+                expand(("expand-up", pairs.start), FoldExpansion::Up, Lucide::ArrowUpFromLine)
                     .accessibility_label(t!("Diff.ExpandAbove", count = lines).to_string()),
             )
-        })
-        .child(
-            expand(("expand", pairs.start), FoldExpansion::All)
-                .icon(match (expands_up, expands_down) {
-                    (true, false) => IconName::ChevronUp,
-                    (false, true) => IconName::ChevronDown,
-                    _ => IconName::ChevronsUpDown,
-                })
-                .label(t!("Diff.UnchangedLines", count = pairs.len()).to_string())
-                .accessibility_label(t!("Diff.ExpandLines", count = pairs.len()).to_string()),
-        )
-        .into_any_element()
+        });
+    row.child(buttons).child(label).into_any_element()
 }
 
 /// The heading of one part of a conflict, with the resolution commands on

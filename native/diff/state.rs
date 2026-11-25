@@ -423,6 +423,7 @@ impl DiffState {
     /// Sets how many lines an up or down disclosure reveals. Default is 20.
     pub fn with_expansion_lines(mut self, lines: usize) -> Self {
         self.expansion_lines = lines.max(1);
+        self.rebuild(true);
         self
     }
 
@@ -463,6 +464,7 @@ impl DiffState {
             return;
         }
         self.expansion_lines = lines;
+        self.rebuild_at_anchor();
         cx.notify();
     }
 
@@ -1423,6 +1425,7 @@ impl DiffState {
                     self.mode,
                     self.context_lines,
                     self.min_collapsed_lines,
+                    self.expansion_lines,
                     &self.expanded[ix],
                 );
             }
@@ -1711,6 +1714,7 @@ fn project_file(
     mode: DiffMode,
     context: Option<usize>,
     min_collapsed_lines: usize,
+    expansion_lines: usize,
     expanded: &[Range<usize>],
 ) {
     let pairs = document.pairs();
@@ -1734,6 +1738,19 @@ fn project_file(
             let start = ix;
             while ix < pairs.len() && ix < hunk_end[start] && !visible[ix] {
                 ix += 1;
+            }
+            if ix < pairs.len() && !visible[ix] {
+                let next = ix;
+                let mut end = next;
+                while end < pairs.len() && end < hunk_end[next] && !visible[end] {
+                    end += 1;
+                }
+                if end - start <= expansion_lines {
+                    ix = end;
+                    while hunks.get(hunk_ix).is_some_and(|hunk| hunk.pairs().start < ix) {
+                        hunk_ix += 1;
+                    }
+                }
             }
             rows.push(DisplayRow::Fold {
                 file,
