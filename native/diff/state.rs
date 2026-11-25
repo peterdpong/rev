@@ -77,6 +77,8 @@ pub(crate) enum FoldExpansion {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum DiffEvent {
+    /// The user scrolled the top of the viewport into a file.
+    VisibleFileChanged(SharedString),
     /// A pointer gesture began selecting source lines from a line number.
     SelectionStarted(DiffLineRange),
     /// A pointer, gutter or keyboard operation changed the selected source lines.
@@ -253,6 +255,7 @@ pub struct DiffState {
     presentation_options: PresentationOptions,
     presentations: Vec<Option<Arc<FilePresentation>>>,
     viewport: Size<Pixels>,
+    visible_file: Option<SharedString>,
     layout: Option<LayoutKey>,
     content_width: Pixels,
     row_height: Option<Pixels>,
@@ -386,6 +389,7 @@ impl DiffState {
                 syntax_max_line_length: 1000,
             },
             viewport: Size::default(),
+            visible_file: None,
             layout: None,
             content_width: px(0.),
             row_height: None,
@@ -548,6 +552,11 @@ impl DiffState {
         let last = lines.get(lines.partition_point(|line| line.source().start < range.end).checked_sub(1)?)?;
 
         Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
+    }
+
+    /// Whether a line-number drag is still held.
+    pub fn is_selecting_lines(&self) -> bool {
+        self.selecting
     }
 
     /// Whether a native text gesture is still held, including an empty range.
@@ -825,6 +834,20 @@ impl DiffState {
         }
     }
 
+    pub(crate) fn notify_visible_file(&mut self, cx: &mut Context<Self>) {
+        let path = self.visible_file().cloned();
+        if path != self.visible_file {
+            self.visible_file = path.clone();
+            if let Some(path) = path { cx.emit(DiffEvent::VisibleFileChanged(path)); }
+        }
+    }
+
+    /// The file containing the first visible row.
+    pub fn visible_file(&self) -> Option<&SharedString> {
+        let row = self.rows.get(self.list.logical_scroll_top().item_ix)?;
+        self.files.get(row.file()).map(DiffFile::path)
+    }
+
     /// Scrolls to the header of the file at `path`, a [`DiffFile::path`].
     pub fn scroll_to_file(&mut self, path: &str, cx: &mut Context<Self>) {
         let Some(item_ix) = self
@@ -837,6 +860,7 @@ impl DiffState {
             item_ix,
             offset_in_item: px(0.),
         });
+        self.horizontal_scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 

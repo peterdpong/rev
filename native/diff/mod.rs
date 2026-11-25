@@ -22,7 +22,8 @@ pub use state::{DiffEvent, DiffState};
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::theme::{
-    DIFF_ADDED_BG, DIFF_ADDED_EMPHASIS, DIFF_DELETED_BG, DIFF_DELETED_EMPHASIS, UI_SPACING,
+    CONTROL_RADIUS, DIFF_ADDED_BG, DIFF_ADDED_EMPHASIS, DIFF_DELETED_BG, DIFF_DELETED_EMPHASIS,
+    HOVER, MUTED, TEXT, UI_SPACING,
 };
 
 use gpui::{
@@ -573,7 +574,8 @@ fn render_diff(
                             .child(render_row(row, code.clone(), window, cx))
                             .into_any_element()
                     })
-                    .w(content_width)
+                    .when(soft_wrap, |list| list.w_full())
+                    .when(!soft_wrap, |list| list.w(content_width).min_w_full())
                     .h_full(),
                 ))
                 .into_any_element(),
@@ -713,6 +715,7 @@ fn render_diff(
                                 let painted = state.geometry().borrow().painted_width();
                                 code_width(painted, gutter_width, rem, mode)
                             };
+                            state.notify_visible_file(cx);
                             if state.record_paint(bounds.size, painted) || rehinted {
                                 cx.notify();
                             }
@@ -1137,6 +1140,8 @@ fn render_file_header(
     let foreground = cx.theme().muted_foreground;
     let border = cx.theme().border;
     let collapsed = code.state.read(cx).is_file_collapsed(document.path());
+    let header_width = code.state.read(cx).horizontal_scroll().bounds().size.width;
+    let header_offset = if code.soft_wrap { px(0.) } else { -code.state.read(cx).horizontal_scroll().offset().x };
     let content = if let Some(render) = &code.header.content {
         render(document, window, cx)
     } else {
@@ -1198,23 +1203,30 @@ fn render_file_header(
         .id("file-header")
         .w_full()
         .when(file > 0, |this| this.border_t_1())
+        .bg(cx.theme().list_head)
         .border_b_1()
         .border_color(border)
         .child(
             h_flex()
-                .w_full()
+                .relative().left(header_offset).w(header_width)
                 .min_w_0()
                 .p(px(UI_SPACING))
                 .gap(px(UI_SPACING))
                 .child(
-                    Button::new("collapse-file")
-                        .ghost()
-                        .xsmall()
-                        .icon(if collapsed {
-                            IconName::ChevronRight
-                        } else {
-                            IconName::ChevronDown
-                        })
+                    gpui_kit::base::Button::new("collapse-file")
+                        .size(px(24.))
+                        .flex_shrink_0()
+                        .rounded(px(CONTROL_RADIUS))
+                        .text_color(rgb(MUTED))
+                        .hover(|this| this.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+                        .child(
+                            Icon::new(if collapsed {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .size(px(14.)),
+                        )
                         .accessibility_label(
                             if collapsed {
                                 t!("Diff.ExpandFile", name = name.as_str())
@@ -1251,6 +1263,10 @@ fn file_annotations(
 
 /// Summarizes a file without source rows: binary, metadata-only or empty.
 fn render_notice(file: &DiffFile, cx: &App) -> AnyElement {
+    if let Some(message) = file.notice() {
+        return div().w_full().px_3().py_3().text_sm()
+            .text_color(cx.theme().muted_foreground).child(message.clone()).into_any_element();
+    }
     let message = if !file.has_changes() {
         t!("Diff.NoChanges")
     } else if file.is_binary() {

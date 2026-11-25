@@ -155,6 +155,7 @@ fn annotation_bar_spans_the_selection_during_and_after_a_drag(cx: &mut TestAppCo
         window.render_frame(cx);
         // Held at line 3: the bar spans lines 1–3.
         assert_eq!(state.read(cx).selected_lines(), Some(range(1, 3)));
+        assert!(state.read(cx).is_selecting_lines());
         assert_eq!(bars(window), [0, 1, 2]);
 
         window.dispatch_event(
@@ -168,6 +169,7 @@ fn annotation_bar_spans_the_selection_during_and_after_a_drag(cx: &mut TestAppCo
         );
         window.render_frame(cx);
         // The bar stays until the selection is cleared.
+        assert!(!state.read(cx).is_selecting_lines());
         assert_eq!(bars(window), [0, 1, 2]);
         assert_eq!(*host.read(cx).annotations.borrow(), [range(1, 3)]);
         state.update(cx, |state, cx| state.set_selected_lines(None, cx));
