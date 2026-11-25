@@ -11,6 +11,8 @@ use gpui_kit::{
 
 pub(super) const SIDEBAR_WIDTH: f32 = 225.;
 const FILE_LIST_WIDTH: f32 = 210.;
+const FILE_SHEET_WIDTH: f32 = 272.;
+const FILE_SHEET_MAX_HEIGHT: f32 = 0.8;
 
 fn sidebar_item(
     id: impl Into<ElementId>,
@@ -627,6 +629,36 @@ mod tests {
         assert!(cx.update(|_, cx| !view.read(cx).file_sheet.floating));
         assert!(cx.debug_bounds("file-sheet").is_none());
         assert!(cx.debug_bounds("docked-file-list").is_some());
+    }
+
+    #[gpui::test]
+    fn file_sheet_is_vertically_centered_and_fits_the_diff_height(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.file_sheet.floating = true;
+            app
+        });
+        draw(cx);
+        cx.update(|window, cx| view.update(cx, |app, cx| app.show_file_sheet(window, cx)));
+        draw(cx);
+
+        let panel = cx.debug_bounds("diff-review").unwrap();
+        let sheet = cx.debug_bounds("file-sheet").unwrap();
+        assert_eq!(sheet.left() - panel.left(), px(crate::theme::UI_SPACING));
+        assert!(
+            (sheet.center().y - panel.center().y).abs() <= px(0.5),
+            "center the sheet vertically: {panel:?}, {sheet:?}"
+        );
+        assert!(
+            (sheet.size.height - panel.size.height * super::FILE_SHEET_MAX_HEIGHT).abs() <= px(0.5),
+            "cap 20,000 files at the panel's height: {panel:?}, {sheet:?}"
+        );
     }
 
     #[gpui::test]
@@ -1381,9 +1413,10 @@ impl Rev {
             cx,
         );
         let sheet_height = (40. + self.file_list.update(cx, |list, _| list.row_count()) as f32 * (LIST_ROW_HEIGHT + 2.))
-            .clamp(140., 520.);
+            .max(140.);
         column()
             .id("diff-review")
+            .debug_selector(|| "diff-review".into())
             .relative()
             .flex_1()
             .min_w_0()
@@ -1412,29 +1445,36 @@ impl Rev {
             })
             .when(floating && (self.file_sheet.open || sheet > 0.), |d| {
                 d.child(
-                    popover_surface()
-                        .id("file-sheet")
-                        .debug_selector(|| "file-sheet".into())
+                    column()
                         .absolute()
                         .left(px(UI_SPACING * sheet))
-                        .top(px(UI_SPACING))
-                        .bottom(px(UI_SPACING))
-                        .w(px(272.))
-                        .max_h(px(sheet_height))
-                        .opacity(sheet)
-                        .overflow_hidden()
-                        .occlude()
-                        .key_context("RevFiles")
-                        .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
-                            this.hide_file_sheet(window, cx);
-                        }))
-                        .on_hover(cx.listener(|this, hovered, window, cx| {
-                            this.hover_file_sheet(2, *hovered, window, cx);
-                        }))
-                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                            this.hide_file_sheet(window, cx);
-                        }))
-                        .child(self.file_list.clone()),
+                        .top_0()
+                        .bottom_0()
+                        .w(px(FILE_SHEET_WIDTH))
+                        .justify_center()
+                        .child(
+                            popover_surface()
+                                .id("file-sheet")
+                                .debug_selector(|| "file-sheet".into())
+                                .w_full()
+                                .h(px(sheet_height))
+                                .max_h(relative(FILE_SHEET_MAX_HEIGHT))
+                                .flex_shrink_0()
+                                .opacity(sheet)
+                                .overflow_hidden()
+                                .occlude()
+                                .key_context("RevFiles")
+                                .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
+                                    this.hide_file_sheet(window, cx);
+                                }))
+                                .on_hover(cx.listener(|this, hovered, window, cx| {
+                                    this.hover_file_sheet(2, *hovered, window, cx);
+                                }))
+                                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                                    this.hide_file_sheet(window, cx);
+                                }))
+                                .child(self.file_list.clone()),
+                        ),
                 )
             })
             .into_any_element()

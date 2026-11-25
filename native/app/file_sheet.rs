@@ -33,7 +33,10 @@ impl Rev {
         }
         self.file_sheet.epoch += 1;
         self.file_sheet.open = true;
-        self.file_list.update(cx, |list, cx| list.focus_filter(window, cx));
+        self.file_list.update(cx, |list, cx| {
+            list.scroll_to_selected(ScrollStrategy::Center);
+            list.focus_filter(window, cx);
+        });
         cx.notify();
     }
 
@@ -85,6 +88,9 @@ impl Rev {
                 }
                 if entering {
                     if this.can_show_file_sheet(cx) && !this.file_sheet.open {
+                        this.file_list.update(cx, |list, _| {
+                            list.scroll_to_selected(ScrollStrategy::Center)
+                        });
                         this.file_sheet.open = true;
                         cx.notify();
                     }

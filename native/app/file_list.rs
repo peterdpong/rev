@@ -107,7 +107,11 @@ impl FileList {
     ) {
         if self.selected.as_deref() != selected || &self.viewed != viewed || self.loading != loading
         {
+            let moved = self.selected.as_deref() != selected;
             self.selected = selected.map(str::to_owned);
+            if moved {
+                self.scroll_to_selected(ScrollStrategy::Nearest);
+            }
             self.viewed.clone_from(viewed);
             self.loading = loading;
             cx.notify();
@@ -142,6 +146,25 @@ impl FileList {
 
         self.selected = Some(path.to_owned());
         cx.notify();
+    }
+
+    pub(super) fn scroll_to_selected(&mut self, strategy: ScrollStrategy) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        let entries = self.entries();
+        let index = entries
+            .iter()
+            .position(|entry| entry.path == selected)
+            .or_else(|| {
+                entries.iter().rposition(|entry| {
+                    matches!(entry.kind, EntryKind::Folder { .. })
+                        && selected.strip_prefix(entry.path.as_str()).is_some_and(|rest| rest.starts_with('/'))
+                })
+            });
+        if let Some(index) = index {
+            self.scroll.scroll_to_item(index, strategy);
+        }
     }
 
     pub(super) fn adjacent_file(
@@ -481,6 +504,45 @@ mod tests {
             assert!(app.rows_rendered.borrow().len() < 10);
             assert_eq!(app.scroll.0.borrow().base_handle.offset().y, px(0.));
         });
+    }
+
+    #[gpui::test]
+    fn the_current_file_scrolls_into_view_when_it_changes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| Host {
+            list: cx.new(|cx| fixture(window, cx)),
+        });
+        let view = cx.update(|_, cx| host.read(cx).list.clone());
+        let viewed = std::collections::HashMap::new();
+        let shows = |cx: &mut VisualTestContext, path: &str| {
+            draw(cx);
+            view.update(cx, |app, _| app.rows_rendered.take().iter().any(|row| row == path))
+        };
+        assert!(shows(cx, "file00000.rs"));
+
+        view.update(cx, |app, cx| app.sync_status(Some("file12345.rs"), &viewed, false, cx));
+        assert!(shows(cx, "file12345.rs"));
+
+        view.update(cx, |app, cx| {
+            app.scroll.scroll_to_item(0, ScrollStrategy::Top);
+            cx.notify();
+        });
+        assert!(shows(cx, "file00000.rs"));
+        view.update(cx, |app, cx| app.sync_status(Some("file12345.rs"), &viewed, false, cx));
+        assert!(
+            shows(cx, "file00000.rs"),
+            "an unchanged current file leaves a manual scroll alone"
+        );
+
+        view.update(cx, |app, cx| {
+            app.scroll_to_selected(ScrollStrategy::Center);
+            cx.notify();
+        });
+        assert!(shows(cx, "file12345.rs"));
     }
 
     #[gpui::test]
