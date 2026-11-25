@@ -1,4 +1,5 @@
 use super::*;
+use super::branch_comparison::branch_comparison;
 use super::branch_popover::BranchForm;
 use super::controls::*;
 use super::popover::*;
@@ -649,10 +650,10 @@ impl Rev {
 
         row()
             .id("diff-view-header")
+            .debug_selector(|| "diff-view-header".into())
             .bg(rgb(SUBPANEL))
-            .h(px(42.))
             .flex_shrink_0()
-            .px(px(UI_SPACING))
+            .p(px(UI_SPACING))
             .gap(px(UI_SPACING))
             .border_b_1()
             .border_color(rgb(BORDER))
@@ -660,22 +661,14 @@ impl Rev {
                 column()
                     .flex_1()
                     .min_w_0()
-                    .pl(px(HEADER_PILL_PADDING + 1.))
-                    .gap(px(2.))
+                    .gap(px(UI_SPACING))
                     .line_height(px(16.))
                     .when_some(self.review.as_ref(), |d, review| {
-                        let comparison = review.comparison_label();
+                        let (base, head) = review.comparison_refs();
                         let (added, removed) = self.file_list.read(cx).counts();
-                        d.child(
-                            div()
-                                .id("branch-comparison")
-                                .min_w_0()
-                                .truncate()
-                                .text_color(rgb(MUTED))
-                                .child(comparison),
-                        )
-                        .child(
+                        d.child(branch_comparison(base, head, cx)).child(
                             row()
+                                .debug_selector(|| "diff-line-counts".into())
                                 .flex_shrink_0()
                                 .text_size(px(12.))
                                 .line_height(px(14.))
@@ -1279,6 +1272,56 @@ mod tests {
         assert!(cx.did_prompt_for_paths());
         cx.simulate_path_prompt_response(|_| None);
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn diff_header_shows_branch_pills_and_copies_the_head(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            let review = app.review.as_mut().unwrap();
+            review.request.base = Some("refs/heads/main".into());
+            review.request.head = Some("refs/heads/fix/align-review-summary".into());
+            app
+        });
+        draw(cx);
+        let base = cx.debug_bounds("branch-base").unwrap();
+        let head = cx.debug_bounds("branch-head").unwrap();
+        let copy = cx.debug_bounds("copy-branch").unwrap();
+        let height = px(super::super::branch_comparison::BRANCH_PILL_HEIGHT);
+        assert_eq!((base.size.height, head.size.height), (height, height));
+        assert_eq!(base.top(), head.top(), "keep both pills on one line");
+        assert!(base.right() < head.left(), "base before head");
+        let header = cx.debug_bounds("diff-view-header").unwrap();
+        let counts = cx.debug_bounds("diff-line-counts").unwrap();
+        assert_eq!(
+            base.left() - header.left(),
+            px(crate::theme::UI_SPACING),
+            "start the base pill at the header's inset, like the boxes around it"
+        );
+        assert_eq!(
+            counts.top() - base.bottom(),
+            px(crate::theme::UI_SPACING),
+            "space the counts below the pills"
+        );
+        assert_eq!(
+            counts.left(),
+            base.left(),
+            "align the counts with the pill's left edge"
+        );
+        assert!(
+            copy.left() > head.left() && copy.right() <= head.right(),
+            "join the copy button to the head pill: {head:?}, {copy:?}"
+        );
+
+        cx.simulate_click(copy.center(), Default::default());
+        draw(cx);
+        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(copied.as_deref(), Some("fix/align-review-summary"));
     }
 
     #[gpui::test]

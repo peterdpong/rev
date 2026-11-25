@@ -14,6 +14,7 @@ use std::{
     path::PathBuf,
 };
 
+mod branch_comparison;
 mod commits;
 mod continuous;
 use commits::CommitPicker;
