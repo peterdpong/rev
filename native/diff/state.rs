@@ -554,6 +554,11 @@ impl DiffState {
         Some(DiffLineRange::new(document.path().clone(), side, first.line_number(), last.line_number()))
     }
 
+    /// Whether a line-number drag is still held.
+    pub fn is_selecting_lines(&self) -> bool {
+        self.selecting
+    }
+
     /// Whether a native text gesture is still held, including an empty range.
     pub fn is_selecting_text(&self, cx: &App) -> bool {
         self.selection.snapshot(cx).is_some_and(|snapshot| snapshot.is_selecting())

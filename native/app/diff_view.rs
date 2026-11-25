@@ -30,7 +30,6 @@ pub(super) struct DiffView {
     state: Entity<DiffState>,
     status: DiffViewStatus,
     wrap: bool,
-    selecting: bool,
     _state_subscriptions: Vec<Subscription>,
 }
 
@@ -41,11 +40,10 @@ impl DiffView {
         let state = cx.new(|cx| DiffState::new([], cx));
         let subscriptions = vec![
             cx.observe(&state, |_, _, cx| cx.notify()),
-            cx.subscribe(&state, |this, _, event, cx| match event {
-                DiffEvent::VisibleFileChanged(path) => cx.emit(DiffViewEvent::VisibleFileChanged(path.to_string())),
-                DiffEvent::SelectionStarted(_) => this.selecting = true,
-                DiffEvent::SelectionEnded(_) => this.selecting = false,
-                _ => {},
+            cx.subscribe(&state, |_, _, event, cx| {
+                if let DiffEvent::VisibleFileChanged(path) = event {
+                    cx.emit(DiffViewEvent::VisibleFileChanged(path.to_string()));
+                }
             }),
         ];
 
@@ -53,7 +51,6 @@ impl DiffView {
             state,
             status: DiffViewStatus::default(),
             wrap: false,
-            selecting: false,
             _state_subscriptions: subscriptions,
         }
     }
@@ -63,7 +60,8 @@ impl DiffView {
     }
 
     pub(super) fn is_selecting(&self, cx: &App) -> bool {
-        self.selecting || self.state.read(cx).is_selecting_text(cx)
+        let state = self.state.read(cx);
+        state.is_selecting_lines() || state.is_selecting_text(cx)
     }
 
     pub(super) fn sync_status(&mut self, status: DiffViewStatus, cx: &mut Context<Self>) {
@@ -78,7 +76,6 @@ impl DiffView {
         files: impl IntoIterator<Item = DiffFile>,
         cx: &mut Context<Self>,
     ) {
-        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_files(files, cx));
     }
@@ -101,7 +98,6 @@ impl DiffView {
     }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        self.selecting = false;
         self.state
             .update(cx, |state, cx| state.set_selected_lines(None, cx));
     }
