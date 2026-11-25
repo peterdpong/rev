@@ -1,4 +1,5 @@
 use crate::model::File;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -156,6 +157,24 @@ impl FileTree {
     }
 }
 
+pub(super) fn tree_order(a: &str, b: &str) -> Ordering {
+    let mut a = a.split('/').peekable();
+    let mut b = b.split('/').peekable();
+    loop {
+        match (a.next(), b.next()) {
+            (Some(a_part), Some(b_part)) => {
+                let a_file = a.peek().is_none();
+                let b_file = b.peek().is_none();
+                let order = a_file.cmp(&b_file).then_with(|| a_part.cmp(b_part));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (a_part, b_part) => return a_part.is_some().cmp(&b_part.is_some()),
+        }
+    }
+}
+
 pub(super) fn reveal_file(collapsed: &mut HashSet<String>, path: &str) -> bool {
     let mut changed = false;
     for (index, _) in path.match_indices('/') {
@@ -175,6 +194,39 @@ mod tests {
             added: 3,
             removed: 1,
         }
+    }
+
+    #[test]
+    fn tree_order_matches_the_order_files_appear_in_the_tree() {
+        let expected = [
+            "a/b.rs",
+            "a-b/c.rs",
+            "core/host.ts",
+            "native/app/view.rs",
+            "native/app.rs",
+            "native/model.rs",
+            "Cargo.toml",
+            "README.md",
+            "a.rs",
+        ];
+        let mut git_order = expected.to_vec();
+        git_order.sort();
+        assert_ne!(git_order, expected);
+
+        let tree = FileTree::new(&git_order.iter().map(|path| file(path)).collect::<Vec<_>>());
+        let shown: Vec<_> = tree
+            .entries(None)
+            .into_iter()
+            .filter_map(|entry| match entry.kind {
+                EntryKind::File(file) => Some(file.path),
+                EntryKind::Folder { .. } => None,
+            })
+            .collect();
+        assert_eq!(shown, expected);
+
+        let mut sorted = git_order.clone();
+        sorted.sort_by(|a, b| tree_order(a, b));
+        assert_eq!(sorted, expected);
     }
 
     #[test]
