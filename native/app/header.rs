@@ -392,13 +392,8 @@ impl Rev {
             .debug_selector(|| "diff-view-header".into())
             .child(
                 div()
-                    .id("file-sheet-trigger")
-                    .debug_selector(|| "file-sheet-trigger".into())
-                    .when(floating, |d| {
-                        d.on_hover(cx.listener(|this, hovered, window, cx| {
-                            this.hover_file_sheet(0, *hovered, window, cx);
-                        }))
-                    })
+                    .id("file-list-toggle")
+                    .debug_selector(|| "file-list-toggle".into())
                     .child(
                         icon_button(
                             "file-list-mode",

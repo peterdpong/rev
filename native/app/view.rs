@@ -10,9 +10,6 @@ use gpui_kit::{
 };
 
 pub(super) const SIDEBAR_WIDTH: f32 = 225.;
-const FILE_LIST_WIDTH: f32 = 210.;
-const FILE_SHEET_WIDTH: f32 = 272.;
-const FILE_SHEET_MAX_HEIGHT: f32 = 0.8;
 
 fn sidebar_item(
     id: impl Into<ElementId>,
@@ -457,6 +454,7 @@ impl Render for Rev {
 mod tests {
     use super::Rev;
     use crate::app::controls::MOTION_DURATION;
+    use crate::app::file_sheet::{FILE_LIST_WIDTH, FILE_SHEET_EDGE_WIDTH, FILE_SHEET_MAX_HEIGHT};
     use crate::app::{FileList, DiffView};
     use crate::{
         model::{File, FilePatch, Review, ReviewState},
@@ -601,30 +599,34 @@ mod tests {
         draw(cx);
 
         let docked = cx.debug_bounds("docked-file-list").unwrap();
-        assert_eq!(docked.size.width, px(super::FILE_LIST_WIDTH));
-        let trigger = cx.debug_bounds("file-sheet-trigger").unwrap();
-        cx.simulate_mouse_move(trigger.center(), None, Default::default());
+        assert_eq!(docked.size.width, px(FILE_LIST_WIDTH));
+        assert!(cx.debug_bounds("file-sheet-edge").is_none());
+
+        let toggle = cx.debug_bounds("file-list-toggle").unwrap();
+        cx.simulate_click(toggle.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).file_sheet.floating));
+        assert!(cx.debug_bounds("docked-file-list").is_none());
+
+        let toggle = cx.debug_bounds("file-list-toggle").unwrap();
+        cx.simulate_mouse_move(toggle.center(), None, Default::default());
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(200));
         draw(cx);
         assert!(
             cx.debug_bounds("file-sheet").is_none(),
-            "a docked list never floats"
+            "hovering the toggle leaves the sheet closed"
         );
 
-        cx.simulate_click(trigger.center(), Default::default());
-        draw(cx);
-        assert!(cx.update(|_, cx| view.read(cx).file_sheet.floating));
-        assert!(cx.debug_bounds("docked-file-list").is_none());
-
-        let trigger = cx.debug_bounds("file-sheet-trigger").unwrap();
-        cx.simulate_mouse_move(trigger.center(), None, Default::default());
+        let edge = cx.debug_bounds("file-sheet-edge").unwrap();
+        assert_eq!(edge.size.width, px(FILE_SHEET_EDGE_WIDTH));
+        cx.simulate_mouse_move(edge.center(), None, Default::default());
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(200));
         draw(cx);
         assert!(cx.debug_bounds("file-sheet").is_some());
 
-        cx.simulate_click(trigger.center(), Default::default());
+        cx.simulate_click(toggle.center(), Default::default());
         draw(cx);
         assert!(cx.update(|_, cx| !view.read(cx).file_sheet.floating));
         assert!(cx.debug_bounds("file-sheet").is_none());
@@ -656,9 +658,60 @@ mod tests {
             "center the sheet vertically: {panel:?}, {sheet:?}"
         );
         assert!(
-            (sheet.size.height - panel.size.height * super::FILE_SHEET_MAX_HEIGHT).abs() <= px(0.5),
+            (sheet.size.height - panel.size.height * FILE_SHEET_MAX_HEIGHT).abs() <= px(0.5),
             "cap 20,000 files at the panel's height: {panel:?}, {sheet:?}"
         );
+    }
+
+    #[gpui::test]
+    fn file_sheet_opens_where_the_pointer_meets_the_left_edge(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.file_sheet.floating = true;
+            app.review.as_mut().unwrap().files.truncate(3);
+            app
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |app, cx| {
+                let files = app.review.as_ref().unwrap().files.clone();
+                app.file_list
+                    .update(cx, |list, cx| list.set_review("", &files, window, cx));
+            })
+        });
+        draw(cx);
+
+        let panel = cx.debug_bounds("diff-review").unwrap();
+        let edge = cx.debug_bounds("file-sheet-edge").unwrap();
+        let open_at = |cx: &mut VisualTestContext, y| {
+            cx.simulate_mouse_move(gpui_kit::point(edge.center().x, y), None, Default::default());
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(200));
+            draw(cx);
+            cx.debug_bounds("file-sheet").unwrap()
+        };
+
+        let pointer = panel.top() + panel.size.height * 0.3;
+        let sheet = open_at(cx, pointer);
+        assert!(sheet.size.height < panel.size.height / 2., "{sheet:?}");
+        assert!(
+            (sheet.center().y - pointer).abs() <= px(0.5),
+            "center the sheet on the pointer: {sheet:?}"
+        );
+
+        cx.simulate_mouse_move(panel.center() + gpui_kit::point(px(300.), px(0.)), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        draw(cx);
+        assert!(cx.debug_bounds("file-sheet").is_none());
+
+        let sheet = open_at(cx, panel.bottom() - px(2.));
+        assert_eq!(sheet.bottom(), panel.bottom(), "keep the sheet inside the panel");
     }
 
     #[gpui::test]
@@ -1364,119 +1417,5 @@ mod tests {
             cx.debug_bounds("pr-description-content").is_none(),
             "unmount after the fade finishes"
         );
-    }
-}
-
-impl Rev {
-    fn docked_file_list(&self, openness: f32, cx: &mut Context<Self>) -> AnyElement {
-        // Clip a full-width list and slide it with the closing edge so its rows never reflow.
-        div()
-            .id("docked-file-list")
-            .debug_selector(|| "docked-file-list".into())
-            .w(px(FILE_LIST_WIDTH * openness))
-            .h_full()
-            .flex_shrink_0()
-            .overflow_hidden()
-            .child(
-                div()
-                    .relative()
-                    .left(px(-FILE_LIST_WIDTH * (1. - openness)))
-                    .w(px(FILE_LIST_WIDTH))
-                    .h_full()
-                    .bg(rgb(SUBPANEL))
-                    .border_r_1()
-                    .border_color(rgb(BORDER))
-                    .key_context("RevFiles")
-                    .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
-                        this.focus.focus(window, cx);
-                    }))
-                    .child(self.file_list.clone()),
-            )
-            .into_any_element()
-    }
-
-    fn diff_panel(
-        &mut self,
-        floating: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let sheet = motion::transition(
-            "file-sheet-reveal",
-            if self.file_sheet.open {
-                1.0_f32
-            } else {
-                0.0_f32
-            },
-            motion_transition(),
-            window,
-            cx,
-        );
-        let sheet_height = (40. + self.file_list.update(cx, |list, _| list.row_count()) as f32 * (LIST_ROW_HEIGHT + 2.))
-            .max(140.);
-        column()
-            .id("diff-review")
-            .debug_selector(|| "diff-review".into())
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .child(
-                div()
-                    .id("diff-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(self.diff.clone()),
-            )
-            .when(floating, |d| {
-                d.child(
-                    div()
-                        .id("file-sheet-edge")
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(8.))
-                        .on_hover(cx.listener(|this, hovered, window, cx| {
-                            this.hover_file_sheet(1, *hovered, window, cx);
-                        })),
-                )
-            })
-            .when(floating && (self.file_sheet.open || sheet > 0.), |d| {
-                d.child(
-                    column()
-                        .absolute()
-                        .left(px(UI_SPACING * sheet))
-                        .top_0()
-                        .bottom_0()
-                        .w(px(FILE_SHEET_WIDTH))
-                        .justify_center()
-                        .child(
-                            popover_surface()
-                                .id("file-sheet")
-                                .debug_selector(|| "file-sheet".into())
-                                .w_full()
-                                .h(px(sheet_height))
-                                .max_h(relative(FILE_SHEET_MAX_HEIGHT))
-                                .flex_shrink_0()
-                                .opacity(sheet)
-                                .overflow_hidden()
-                                .occlude()
-                                .key_context("RevFiles")
-                                .on_action(cx.listener(|this, _: &ClosePopover, window, cx| {
-                                    this.hide_file_sheet(window, cx);
-                                }))
-                                .on_hover(cx.listener(|this, hovered, window, cx| {
-                                    this.hover_file_sheet(2, *hovered, window, cx);
-                                }))
-                                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                                    this.hide_file_sheet(window, cx);
-                                }))
-                                .child(self.file_list.clone()),
-                        ),
-                )
-            })
-            .into_any_element()
     }
 }
