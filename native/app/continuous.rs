@@ -28,6 +28,7 @@ pub(super) fn prepare_patches(
         patches.insert(path, patch);
         files.push(file);
     }
+    files.sort_by(|a, b| super::file_tree::tree_order(a.path(), b.path()));
     (patches, files)
 }
 
@@ -54,17 +55,18 @@ mod tests {
                 .map(|file| file.path().as_str())
                 .collect::<Vec<_>>(),
             [
-                "line\nbreak.ts",
                 "binary.bin",
                 "large.txt",
+                "line\nbreak.ts",
                 "unavailable.txt"
             ]
         );
-        assert_eq!(files[0].additions(), 1);
+        assert_eq!(files[2].additions(), 1);
         assert!(
-            files[1..]
+            files
                 .iter()
-                .all(|file| file.additions() == 0 && file.deletions() == 0)
+                .enumerate()
+                .all(|(index, file)| index == 2 || (file.additions() == 0 && file.deletions() == 0))
         );
         assert_eq!(patches["line\nbreak.ts"].digest, "text-digest");
         assert_eq!(patches["binary.bin"].digest, "binary-digest");
