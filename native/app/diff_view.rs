@@ -189,6 +189,7 @@ impl Render for DiffView {
                     header_owner.update(cx, |this, cx| this.diff_file_header(file, cx))
                         .unwrap_or_else(|_| div().into_any_element())
                 })
+                .sticky_header(true)
                 .hunk_separator(DiffHunkSeparator::Simple)
                 .soft_wrap(self.wrap)
                 .text_size(px(12.))

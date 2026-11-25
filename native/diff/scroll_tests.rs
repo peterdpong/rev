@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use super::{Diff, DiffState, document::fixture};
-use gpui::TouchPhase;
+use gpui::{ListOffset, TouchPhase};
 use std::time::Duration;
 
 /// Every line changed, so the unified patch is two rows per line.
@@ -128,4 +128,82 @@ fn a_flick_released_mid_patch_scrolls_without_dragging_the_viewport(cx: &mut Tes
     swipe(cx, -30., 5);
     assert_eq!(list.scroll_px_offset_for_scrollbar().y, before - px(150.));
     assert_eq!(list.viewport_bounds().top(), top);
+}
+
+struct StickyHost {
+    state: Entity<DiffState>,
+}
+
+impl Render for StickyHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(400.))
+            .h(px(200.))
+            .child(Diff::new(&self.state).sticky_header(true).size_full())
+    }
+}
+
+#[gpui::test]
+fn the_current_file_header_sticks_until_the_next_one_pushes_it_out(cx: &mut TestAppContext) {
+    cx.update(super::test_init);
+    let lines = |prefix: &str| {
+        (0..40)
+            .map(|ix| format!("{prefix} {ix}\n"))
+            .collect::<String>()
+    };
+    let files = [
+        fixture::modified("first.txt", &lines("old"), &lines("new")),
+        fixture::modified("second.txt", &lines("old"), &lines("new")),
+    ];
+    let state = cx.new(|cx| DiffState::new(files, cx));
+    let (_, cx) = cx.add_window_view({
+        let state = state.clone();
+        move |_, _| StickyHost { state }
+    });
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert!(
+        cx.debug_bounds("sticky-file-header").is_none(),
+        "the first header is already at the top"
+    );
+
+    let scroll_to = |cx: &mut VisualTestContext, item_ix| {
+        cx.update(|_, cx| {
+            state.read(cx).list().scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: px(0.),
+            })
+        });
+        draw(cx);
+    };
+    let (second, viewport) = cx.update(|_, cx| {
+        let state = state.read(cx);
+        (state.header_row(1).unwrap(), state.list().viewport_bounds())
+    });
+
+    scroll_to(cx, 10);
+    let sticky = cx.debug_bounds("sticky-file-header").unwrap();
+    assert_eq!(sticky.top(), viewport.top());
+
+    scroll_to(cx, second);
+    cx.update(|_, cx| state.read(cx).list().scroll_by(px(-10.)));
+    draw(cx);
+    let next = cx
+        .update(|_, cx| state.read(cx).list().bounds_for_item(second))
+        .unwrap();
+    assert!(next.top() > viewport.top() + px(5.));
+    let sticky = cx.debug_bounds("sticky-file-header").unwrap();
+    assert!(
+        (sticky.bottom() - next.top()).abs() < px(0.5),
+        "pushed up by the next header: {sticky:?} above {next:?}"
+    );
+
+    scroll_to(cx, second + 5);
+    let sticky = cx.debug_bounds("sticky-file-header").unwrap();
+    assert_eq!(sticky.top(), viewport.top());
+    assert_eq!(
+        cx.update(|_, cx| state.read(cx).visible_file().cloned()),
+        Some("second.txt".into())
+    );
 }

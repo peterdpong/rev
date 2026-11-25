@@ -12,6 +12,7 @@ mod parser_tests;
 mod presentation;
 mod selection;
 mod state;
+mod sticky;
 
 pub use conflict::{DiffConflict, DiffConflictResolution};
 pub use document::{DiffFile, DiffFileStatus, DiffLinePosition, DiffLineRange, DiffSide};
@@ -49,6 +50,7 @@ use gpui_kit::component::{
 use presentation::FilePresentation;
 use selection::{CodeText, SelectionLayer};
 use state::{DisplayRow, FoldExpansion, LayoutKey, SelectedLines};
+use sticky::StickyHeader;
 
 // Private: bindings serve the focused code body only.
 mod actions {
@@ -219,6 +221,7 @@ pub struct Diff {
     line_number: bool,
     syntax_highlight: bool,
     header_visible: bool,
+    sticky_header: bool,
     hover_highlight: DiffHoverHighlight,
     hunk_separator: DiffHunkSeparator,
     change_indicator: DiffChangeIndicator,
@@ -248,6 +251,7 @@ impl Diff {
             line_number: true,
             syntax_highlight: true,
             header_visible: true,
+            sticky_header: false,
             hover_highlight: DiffHoverHighlight::default(),
             hunk_separator: DiffHunkSeparator::default(),
             change_indicator: DiffChangeIndicator::default(),
@@ -274,6 +278,10 @@ impl Diff {
     /// Shows a header above each file. Default is true.
     pub fn header_visible(mut self, visible: bool) -> Self {
         self.header_visible = visible;
+        self
+    }
+    pub fn sticky_header(mut self, sticky: bool) -> Self {
+        self.sticky_header = sticky;
         self
     }
     /// Emphasizes the line, its number, or both under the pointer. Default is none.
@@ -546,6 +554,16 @@ fn render_diff(
         geometry: state.geometry().clone(),
         state: cx.entity(),
     });
+    let sticky = props.sticky_header && props.header_visible;
+    let sticky = sticky
+        .then(|| state.list().logical_scroll_top())
+        .and_then(|top| {
+            let row = state.rows().get(top.item_ix)?;
+            let file = row.file();
+            let flush = matches!(row, DisplayRow::File(_)) && top.offset_in_item == px(0.);
+            (!flush).then(|| (file, state.header_row(file + 1)))
+        });
+    let sticky_code = code.clone();
     let rows = state.rows().clone();
     let scrollbar = state.list().clone();
     let horizontal = state.horizontal_scroll().clone();
@@ -589,6 +607,21 @@ fn render_diff(
             state.selection().clone(),
             state.geometry().clone(),
         ))
+        .when_some(sticky, |this, (file, next)| {
+            let code = sticky_code;
+            this.child(StickyHeader::new(
+                move |window, cx| {
+                    div()
+                        .id("sticky-file-header")
+                        .debug_selector(|| "sticky-file-header".into())
+                        .occlude()
+                        .child(render_file_header(file, &code, true, window, cx))
+                        .into_any_element()
+                },
+                scrollbar.clone(),
+                next,
+            ))
+        })
         .when(has_rows && !soft_wrap, |this| {
             this.child(
                 ScrollableMask::new(Axis::Horizontal, &horizontal).id("diff-horizontal-wheel"),
@@ -886,7 +919,7 @@ fn render_row(
     cx: &mut App,
 ) -> AnyElement {
     match row {
-        DisplayRow::File(file) => render_file_header(*file, &code, window, cx),
+        DisplayRow::File(file) => render_file_header(*file, &code, false, window, cx),
         DisplayRow::Notice(file) => render_notice(&code.files[*file], cx),
         DisplayRow::Hunk { file, hunk } => render_hunk_separator(*file, *hunk, &code, cx),
         DisplayRow::Fold { file, pairs } => render_fold(*file, pairs.clone(), &code, cx),
@@ -1133,6 +1166,7 @@ fn conflict_tint(part: Option<ConflictPart>, cx: &App) -> Hsla {
 fn render_file_header(
     file: usize,
     code: &CodePresentation,
+    sticky: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -1146,7 +1180,11 @@ fn render_file_header(
     let border = cx.theme().border;
     let collapsed = code.state.read(cx).is_file_collapsed(document.path());
     let header_width = code.state.read(cx).horizontal_scroll().bounds().size.width;
-    let header_offset = if code.soft_wrap { px(0.) } else { -code.state.read(cx).horizontal_scroll().offset().x };
+    let header_offset = if code.soft_wrap || sticky {
+        px(0.)
+    } else {
+        -code.state.read(cx).horizontal_scroll().offset().x
+    };
     let content = if let Some(render) = &code.header.content {
         render(document, window, cx)
     } else {
@@ -1207,7 +1245,7 @@ fn render_file_header(
     v_flex()
         .id("file-header")
         .w_full()
-        .when(file > 0, |this| this.border_t_1())
+        .when(file > 0 && !sticky, |this| this.border_t_1())
         .bg(cx.theme().list_head)
         .border_b_1()
         .border_color(border)
@@ -1241,12 +1279,19 @@ fn render_file_header(
                             .to_string(),
                         )
                         .on_click(move |_, _, cx| {
-                            state.update(cx, |state, cx| state.toggle_file_collapsed(file, cx))
+                            state.update(cx, |state, cx| {
+                                state.toggle_file_collapsed(file, cx);
+                                if sticky {
+                                    state.scroll_to_file(&name, cx);
+                                }
+                            })
                         }),
                 )
                 .child(div().flex_1().min_w_0().child(content)),
         )
-        .children(file_annotations(file, code, window, cx))
+        .when(!sticky, |this| {
+            this.children(file_annotations(file, code, window, cx))
+        })
         .into_any_element()
 }
 
