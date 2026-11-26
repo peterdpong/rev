@@ -1,5 +1,5 @@
 use super::*;
-use super::branch_comparison::{BRANCH_PILL_HEIGHT, branch_comparison};
+use super::branch_comparison::branch_comparison;
 use super::controls::*;
 use super::popover::*;
 use super::view::SIDEBAR_WIDTH;
@@ -15,9 +15,6 @@ use gpui_kit::{
 };
 
 const COLLAPSED_HEADER_WIDTH: f32 = 112.;
-const LINE_COUNTS_HEIGHT: f32 = 14.;
-pub(super) const DIFF_HEADER_HEIGHT: f32 =
-    BRANCH_PILL_HEIGHT + LINE_COUNTS_HEIGHT + UI_SPACING * 3. + 1.;
 // Match the spacing between header pills.
 pub(super) const PR_DESCRIPTION_GAP: f32 = UI_SPACING;
 pub(super) const PR_CARD_LINE_HEIGHT: f32 = 16.;
@@ -393,7 +390,6 @@ impl Rev {
             .id("diff-view-header")
             .debug_selector(|| "diff-view-header".into())
             .bg(rgb(SUBPANEL))
-            .h(px(DIFF_HEADER_HEIGHT))
             .flex_shrink_0()
             .p(px(UI_SPACING))
             .gap(px(UI_SPACING))
@@ -413,7 +409,7 @@ impl Rev {
                                 .debug_selector(|| "diff-line-counts".into())
                                 .flex_shrink_0()
                                 .text_size(px(12.))
-                                .line_height(px(LINE_COUNTS_HEIGHT))
+                                .line_height(px(14.))
                                 .child(
                                     div()
                                         .text_color(rgb(MUTED))

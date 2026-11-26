@@ -282,20 +282,17 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .debug_selector(|| "sidebar-header".into())
-                    .h(px(super::header::DIFF_HEADER_HEIGHT))
+                    .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
                     .flex_shrink_0()
                     .pl(px(UI_SPACING + 8.))
                     .pr(px(UI_SPACING))
                     .justify_between()
-                    .border_b_1()
-                    .border_color(rgb(BORDER))
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(12.))
-                            .text_color(rgb(TEXT))
-                            .child("Repositories"),
+                            .text_color(rgb(MUTED))
+                            .child("Repos"),
                     )
                     .child(
                         icon_button("add-project", "Open repository", IconName::Plus)
@@ -310,7 +307,8 @@ impl Rev {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p(px(UI_SPACING))
+                    .px(px(UI_SPACING))
+                    .pb(px(UI_SPACING))
                     .child(projects),
             )
             .into_any_element()
@@ -698,21 +696,6 @@ mod tests {
         assert!(cx.update(|_, cx| view.read(cx).workspace.projects.is_empty()));
 
         let _ = std::fs::remove_dir_all(&data_dir);
-    }
-
-    #[gpui::test]
-    fn sidebar_header_lines_up_with_the_diff_header(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            crate::diff::init(cx);
-            crate::theme::init(cx);
-        });
-        let (_view, cx) = cx.add_window_view(fixture);
-        draw(cx);
-        let sidebar = cx.debug_bounds("sidebar-header").unwrap();
-        let diff = cx.debug_bounds("diff-view-header").unwrap();
-        assert_eq!(sidebar.top(), diff.top());
-        assert_eq!(sidebar.bottom(), diff.bottom());
     }
 
     #[gpui::test]
