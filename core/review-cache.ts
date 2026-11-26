@@ -3,7 +3,7 @@ import {
   diffArgs,
   filePatch,
   parseDiffSummary,
-  resolveRef,
+  readCheckout,
   rootOf,
   runGitText,
   type Review,
@@ -63,14 +63,8 @@ export class ReviewCache {
       return filePatch(review, fileName);
     }
 
-    const [sha, branch] = await Promise.all([
-      resolveRef(review.repo, 'HEAD'),
-      runGitText(review.repo, ['branch', '--show-current']),
-    ]);
-    if (
-      sha !== review.branchHeadSha ||
-      (branch.trim() || 'detached HEAD') !== review.branch
-    ) {
+    const { sha, branch } = await readCheckout(review.repo);
+    if (sha !== review.branchHeadSha || branch !== review.branch) {
       throw new Error(
         'The checkout changed while loading. Refresh the review.',
       );
