@@ -9,6 +9,8 @@ use gpui_kit::*;
 
 const COPY_PATH_BUTTON_SIZE: f32 = 20.;
 
+const UNCHANGED_LINES_PER_EXPAND: usize = 5;
+
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
     VisibleFileChanged(String),
@@ -41,7 +43,7 @@ impl EventEmitter<DiffViewEvent> for DiffView {}
 
 impl DiffView {
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
-        let state = cx.new(|cx| DiffState::new([], cx));
+        let state = cx.new(|cx| DiffState::new([], cx).with_expansion_lines(UNCHANGED_LINES_PER_EXPAND));
         let subscriptions = vec![
             cx.observe(&state, |_, _, cx| cx.notify()),
             cx.subscribe(&state, |_, _, event, cx| {
@@ -423,6 +425,149 @@ mod tests {
         assert!(!collapsed, "copying leaves the file expanded");
         let copied_label = cx.update(|window, _| window.find_by_label("Copied").bounds());
         assert_eq!(copied_label, copy, "relabel the button after copying");
+    }
+
+    #[gpui::test]
+    fn git_context_folds_get_one_button_and_merge_across_hunks(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let hunk = |first: usize, changed: usize| {
+            let body: String = (first..first + 11)
+                .map(|line| {
+                    if line == changed {
+                        format!("-line {line}\n+changed {line}\n")
+                    } else {
+                        format!(" line {line}\n")
+                    }
+                })
+                .collect();
+            format!("@@ -{first},11 +{first},11 @@\n{body}")
+        };
+        let patch = format!(
+            "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n{}{}",
+            hunk(5, 10),
+            hunk(35, 40)
+        );
+        struct TallHost {
+            view: Entity<DiffView>,
+        }
+        impl Render for TallHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().w(px(700.)).h(px(1600.)).child(self.view.clone())
+            }
+        }
+        let (_, cx) = cx.add_window_view(|_, cx| TallHost {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                view.set_files(DiffFile::parse(&patch).unwrap(), cx);
+                view.sync_status(DiffViewStatus { path: Some("file.txt".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        let all = |cx: &mut gpui_kit::VisualTestContext, label: &str| {
+            cx.update(|window, _| window.find_all_by_label(label))
+        };
+        draw(cx);
+
+        assert!(all(cx, "Show 5 lines above").is_empty());
+        assert!(all(cx, "Show 5 lines below").is_empty());
+        assert_eq!(all(cx, "Expand 2 unchanged lines").len(), 2, "the first and last 2 lines of context");
+        let merged = all(cx, "Expand 4 unchanged lines");
+        assert_eq!(merged.len(), 1, "the 2 + 2 lines around the hunk boundary share one button");
+        assert!(
+            merged[0].bounds().size.width > px(600.),
+            "the whole fold row is the button: {:?}",
+            merged[0].bounds()
+        );
+
+        cx.simulate_click(merged[0].bounds().center(), Default::default());
+        draw(cx);
+        assert!(all(cx, "Expand 4 unchanged lines").is_empty());
+        assert_eq!(all(cx, "Expand 2 unchanged lines").len(), 2);
+    }
+
+    #[gpui::test]
+    fn unchanged_lines_expand_like_github(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let body: String = (1..=41)
+            .map(|line| match line {
+                10 | 25 | 34 => format!("-line {line}\n+changed {line}\n"),
+                _ => format!(" line {line}\n"),
+            })
+            .collect();
+        let patch = format!(
+            "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1,41 +1,41 @@\n{body}"
+        );
+        struct TallHost {
+            view: Entity<DiffView>,
+        }
+        impl Render for TallHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().w(px(700.)).h(px(1600.)).child(self.view.clone())
+            }
+        }
+        let (_, cx) = cx.add_window_view(|_, cx| TallHost {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                view.set_files(DiffFile::parse(&patch).unwrap(), cx);
+                view.sync_status(DiffViewStatus { path: Some("file.txt".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        let all = |cx: &mut gpui_kit::VisualTestContext, label: &str| {
+            cx.update(|window, _| window.find_all_by_label(label))
+        };
+        draw(cx);
+
+        let above = all(cx, "Show 5 lines above");
+        let below = all(cx, "Show 5 lines below");
+        assert_eq!(above.len(), 2, "the 6 lines before the first change and the 8-line gap");
+        assert_eq!(below.len(), 1, "only the 8-line gap has source above it");
+        let (gap_down, gap_up) = (below[0].bounds(), above[1].bounds());
+        assert!(
+            gap_down.bottom() <= gap_up.top() && gap_down.left() == gap_up.left(),
+            "stack ↓ over ↑, each next to the code it extends: {gap_down:?}, {gap_up:?}"
+        );
+        assert!(all(cx, "Expand 6 unchanged lines").is_empty());
+        assert!(all(cx, "Expand 8 unchanged lines").is_empty());
+        assert_eq!(all(cx, "Expand 2 unchanged lines").len(), 1, "a short gap gets one button");
+        assert_eq!(all(cx, "Expand 4 unchanged lines").len(), 1, "so does a short end of file");
+
+        cx.simulate_click(above[0].bounds().center(), Default::default());
+        draw(cx);
+        assert_eq!(all(cx, "Show 5 lines above").len(), 1, "5 of the 6 lines open, and 1 is too few to fold");
+
+        let gap_down = all(cx, "Show 5 lines below")[0].bounds();
+        cx.simulate_click(gap_down.center(), Default::default());
+        draw(cx);
+        assert!(all(cx, "Show 5 lines below").is_empty());
+        assert!(all(cx, "Show 5 lines above").is_empty());
+        assert_eq!(all(cx, "Expand 3 unchanged lines").len(), 1, "the 3 left merge into one button");
     }
 
     #[gpui::test]

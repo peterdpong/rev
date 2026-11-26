@@ -118,6 +118,58 @@ fn folds_expand_by_direction_and_short_ranges_stay_visible(cx: &mut TestAppConte
     });
 }
 
+fn two_hunk_patch() -> String {
+    let hunk = |first: usize, changed: usize| {
+        let body: String = (first..first + 11)
+            .map(|line| {
+                if line == changed {
+                    format!("-line {line}\n+changed {line}\n")
+                } else {
+                    format!(" line {line}\n")
+                }
+            })
+            .collect();
+        format!("@@ -{first},11 +{first},11 @@\n{body}")
+    };
+    format!(
+        "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n{}{}",
+        hunk(5, 10),
+        hunk(35, 40)
+    )
+}
+
+#[gpui::test]
+fn short_folds_on_either_side_of_a_hunk_boundary_merge(cx: &mut TestAppContext) {
+    let rows = |state: &DiffState| {
+        state
+            .rows()
+            .iter()
+            .filter_map(|row| match row {
+                DisplayRow::Fold { pairs, .. } => Some(format!("fold {pairs:?}")),
+                DisplayRow::Hunk { hunk, .. } => Some(format!("hunk {hunk}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let file = || DiffFile::parse(&two_hunk_patch()).unwrap();
+
+    let state = cx.new(|cx| DiffState::new(file(), cx).with_expansion_lines(5));
+    state.update(cx, |state, cx| {
+        assert_eq!(rows(state), ["hunk 0", "fold 0..2", "fold 9..13", "fold 20..22"]);
+        state.expand_fold(0, 9..13, FoldExpansion::All, cx);
+        assert_eq!(rows(state), ["hunk 0", "fold 0..2", "hunk 1", "fold 20..22"]);
+    });
+
+    let state = cx.new(|cx| DiffState::new(file(), cx).with_expansion_lines(3));
+    state.update(cx, |state, _| {
+        assert_eq!(
+            rows(state),
+            ["hunk 0", "fold 0..2", "fold 9..11", "hunk 1", "fold 11..13", "fold 20..22"],
+            "folds too long together for one click stay apart"
+        );
+    });
+}
+
 #[gpui::test]
 fn line_selection_reports_a_gesture_lifecycle(cx: &mut TestAppContext) {
     let window = cx.open_window(size(px(640.), px(480.)), |_, _| Empty);
