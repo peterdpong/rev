@@ -375,12 +375,16 @@ impl Render for Rev {
                     this.navigate_file(-1, window, cx)
                 }),
             )
+            .on_action(
+                cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &MarkViewed, window, cx| {
                 if !this.branch_popover.is_open() {
                     this.mark_viewed(window, cx);
                 }
             }))
             .child(self.review_header(sidebar_openness, window, cx))
+            .child(self.settings_modal(window, cx))
             .child(
                 row()
                     .items_start()
@@ -485,6 +489,9 @@ mod tests {
             backend: None,
             workspace: WorkspaceState::default(),
             data_dir: Default::default(),
+            settings: Default::default(),
+            settings_open: false,
+            settings_focus: cx.focus_handle(),
             review: Some(Review {
                 files,
                 ..Default::default()
@@ -1265,5 +1272,41 @@ mod tests {
             cx.debug_bounds("pr-description-content").is_none(),
             "unmount after the fade finishes"
         );
+    }
+
+    #[gpui::test]
+    fn settings_change_the_diff_layout_and_are_saved(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let data_dir = std::env::temp_dir().join(format!("rev-settings-{}", std::process::id()));
+        let (view, cx) = cx.add_window_view(|window, cx| Rev {
+            data_dir: data_dir.clone(),
+            ..fixture(window, cx)
+        });
+        cx.update(|window, cx| view.update(cx, |app, cx| app.open_settings(window, cx)));
+        draw(cx);
+        assert!(cx.debug_bounds("settings-modal").is_some());
+
+        let layout = cx.debug_bounds("diff-layout").unwrap();
+        cx.simulate_click(
+            gpui_kit::point(layout.right() - px(12.), layout.center().y),
+            Default::default(),
+        );
+        draw(cx);
+        cx.update(|_, cx| {
+            let app = view.read(cx);
+            assert_eq!(app.settings.diff_layout, crate::settings::DiffLayout::Split);
+            assert!(app.diff.read(cx).is_split(cx));
+        });
+        let saved = crate::client_state::ClientState::load(&data_dir).unwrap();
+        assert_eq!(saved.settings.diff_layout, crate::settings::DiffLayout::Split);
+
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(cx.debug_bounds("settings-modal").is_none());
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }

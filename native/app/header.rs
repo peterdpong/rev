@@ -375,8 +375,12 @@ impl Rev {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.fetch(window, cx)
                                         })),
-                                ),
+                                )
+                                .child(self.settings_button(cx)),
                         )
+                    })
+                    .when(self.review.is_none(), |d| {
+                        d.child(div().flex_1()).child(self.settings_button(cx))
                     }),
             )
     }
