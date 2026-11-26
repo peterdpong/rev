@@ -385,10 +385,36 @@ impl Rev {
         let split = self.diff.read(cx).is_split(cx);
         let wrap = self.diff.read(cx).wraps_lines();
         let single_file = self.diff.read(cx).is_single_file();
+        let floating = self.file_sheet.floating;
 
         row()
             .id("diff-view-header")
             .debug_selector(|| "diff-view-header".into())
+            .child(
+                div()
+                    .id("file-list-toggle")
+                    .debug_selector(|| "file-list-toggle".into())
+                    .child(
+                        icon_button(
+                            "file-list-mode",
+                            if floating {
+                                "Dock file list"
+                            } else {
+                                "Collapse file list"
+                            },
+                            if floating {
+                                IconName::PanelLeft
+                            } else {
+                                IconName::PanelLeftDashed
+                            },
+                        )
+                        .selected(self.file_sheet.open)
+                        .when(self.file_sheet.open, selected_surface)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_file_list_floating(window, cx);
+                        })),
+                    ),
+            )
             .bg(rgb(SUBPANEL))
             .flex_shrink_0()
             .p(px(UI_SPACING))

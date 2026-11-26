@@ -273,7 +273,6 @@ impl Rev {
             )
             .into_any_element()
     }
-
 }
 
 impl Render for Rev {
@@ -294,6 +293,18 @@ impl Render for Rev {
             path: self.file.clone(), loading: self.loading || self.patch_loading, files,
         }, cx));
 
+        let file_list_openness = motion::transition(
+            "file-list-openness",
+            if self.file_sheet.floating {
+                0.0_f32
+            } else {
+                1.0_f32
+            },
+            motion_transition(),
+            window,
+            cx,
+        );
+
         let content =
             if self.review.is_some() {
                 column()
@@ -307,8 +318,10 @@ impl Render for Rev {
                             .gap_0()
                             .flex_1()
                             .min_h_0()
-                            .child(self.file_list.clone())
-                            .child(self.diff.clone()),
+                            .when(file_list_openness > 0., |row| {
+                                row.child(self.docked_file_list(file_list_openness, cx))
+                            })
+                            .child(self.diff_panel(file_list_openness == 0., window, cx)),
                     )
                     .into_any_element()
             } else {
@@ -366,6 +379,16 @@ impl Render for Rev {
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.pick_folder(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &BrowseFiles, window, cx| {
+                this.show_file_sheet(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ChooseFile, window, cx| {
+                if (this.file_sheet.open || !this.file_sheet.floating)
+                    && let Some(path) = this.file_list.update(cx, |list, _| list.adjacent_file(None, 1))
+                {
+                    this.jump_file(path, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NextFile, window, cx| this.navigate_file(1, window, cx)),
@@ -431,6 +454,7 @@ impl Render for Rev {
 mod tests {
     use super::Rev;
     use crate::app::controls::MOTION_DURATION;
+    use crate::app::file_sheet::{FILE_LIST_WIDTH, FILE_SHEET_EDGE_WIDTH, FILE_SHEET_MAX_HEIGHT};
     use crate::app::{FileList, DiffView};
     use crate::{
         model::{File, FilePatch, Review, ReviewState},
@@ -492,6 +516,7 @@ mod tests {
             review_snapshot_id: None,
             state: ReviewState::default(),
             file: None,
+            file_sheet: Default::default(),
             patch: FilePatch::default(),
             patches: Default::default(),
             diff,
@@ -560,6 +585,133 @@ mod tests {
             assert!(app.review.is_none());
             assert!(app.error.is_none());
         });
+    }
+
+    #[gpui::test]
+    fn file_list_collapses_into_a_hover_sheet_and_docks_again(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(fixture);
+        draw(cx);
+
+        let docked = cx.debug_bounds("docked-file-list").unwrap();
+        assert_eq!(docked.size.width, px(FILE_LIST_WIDTH));
+        assert!(cx.debug_bounds("file-sheet-edge").is_none());
+
+        let toggle = cx.debug_bounds("file-list-toggle").unwrap();
+        cx.simulate_click(toggle.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| view.read(cx).file_sheet.floating));
+        assert!(cx.debug_bounds("docked-file-list").is_none());
+
+        let toggle = cx.debug_bounds("file-list-toggle").unwrap();
+        cx.simulate_mouse_move(toggle.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(
+            cx.debug_bounds("file-sheet").is_none(),
+            "hovering the toggle leaves the sheet closed"
+        );
+
+        let edge = cx.debug_bounds("file-sheet-edge").unwrap();
+        assert_eq!(edge.size.width, px(FILE_SHEET_EDGE_WIDTH));
+        cx.simulate_mouse_move(edge.center(), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        draw(cx);
+        assert!(cx.debug_bounds("file-sheet").is_some());
+
+        cx.simulate_click(toggle.center(), Default::default());
+        draw(cx);
+        assert!(cx.update(|_, cx| !view.read(cx).file_sheet.floating));
+        assert!(cx.debug_bounds("file-sheet").is_none());
+        assert!(cx.debug_bounds("docked-file-list").is_some());
+    }
+
+    #[gpui::test]
+    fn file_sheet_is_vertically_centered_and_fits_the_diff_height(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.file_sheet.floating = true;
+            app
+        });
+        draw(cx);
+        cx.update(|window, cx| view.update(cx, |app, cx| app.show_file_sheet(window, cx)));
+        draw(cx);
+
+        let panel = cx.debug_bounds("diff-review").unwrap();
+        let sheet = cx.debug_bounds("file-sheet").unwrap();
+        assert_eq!(sheet.left() - panel.left(), px(crate::theme::UI_SPACING));
+        assert!(
+            (sheet.center().y - panel.center().y).abs() <= px(0.5),
+            "center the sheet vertically: {panel:?}, {sheet:?}"
+        );
+        assert!(
+            (sheet.size.height - panel.size.height * FILE_SHEET_MAX_HEIGHT).abs() <= px(0.5),
+            "cap 20,000 files at the panel's height: {panel:?}, {sheet:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn file_sheet_opens_where_the_pointer_meets_the_left_edge(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.file_sheet.floating = true;
+            app.review.as_mut().unwrap().files.truncate(3);
+            app
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |app, cx| {
+                let files = app.review.as_ref().unwrap().files.clone();
+                app.file_list
+                    .update(cx, |list, cx| list.set_review("", &files, window, cx));
+            })
+        });
+        draw(cx);
+
+        let panel = cx.debug_bounds("diff-review").unwrap();
+        let edge = cx.debug_bounds("file-sheet-edge").unwrap();
+        let open_at = |cx: &mut VisualTestContext, y| {
+            cx.simulate_mouse_move(gpui_kit::point(edge.center().x, y), None, Default::default());
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(200));
+            draw(cx);
+            cx.debug_bounds("file-sheet").unwrap()
+        };
+
+        let pointer = panel.top() + panel.size.height * 0.3;
+        let sheet = open_at(cx, pointer);
+        assert!(sheet.size.height < panel.size.height / 2., "{sheet:?}");
+        assert!(
+            (sheet.center().y - pointer).abs() <= px(0.5),
+            "center the sheet on the pointer: {sheet:?}"
+        );
+
+        cx.simulate_mouse_move(panel.center() + gpui_kit::point(px(300.), px(0.)), None, Default::default());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        draw(cx);
+        assert!(cx.debug_bounds("file-sheet").is_none());
+
+        let sheet = open_at(cx, panel.bottom() - px(2.));
+        assert_eq!(sheet.bottom(), panel.bottom(), "keep the sheet inside the panel");
     }
 
     #[gpui::test]
@@ -848,8 +1000,8 @@ mod tests {
         let counts = cx.debug_bounds("diff-line-counts").unwrap();
         assert_eq!(
             base.left() - header.left(),
-            px(crate::theme::UI_SPACING),
-            "start the base pill at the header's inset, like the boxes around it"
+            px(crate::theme::UI_SPACING * 2. + crate::app::controls::ICON_BUTTON_SIZE),
+            "start the base pill one gap after the file list button"
         );
         assert_eq!(
             counts.top() - base.bottom(),

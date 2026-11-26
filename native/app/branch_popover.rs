@@ -79,6 +79,7 @@ impl Rev {
         if let Some(form) = self.branch_popover.form.take().filter(|form| form.ready) {
             self.branch_popover.closing = Some(form);
         }
+        self.hide_file_sheet(window, cx);
 
         self.branch_popover.serial += 1;
         self.diff.update(cx, |diff, cx| diff.clear_selection(cx));
