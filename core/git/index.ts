@@ -45,6 +45,7 @@ export {
   reviewKey,
 } from './review';
 export { filePatch, reviewPatches } from './patch';
+export { listUntrackedFiles } from './untracked';
 export { listCommits } from './commits';
 export {
   fetchRepo,

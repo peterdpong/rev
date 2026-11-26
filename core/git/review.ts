@@ -18,7 +18,11 @@ import {
   resolveRef,
   rootOf,
 } from './refs';
-import { readUntracked, untrackedCounts } from './untracked';
+import {
+  listUntrackedFiles,
+  readUntracked,
+  untrackedCounts,
+} from './untracked';
 
 export const REVIEW_MODES: readonly ReviewMode[] = ['branch', 'working'];
 
@@ -387,18 +391,14 @@ export async function inspect(input: ReviewRequest): Promise<Review> {
 
   const [summary, untracked] = await Promise.all([
     runGitText(repo, diffArgs(review, ['--raw', '--numstat', '-z'])),
-    mode === 'working'
-      ? runGitText(repo, ['ls-files', '--others', '--exclude-standard', '-z'])
-      : '',
+    mode === 'working' ? listUntrackedFiles(repo) : [],
   ]);
   review.files = parseDiffSummary(summary);
 
   // A staged deletion can leave an untracked copy on disk. Keep its deletion
   // diff rather than adding a second entry for the same path.
   const changedPaths = new Set(review.files.map((file) => file.path));
-  const untrackedPaths = untracked
-    .split('\0')
-    .filter((name) => name && !changedPaths.has(name));
+  const untrackedPaths = untracked.filter((name) => !changedPaths.has(name));
 
   review.files.push(
     ...(await mapLimit(
