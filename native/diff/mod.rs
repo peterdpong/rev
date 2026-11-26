@@ -32,7 +32,7 @@ use gpui::{
     HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyBinding, ListOffset,
     MouseButton, ParentElement as _, Pixels, RenderOnce, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, TextRun, Window, div, list, point,
-    prelude::FluentBuilder as _, px, rgb,
+    prelude::FluentBuilder as _, px, relative, rgb,
 };
 use gpui_kit::base::TestSupportExt as _;
 use rust_i18n::t;
@@ -516,19 +516,12 @@ fn render_diff(
         state.set_content_width(width);
     }
     state.sync_annotations(&props.annotations.items);
-    let content_width = state.content_width().max(state.viewport().width);
-    let column_width = if mode == DiffMode::Split {
-        content_width / 2.
-    } else {
-        content_width
-    };
+    let content_width = state.content_width();
     let on_add_annotation = props.on_add_annotation.clone();
     let code = Rc::new(CodePresentation {
         files: state.files().to_vec(),
         presentations: state.presentations().to_vec(),
         mode,
-        content_width,
-        column_width,
         font_size,
         row_height,
         gutter_width,
@@ -607,6 +600,35 @@ fn render_diff(
             state.selection().clone(),
             state.geometry().clone(),
         ))
+        .child(
+            gpui::canvas(
+                {
+                    let state = cx.entity();
+                    move |bounds, _, cx| {
+                        state.update(cx, |state, cx| {
+                            // Runs after the list's prepaint, which drops
+                            // every row height when its width changes.
+                            let rehinted = state.keep_row_height_hint();
+                            // The estimate shapes the widest candidates only;
+                            // grow to fit any wider line once it is painted.
+                            let painted = if soft_wrap {
+                                px(0.)
+                            } else {
+                                let painted = state.geometry().borrow().painted_width();
+                                code_width(painted, gutter_width, rem, mode)
+                            };
+                            state.notify_visible_file(cx);
+                            if state.record_paint(bounds.size, painted) || rehinted {
+                                cx.notify();
+                            }
+                        });
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
         .when_some(sticky, |this, (file, next)| {
             let code = sticky_code;
             this.child(StickyHeader::new(
@@ -628,7 +650,12 @@ fn render_diff(
             )
         })
         .when(has_rows, |this| {
-            this.child(Scrollbar::vertical(&scrollbar))
+            this.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(Scrollbar::vertical(&scrollbar).viewport_from_layout()),
+            )
                 .when(!soft_wrap, |this| {
                     this.child(Scrollbar::horizontal(&horizontal))
                 })
@@ -736,35 +763,6 @@ fn render_diff(
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
         }))
-        .child(
-            gpui::canvas(
-                {
-                    let state = cx.entity();
-                    move |bounds, _, cx| {
-                        state.update(cx, |state, cx| {
-                            // Runs after the list's prepaint, which drops
-                            // every row height when its width changes.
-                            let rehinted = state.keep_row_height_hint();
-                            // The estimate shapes the widest candidates only;
-                            // grow to fit any wider line once it is painted.
-                            let painted = if soft_wrap {
-                                px(0.)
-                            } else {
-                                let painted = state.geometry().borrow().painted_width();
-                                code_width(painted, gutter_width, rem, mode)
-                            };
-                            state.notify_visible_file(cx);
-                            if state.record_paint(bounds.size, painted) || rehinted {
-                                cx.notify();
-                            }
-                        });
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .size_full(),
-        )
         .test_support()
         .track_focus(&state.focus_handle(cx))
         .key_context("RevDiff")
@@ -798,8 +796,6 @@ struct CodePresentation {
     files: Vec<DiffFile>,
     presentations: Vec<Option<Arc<FilePresentation>>>,
     mode: DiffMode,
-    content_width: Pixels,
-    column_width: Pixels,
     font_size: Pixels,
     row_height: Pixels,
     gutter_width: Pixels,
@@ -1463,7 +1459,7 @@ fn render_cell(
     cx: &mut App,
 ) -> AnyElement {
     let cell = v_flex()
-        .w(code.column_width)
+        .w(relative(0.5))
         .min_w_0()
         .flex_shrink_0()
         .when(side == DiffSide::Original, |this| {
@@ -1538,11 +1534,7 @@ fn render_unified_cell(
         ]
     };
     v_flex()
-        .w(if single_column {
-            code.content_width
-        } else {
-            code.column_width
-        })
+        .w_full()
         .id((
             if side == DiffSide::Original {
                 "old"
