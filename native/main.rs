@@ -5,6 +5,7 @@ mod app;
 mod backend;
 mod client_state;
 mod model;
+mod settings;
 mod theme;
 mod workspace_state;
 use app::*;

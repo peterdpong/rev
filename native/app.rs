@@ -2,6 +2,7 @@ use crate::diff::*;
 use crate::{
     backend::{Backend, Reply},
     client_state::{self, ClientState},
+    settings::{DiffLayout, Settings},
     model::*,
     workspace_state::WorkspaceState,
 };
@@ -24,6 +25,7 @@ mod file_list;
 mod file_tree;
 mod header;
 mod popover;
+mod settings_modal;
 mod branch_popover;
 mod view;
 mod working_tree;
@@ -41,7 +43,8 @@ gpui_kit::actions!(
         ToggleSidebar,
         NextFile,
         PreviousFile,
-        MarkViewed
+        MarkViewed,
+        OpenSettings
     ]
 );
 
@@ -54,6 +57,7 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("cmd-,", OpenSettings, Some("Rev")),
         KeyBinding::new("escape", ClosePopover, Some("RevPopover")),
         KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", ClosePopover, Some("Rev")),
@@ -66,6 +70,9 @@ pub struct Rev {
     backend: Option<Backend>,
     workspace: WorkspaceState,
     data_dir: PathBuf,
+    settings: Settings,
+    settings_open: bool,
+    settings_focus: FocusHandle,
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
@@ -119,22 +126,29 @@ impl Rev {
         };
 
         let data_dir = client_state::data_dir();
-        let workspace = match ClientState::load(&data_dir) {
-            Ok(client) => client.workspace,
+        let (workspace, settings) = match ClientState::load(&data_dir) {
+            Ok(client) => (client.workspace, client.settings),
             Err(e) => {
                 error = Some(format!("Could not load saved tabs: {e}"));
-                WorkspaceState::default()
+                Default::default()
             }
         };
 
         let file_list = cx.new(|cx| FileList::new(window, cx));
         let diff = cx.new(DiffView::new);
+        diff.update(cx, |diff, cx| {
+            diff.set_split(settings.diff_layout == DiffLayout::Split, cx);
+            diff.set_wrap(settings.wrap_lines, cx);
+        });
         let subscriptions = Self::subscribe_to_views(&file_list, &diff, window, cx);
 
         let mut app = Self {
             backend,
             workspace,
             data_dir,
+            settings,
+            settings_open: false,
+            settings_focus: cx.focus_handle(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,
@@ -452,6 +466,7 @@ impl Rev {
     fn save_workspace(&mut self) {
         let client = ClientState {
             workspace: self.workspace.clone(),
+            settings: self.settings.clone(),
         };
         if let Err(error) = client.save(&self.data_dir) {
             self.error = Some(format!("Could not save tabs: {error}"));

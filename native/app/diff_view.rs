@@ -155,6 +155,20 @@ impl DiffView {
         self.state.read(cx).mode() == DiffMode::Split
     }
 
+    pub(super) fn set_split(&mut self, split: bool, cx: &mut Context<Self>) {
+        let mode = if split {
+            DiffMode::Split
+        } else {
+            DiffMode::Unified
+        };
+        self.state.update(cx, |state, cx| state.set_mode(mode, cx));
+    }
+
+    pub(super) fn set_wrap(&mut self, wrap: bool, cx: &mut Context<Self>) {
+        self.wrap = wrap;
+        cx.notify();
+    }
+
     pub(super) fn toggle_mode(&mut self, cx: &mut Context<Self>) {
         let mode = if self.is_split(cx) {
             DiffMode::Unified

@@ -1,3 +1,4 @@
+use crate::settings::Settings;
 use crate::workspace_state::WorkspaceState;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,6 +13,8 @@ const CLIENT_STATE_FILE_NAME: &str = "client.json";
 pub struct ClientState {
     #[serde(default)]
     pub workspace: WorkspaceState,
+    #[serde(default)]
+    pub settings: Settings,
 }
 
 /// `REV_DATA_DIR`, or `~/.rev`.
@@ -119,8 +122,9 @@ mod tests {
         assert_eq!(loaded.workspace.active_tab().unwrap().request, request);
         let saved: serde_json::Value =
             serde_json::from_slice(&fs::read(dir.join(CLIENT_STATE_FILE_NAME)).unwrap()).unwrap();
-        assert!(saved.get("workspace").is_some());
-        assert_eq!(saved.as_object().unwrap().len(), 1);
+        let mut keys: Vec<_> = saved.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["settings", "workspace"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
