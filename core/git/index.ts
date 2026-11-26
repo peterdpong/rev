@@ -53,3 +53,11 @@ export {
   refreshPR,
   lookupPullRequest,
 } from './pull-requests';
+export {
+  MERGE_METHODS,
+  mergeMethods,
+  pullRequestActionArgs,
+  runPullRequestAction,
+  type MergeMethod,
+  type PullRequestAction,
+} from './pull-request-actions';

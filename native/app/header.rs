@@ -255,6 +255,11 @@ impl Rev {
             };
             sliding_pill_width("title-pill-width", &label, fixed_width, None, window, cx)
         });
+        let pr_status = self
+            .review
+            .as_ref()
+            .and_then(|review| review.pull_request.as_ref())
+            .and_then(|pr| self.pr_status_pill(pr, window, cx));
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
             .pl_0()
@@ -355,6 +360,7 @@ impl Rev {
                                     }
                                 }),
                         )
+                        .children(pr_status)
                         .child(self.commit_picker_pill(review, window, cx))
                         .child(div().flex_1().min_w_0())
                         .child(

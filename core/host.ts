@@ -6,6 +6,10 @@ import {
   importPR,
   refreshPR,
   lookupPullRequest,
+  mergeMethods,
+  runPullRequestAction,
+  type MergeMethod,
+  type PullRequestAction,
   listCommits,
   listBranches,
   checkouts,
@@ -50,6 +54,8 @@ type HostParams = {
   };
   fetch: { repo: string; review?: ReviewRequest };
   pr: { repo: string; value: string; base?: string };
+  mergeMethods: { repo: string; url: string };
+  pullRequestAction: { repo: string; url: string; action: PullRequestAction };
 };
 
 type HostResults = {
@@ -77,6 +83,8 @@ type HostResults = {
   viewed: ReviewState;
   fetch: { request: ReviewRequest } | true;
   pr: ReviewRequest;
+  mergeMethods: MergeMethod[];
+  pullRequestAction: PullRequest;
 };
 
 type HostMethod = keyof HostParams;
@@ -96,6 +104,8 @@ const REPO_METHODS: ReadonlySet<string> = new Set<HostMethod>([
   'viewed',
   'fetch',
   'pr',
+  'mergeMethods',
+  'pullRequestAction',
 ]);
 
 function repoOf(params: unknown): unknown {
@@ -253,6 +263,12 @@ export class HostService {
       }
       case 'pr':
         result = await importPR(p.repo, p.value, p.base);
+        break;
+      case 'mergeMethods':
+        result = await mergeMethods(p.repo, p.url);
+        break;
+      case 'pullRequestAction':
+        result = await runPullRequestAction(p.repo, p.url, p.action);
         break;
       default:
         throw new Error('Unknown action.');

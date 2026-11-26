@@ -24,6 +24,7 @@ mod file_list;
 mod file_tree;
 mod header;
 mod popover;
+mod pr_actions;
 mod branch_popover;
 mod view;
 mod working_tree;
@@ -84,6 +85,7 @@ pub struct Rev {
     without_pull_request: std::collections::HashSet<String>,
     pull_request_loading: bool,
     revalidate_pull_request: bool,
+    pr_actions: pr_actions::PrActions,
     focus: FocusHandle,
     branch_popover: BranchPopover,
     folder_picker_open: bool,
@@ -151,6 +153,7 @@ impl Rev {
             without_pull_request: Default::default(),
             pull_request_loading: false,
             revalidate_pull_request: false,
+            pr_actions: Default::default(),
 
             focus: cx.focus_handle(),
             branch_popover: BranchPopover::new(cx),
