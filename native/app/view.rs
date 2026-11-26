@@ -242,7 +242,7 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
+                    .h(px(HEADER_PILL_HEIGHT + UI_SPACING * 2.))
                     .flex_shrink_0()
                     .pl(px(UI_SPACING + 8.))
                     .pr(px(UI_SPACING))
@@ -857,7 +857,7 @@ mod tests {
         let base = cx.debug_bounds("branch-base").unwrap();
         let head = cx.debug_bounds("branch-head").unwrap();
         let copy = cx.debug_bounds("copy-branch").unwrap();
-        let height = px(crate::app::branch_comparison::BRANCH_PILL_HEIGHT);
+        let height = px(crate::app::controls::HEADER_PILL_HEIGHT);
         assert_eq!((base.size.height, head.size.height), (height, height));
         assert_eq!(base.top(), head.top(), "keep both pills on one line");
         assert!(base.right() < head.left(), "base before head");
@@ -879,9 +879,10 @@ mod tests {
             "align the counts with the pill's left edge"
         );
         assert!(
-            copy.left() > head.left() && copy.right() <= head.right(),
-            "join the copy button to the head pill: {head:?}, {copy:?}"
+            copy.left() > head.right() && copy.left() - head.right() <= px(4.),
+            "place the copy button just after the head pill: {head:?}, {copy:?}"
         );
+        assert_eq!(copy.size.height, head.size.height);
 
         cx.simulate_click(copy.center(), Default::default());
         draw(cx);
@@ -1214,7 +1215,7 @@ mod tests {
                     .size_full()
                     .p_4()
                     .child(
-                        super::header_pill()
+                        super::interactive_pill()
                             .w(px(200.))
                             .child(crate::app::header::PrDescription {
                                 id: "animated-pr-description".into(),

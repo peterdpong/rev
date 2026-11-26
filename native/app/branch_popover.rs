@@ -431,7 +431,7 @@ impl Rev {
                 "Open diff"
             };
             footer = footer.child(
-                primary_button("submit-popover", label)
+                pill_button("submit-popover", label, None)
                     .disabled(self.submitting)
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             );
@@ -471,12 +471,12 @@ impl Rev {
                             .map(|name| name.to_string_lossy().to_string())
                             .unwrap_or_else(|| form.request.repo.clone());
                         d.child(
-                            header_pill()
+                            static_pill()
                                 .max_w(px(200.))
                                 .text_color(rgb(TEXT))
                                 .child(
                                     Icon::new(IconName::Folder)
-                                        .size(px(14.))
+                                        .size(px(PILL_ICON_SIZE))
                                         .text_color(rgb(MUTED))
                                         .flex_shrink_0(),
                                 )

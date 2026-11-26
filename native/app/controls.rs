@@ -9,8 +9,9 @@ use gpui_kit::{
 
 pub(super) const LIST_ROW_HEIGHT: f32 = 26.;
 pub(super) const HEADER_PILL_LINE_HEIGHT: f32 = 16.;
-pub(super) const ICON_BUTTON_SIZE: f32 = 24.;
-pub(super) const HEADER_PILL_HEIGHT: f32 = 26.;
+pub(super) const PILL_ICON_SIZE: f32 = 13.;
+const PILL_ICON_INSET: f32 = 4.;
+pub(super) const HEADER_PILL_HEIGHT: f32 = PILL_ICON_SIZE + PILL_ICON_INSET * 2. + 2.;
 // Include the shared outer inset above/below the pills and the bottom border.
 pub(super) const HEADER_HEIGHT: f32 = HEADER_PILL_HEIGHT + UI_SPACING * 2. + 1.;
 pub(super) const HEADER_PILL_PADDING: f32 = 10.;
@@ -139,21 +140,21 @@ pub(super) fn selected_surface<T: Styled>(element: T) -> T {
 }
 
 pub(super) fn viewed_button(viewed: bool, disabled: bool) -> BaseButton {
-    BaseButton::new("viewed")
-        .h(px(CONTROL_HEIGHT))
-        .px(px(CONTROL_PADDING))
-        .gap(px(UI_SPACING))
+    pill(BaseButton::new("viewed"))
         .flex_shrink_0()
-        .rounded(px(CONTROL_RADIUS))
-        .border_1()
         .border_color(rgb(CONTROL_BORDER))
         .bg(rgb(SURFACE))
         .text_color(rgb(TEXT))
-        .text_size(px(13.))
-        .font_weight(FontWeight::SEMIBOLD)
         .when(viewed, selected_surface)
         .when(!disabled, |d| {
-            d.hover(move |d| d.bg(rgb(if viewed { SELECTED } else { HOVER })))
+            d.hover(move |d| {
+                let d = pill_hover(d);
+                if viewed {
+                    d.bg(rgb(SELECTED))
+                } else {
+                    d
+                }
+            })
         })
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
@@ -167,7 +168,7 @@ pub(super) fn viewed_button(viewed: bool, disabled: bool) -> BaseButton {
         .accessibility_label("Viewed")
         .child(
             div()
-                .size(px(14.))
+                .size(px(PILL_ICON_SIZE))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -190,45 +191,38 @@ pub(super) fn icon_actions() -> Div {
     row().gap(px(UI_SPACING)).flex_shrink_0()
 }
 
-pub(super) fn header_pill() -> Div {
-    row()
+fn pill<T: Styled>(element: T) -> T {
+    element
         .h(px(HEADER_PILL_HEIGHT))
         .min_w_0()
         .px(px(HEADER_PILL_PADDING))
         .gap(px(6.))
         .rounded(px(CONTROL_RADIUS))
-        .bg(rgb(SURFACE))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
         .text_size(px(12.))
         .line_height(px(HEADER_PILL_LINE_HEIGHT))
 }
 
-fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
-    let label = label.into();
-    BaseButton::new(id)
-        .h(px(CONTROL_HEIGHT))
-        .px(px(CONTROL_PADDING))
-        .gap(px(UI_SPACING))
-        .flex_shrink_0()
-        .rounded(px(CONTROL_RADIUS))
-        .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(SURFACE))
-        .text_color(rgb(TEXT))
-        .text_size(px(12.))
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
-        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
-        .accessibility_label(label.clone())
-        .child(label)
+fn pill_hover(style: StyleRefinement) -> StyleRefinement {
+    style.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER))
 }
 
-pub(super) fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
-    button_base(id, label)
-        .bg(rgb(TEXT))
-        .text_color(rgb(BG))
-        .border_color(rgb(TEXT))
-        .hover(|d| d.bg(rgb(0xffffff)).border_color(rgb(0xffffff)))
+pub(super) fn pill_surface<T: InteractiveElement + Styled>(element: T) -> T {
+    pill(element)
+        .bg(rgb(SURFACE))
+        .border_color(rgb(CONTROL_BORDER))
+        .text_color(rgb(TEXT))
+        .hover(pill_hover)
+}
+
+pub(super) fn interactive_pill() -> Div {
+    pill_surface(row())
+}
+
+pub(super) fn static_pill() -> Div {
+    pill(row())
+        .border_color(rgb(BORDER))
+        .text_color(rgb(TEXT))
 }
 
 pub(super) fn choice_button(id: impl Into<ElementId>, selected: bool) -> BaseButton {
@@ -259,7 +253,7 @@ pub(super) fn icon_button(
 ) -> BaseButton {
     let label = label.into();
     BaseButton::new(id)
-        .size(px(ICON_BUTTON_SIZE))
+        .size(px(HEADER_PILL_HEIGHT))
         .flex_shrink_0()
         .rounded(px(CONTROL_RADIUS))
         .border_1()
@@ -268,7 +262,7 @@ pub(super) fn icon_button(
         .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
-        .child(Icon::new(icon).size(px(14.)))
+        .child(Icon::new(icon).size(px(PILL_ICON_SIZE)))
         .accessibility_label(label.clone())
         .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
 }
@@ -279,26 +273,15 @@ pub(super) fn pill_button(
     icon: Option<IconName>,
 ) -> BaseButton {
     let label = label.into();
-    BaseButton::new(id)
-        .h(px(HEADER_PILL_HEIGHT))
+    pill_surface(BaseButton::new(id))
         .flex_shrink_0()
-        .px(px(HEADER_PILL_PADDING))
-        .gap(px(6.))
-        .rounded(px(CONTROL_RADIUS))
-        .bg(rgb(SURFACE))
-        .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .text_color(rgb(TEXT))
-        .text_size(px(12.))
-        .line_height(px(HEADER_PILL_LINE_HEIGHT))
-        .hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .accessibility_label(label.clone())
         .when_some(icon, |d, icon| {
             d.child(
                 Icon::new(icon)
-                    .size(px(14.))
+                    .size(px(PILL_ICON_SIZE))
                     .flex_shrink_0()
                     .text_color(rgb(MUTED)),
             )
@@ -306,8 +289,26 @@ pub(super) fn pill_button(
         .child(label)
 }
 
-pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
-    button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
+pub(super) fn icon_pill_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: IconName,
+) -> BaseButton {
+    let label = label.into();
+    pill(BaseButton::new(id))
+        .size(px(HEADER_PILL_HEIGHT))
+        .px_0()
+        .justify_center()
+        .flex_shrink_0()
+        .bg(rgb(SURFACE))
+        .border_color(rgb(CONTROL_BORDER))
+        .text_color(rgb(MUTED))
+        .hover(|d| pill_hover(d).text_color(rgb(TEXT)))
+        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+        .child(Icon::new(icon).size(px(PILL_ICON_SIZE)))
+        .accessibility_label(label.clone())
+        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
 }
 
 const PILL_RESIZE: std::time::Duration = std::time::Duration::from_millis(180);
@@ -410,8 +411,14 @@ impl RenderOnce for CopyButton {
         let mut button = BaseButton::new(self.id)
             .debug_selector(move || selector.to_string())
             .flex_shrink_0()
+            .size(px(HEADER_PILL_HEIGHT))
+            .justify_center()
+            .rounded(px(CONTROL_RADIUS))
+            .border_1()
+            .border_color(rgb(CONTROL_BORDER))
+            .bg(rgb(SURFACE))
             .text_color(rgb(MUTED))
-            .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+            .hover(|d| pill_hover(d).text_color(rgb(TEXT)))
             .focus_visible(|d| d.border_color(rgb(FOCUS)))
             .accessibility_label(label.clone())
             .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
@@ -421,7 +428,7 @@ impl RenderOnce for CopyButton {
                 } else {
                     IconName::Copy
                 })
-                .size(px(12.)),
+                .size(px(PILL_ICON_SIZE)),
             )
             .on_click(window.listener_for(&state, move |state, _, window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));

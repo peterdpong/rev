@@ -135,7 +135,7 @@ impl RenderOnce for PrDescription {
                             .when(!pr.url.is_empty(), |d| {
                                 let url = pr.url.clone();
                                 d.child(
-                                    button("open-pr-browser", "GitHub ↗")
+                                    pill_button("open-pr-browser", "GitHub ↗", None)
                                         .debug_selector(|| "open-pr-browser".into())
                                         .h(px(22.))
                                         .px(px(8.))
@@ -194,7 +194,7 @@ fn pull_request_meta(pr: &PullRequest) -> Div {
 const PR_SKELETON_WIDTH: f32 = 220.;
 
 fn pull_request_skeleton(width: Option<Pixels>) -> impl IntoElement {
-    header_pill()
+    static_pill()
         .id("pr-title-loading")
         .debug_selector(|| "pr-title-loading".into())
         .w(width.unwrap_or(px(PR_SKELETON_WIDTH)))
@@ -242,7 +242,7 @@ impl Rev {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> TitleBar {
-        const BRANCH_FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 14. + 6.;
+        const BRANCH_FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + PILL_ICON_SIZE + 6.;
         let title_pill_width = self.review.as_ref().map(|review| {
             let pr_title = review
                 .pull_request
@@ -287,13 +287,12 @@ impl Rev {
                     .gap(px(UI_SPACING))
                     .when_some(self.review.as_ref(), |d, review| {
                         d.child(
-                            header_pill()
+                            static_pill()
                                 .max_w(px(200.))
                                 .flex_shrink_0()
-                                .font_weight(FontWeight::SEMIBOLD)
                                 .child(
                                     Icon::new(IconName::Folder)
-                                        .size(px(14.))
+                                        .size(px(PILL_ICON_SIZE))
                                         .flex_shrink_0()
                                         .text_color(rgb(MUTED)),
                                 )
@@ -310,15 +309,11 @@ impl Rev {
                                     let width = title_pill_width.flatten();
                                     if let Some(pr) = &review.pull_request {
                                         d.child(
-                                            header_pill()
+                                            interactive_pill()
                                                 .id("pr-title-pill")
                                                 .debug_selector(|| "pr-title-pill".into())
                                                 .max_w_full()
                                                 .when_some(width, |d, w| d.w(w))
-                                                .hover(|d| {
-                                                    d.bg(rgb(HOVER))
-                                                        .border_color(rgb(SELECTED_BORDER))
-                                                })
                                                 .child(
                                                     div().min_w_0().child(PrDescription {
                                                         id: format!(
@@ -334,14 +329,14 @@ impl Rev {
                                         d.child(pull_request_skeleton(width))
                                     } else {
                                         d.child(
-                                            header_pill()
+                                            static_pill()
                                                 .id("branch-pill")
                                                 .debug_selector(|| "branch-pill".into())
                                                 .max_w_full()
                                                 .when_some(width, |d, w| d.w(w))
                                                 .child(
                                                     Icon::new(IconName::GitBranch)
-                                                        .size(px(14.))
+                                                        .size(px(PILL_ICON_SIZE))
                                                         .flex_shrink_0()
                                                         .text_color(rgb(MUTED)),
                                                 )
@@ -365,13 +360,13 @@ impl Rev {
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(
-                                    icon_button("refresh", "Refresh", IconName::RefreshCw)
+                                    icon_pill_button("refresh", "Refresh", IconName::RefreshCw)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.refresh(window, cx)
                                         })),
                                 )
                                 .child(
-                                    icon_button("fetch", "Fetch", IconName::CloudDownload)
+                                    icon_pill_button("fetch", "Fetch", IconName::CloudDownload)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.fetch(window, cx)
                                         })),
@@ -421,7 +416,7 @@ impl Rev {
                     }),
             )
             .child(
-                icon_button(
+                icon_pill_button(
                     "file-view-mode",
                     if single_file {
                         "Show all files"
@@ -440,7 +435,7 @@ impl Rev {
                 })),
             )
             .child(
-                icon_button(
+                icon_pill_button(
                     "diff-mode",
                     if split {
                         "Switch to unified diff"
@@ -459,7 +454,7 @@ impl Rev {
                 })),
             )
             .child(
-                icon_button(
+                icon_pill_button(
                     "wrap",
                     if wrap {
                         "Disable line wrapping"
