@@ -45,6 +45,25 @@ gpui_kit::actions!(
     ]
 );
 
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = rev, no_json)]
+pub struct ToggleProject {
+    pub repo: String,
+    pub collapsed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = rev, no_json)]
+pub struct RemoveProject {
+    pub repo: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = rev, no_json)]
+pub struct CloseTab {
+    pub id: String,
+}
+
 pub fn bind_shortcuts(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),

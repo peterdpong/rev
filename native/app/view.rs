@@ -3,36 +3,44 @@ use super::branch_popover::BranchForm;
 use super::controls::*;
 use super::popover::*;
 use crate::theme::*;
+use crate::workspace_state::{Project, ReviewTab, TabKind};
 use gpui_kit::{
     assets::IconName,
     base::{Button as BaseButton, Popover, motion},
-    component::Icon,
+    component::{Icon, native_menu::NativeMenu},
 };
 
 pub(super) const SIDEBAR_WIDTH: f32 = 225.;
 
+const SIDEBAR_ROW_GAP: f32 = 2.;
+const SIDEBAR_INDENT: f32 = 12.;
+const SIDEBAR_ROW_BUTTON_SIZE: f32 = 20.;
+
 fn sidebar_item(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
-    icon: impl IntoElement,
+    depth: usize,
 ) -> BaseButton {
     let label = label.into();
     BaseButton::new(id)
         .h_full()
         .flex_1()
-        .flex_shrink_1()
         .min_w_0()
-        .px_2()
+        .pl(px(8. + depth as f32 * SIDEBAR_INDENT))
+        .pr_2()
         .justify_start()
-        .gap_2()
+        .gap(px(6.))
+        .text_size(px(12.))
         .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .accessibility_label(label.clone())
-        .child(icon)
-        .child(div().flex_1().min_w_0().truncate().child(label))
+}
+
+fn sidebar_label(label: impl Into<SharedString>) -> Div {
+    div().flex_1().min_w_0().truncate().child(label.into())
 }
 
 fn sidebar_row(id: impl Into<ElementId>, selected: bool) -> Stateful<Div> {
@@ -40,13 +48,60 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool) -> Stateful<Div> {
         .id(id)
         .h(px(LIST_ROW_HEIGHT))
         .flex_shrink_0()
-        .gap(px(UI_SPACING))
-        .pr(px(UI_SPACING))
+        .gap_0()
+        .pr(px(3.))
         .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
         .when(selected, selected_surface)
         .hover(move |d| if selected { d } else { d.bg(rgb(HOVER)) })
+}
+
+pub(super) fn project_menu(project: &Project) -> Vec<(SharedString, Box<dyn Action>)> {
+    vec![
+        (
+            if project.collapsed {
+                "Expand"
+            } else {
+                "Collapse"
+            }
+            .into(),
+            Box::new(ToggleProject {
+                repo: project.repo.clone(),
+                collapsed: !project.collapsed,
+            }),
+        ),
+        (
+            "Remove from sidebar".into(),
+            Box::new(RemoveProject {
+                repo: project.repo.clone(),
+            }),
+        ),
+    ]
+}
+
+pub(super) fn tab_menu(tab: &ReviewTab) -> Vec<(SharedString, Box<dyn Action>)> {
+    if tab.kind == TabKind::Current {
+        return Vec::new();
+    }
+    vec![(
+        "Close tab".into(),
+        Box::new(CloseTab { id: tab.id.clone() }),
+    )]
+}
+
+fn show_menu(
+    items: Vec<(SharedString, Box<dyn Action>)>,
+    event: &MouseDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let menu = items
+        .into_iter()
+        .fold(NativeMenu::new(), |menu, (label, action)| {
+            menu.menu(label, action)
+        });
+    menu.show(event.position, window, cx);
 }
 
 impl Rev {
@@ -98,6 +153,7 @@ impl Rev {
                     format!("Open a branch or PR in {project_name}"),
                     IconName::Plus,
                 )
+                .size(px(SIDEBAR_ROW_BUTTON_SIZE))
                 .debug_selector({
                     let id = id.clone();
                     move || id.clone()
@@ -108,127 +164,111 @@ impl Rev {
     }
 
     fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let mut projects = column().gap_1();
+        let mut projects = column().gap(px(SIDEBAR_ROW_GAP));
 
         for project in self.workspace.projects.clone() {
             let repo = project.repo.clone();
-            let collapse_repo = repo.clone();
-            let remove_repo = repo.clone();
             let hover_group = SharedString::from(format!("project-row-{repo}"));
-            let active = self
-                .workspace
-                .active_tab()
-                .is_some_and(|tab| tab.request.repo == repo);
             let collapsed = project.collapsed;
+            let menu_project = project.clone();
 
-            let mut group = column().gap(px(2.)).child(
+            projects = projects.child(
                 sidebar_row(hover_group.clone(), false)
                     .debug_selector({
                         let id = hover_group.to_string();
                         move || id.clone()
                     })
                     .group(hover_group.clone())
+                    .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                        show_menu(project_menu(&menu_project), event, window, cx)
+                    })
                     .child(
                         sidebar_item(
                             SharedString::from(format!("project-{repo}")),
                             project.name.clone(),
-                            FolderIcon {
-                                id: repo.clone().into(),
-                                expanded: !collapsed,
-                            },
+                            0,
                         )
                         .font_weight(FontWeight::MEDIUM)
                         .aria_expanded(!collapsed)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.workspace_action(
-                                json!({ "type": "collapseProject", "repo": collapse_repo, "collapsed": !collapsed }),
-                                false, window, cx,
-                            )
-                        })),
+                        .child(
+                            Icon::new(if collapsed {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .size(px(12.))
+                            .flex_shrink_0()
+                            .text_color(rgb(MUTED)),
+                        )
+                        .child(FolderIcon {
+                            id: repo.clone().into(),
+                            expanded: !collapsed,
+                        })
+                        .child(sidebar_label(project.name.clone()))
+                        .on_click({
+                            let repo = repo.clone();
+                            move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(ToggleProject {
+                                        repo: repo.clone(),
+                                        collapsed: !collapsed,
+                                    }),
+                                    cx,
+                                )
+                            }
+                        }),
                     )
                     .child(
-                        icon_actions()
+                        div()
+                            .flex_shrink_0()
                             .invisible()
                             .group_hover(hover_group, |d| d.visible())
-                            .child(
-                                icon_button(
-                                    SharedString::from(format!("remove-{repo}")),
-                                    format!("Remove {} from sidebar", project.name),
-                                    IconName::Close,
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.workspace_action(
-                                        json!({ "type": "removeProject", "repo": remove_repo }),
-                                        active, window, cx,
-                                    )
-                                })),
-                            )
-                            .child(
-                                self.render_branch_popover(&repo, &project.name, window, cx),
-                            ),
+                            .child(self.render_branch_popover(&repo, &project.name, window, cx)),
                     ),
             );
 
-            if !collapsed {
-                for tab in project.tabs {
-                    let working_tree = tab.kind == crate::workspace_state::TabKind::Current;
-                    let id = tab.id.clone();
-                    let close = id.clone();
-                    let active = self.workspace.active_tab_id.as_ref() == Some(&tab.id);
-                    let request = tab.request.clone();
-                    let file = tab.file.clone();
-                    let hover_group = SharedString::from(format!("review-row-{id}"));
-
-                    group = group.child(
-                        sidebar_row(hover_group.clone(), active)
-                            .group(hover_group.clone())
-                            .pl(px(16.))
-                            .child(
-                                sidebar_item(
-                                    SharedString::from(format!("tab-{id}")),
-                                    tab.label.clone(),
-                                    Icon::new(if working_tree {
-                                        IconName::MonitorDot
-                                    } else {
-                                        IconName::GitBranch
-                                    })
-                                    .size(px(14.))
-                                    .flex_shrink_0()
-                                    .text_color(rgb(MUTED)),
-                                )
-                                .aria_selected(active)
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.load_review(request.clone(), file.clone(), window, cx)
-                                    },
-                                )),
-                            )
-                            .when(!working_tree, |row| {
-                                row.child(
-                                    icon_button(
-                                        SharedString::from(format!("close-{id}")),
-                                        format!("Close {}", tab.label),
-                                        IconName::Close,
-                                    )
-                                    .invisible()
-                                    .group_hover(hover_group, |button| button.visible())
-                                    .on_click(cx.listener(
-                                        move |this, _, window, cx| {
-                                            this.workspace_action(
-                                                json!({ "type": "closeTab", "id": close }),
-                                                active,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    )),
-                                )
-                            }),
-                    );
-                }
+            if collapsed {
+                continue;
             }
+            for tab in &project.tabs {
+                let working_tree = tab.kind == TabKind::Current;
+                let active = self.workspace.active_tab_id.as_ref() == Some(&tab.id);
+                let request = tab.request.clone();
+                let file = tab.file.clone();
+                let menu_tab = tab.clone();
 
-            projects = projects.child(group);
+                projects = projects.child(
+                    sidebar_row(SharedString::from(format!("review-row-{}", tab.id)), active)
+                        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            show_menu(tab_menu(&menu_tab), event, window, cx)
+                        })
+                        .child(
+                            sidebar_item(
+                                SharedString::from(format!("tab-{}", tab.id)),
+                                tab.label.clone(),
+                                1,
+                            )
+                            .aria_selected(active)
+                            .child(div().size(px(12.)).flex_shrink_0())
+                            .child(
+                                Icon::new(if working_tree {
+                                    IconName::MonitorDot
+                                } else {
+                                    IconName::GitBranch
+                                })
+                                .size(px(14.))
+                                .flex_shrink_0()
+                                .text_color(rgb(MUTED)),
+                            )
+                            .child(sidebar_label(tab.label.clone()))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.load_review(request.clone(), file.clone(), window, cx)
+                                },
+                            )),
+                        ),
+                );
+            }
         }
 
         column()
@@ -242,17 +282,20 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
+                    .debug_selector(|| "sidebar-header".into())
+                    .h(px(HEADER_HEIGHT))
                     .flex_shrink_0()
                     .pl(px(UI_SPACING + 8.))
                     .pr(px(UI_SPACING))
                     .justify_between()
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(12.))
-                            .text_color(rgb(MUTED))
-                            .child("Repos"),
+                            .text_color(rgb(TEXT))
+                            .child("Repositories"),
                     )
                     .child(
                         icon_button("add-project", "Open repository", IconName::Plus)
@@ -267,8 +310,7 @@ impl Rev {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .px(px(UI_SPACING))
-                    .pb(px(UI_SPACING))
+                    .p(px(UI_SPACING))
                     .child(projects),
             )
             .into_any_element()
@@ -375,6 +417,35 @@ impl Render for Rev {
                     this.navigate_file(-1, window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, action: &ToggleProject, window, cx| {
+                this.workspace_action(
+                    json!({ "type": "collapseProject", "repo": action.repo, "collapsed": action.collapsed }),
+                    false,
+                    window,
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, action: &RemoveProject, window, cx| {
+                let active = this
+                    .workspace
+                    .active_tab()
+                    .is_some_and(|tab| tab.request.repo == action.repo);
+                this.workspace_action(
+                    json!({ "type": "removeProject", "repo": action.repo }),
+                    active,
+                    window,
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, action: &CloseTab, window, cx| {
+                let active = this.workspace.active_tab_id.as_ref() == Some(&action.id);
+                this.workspace_action(
+                    json!({ "type": "closeTab", "id": action.id }),
+                    active,
+                    window,
+                    cx,
+                )
+            }))
             .on_action(cx.listener(|this, _: &MarkViewed, window, cx| {
                 if !this.branch_popover.is_open() {
                     this.mark_viewed(window, cx);
@@ -526,6 +597,120 @@ mod tests {
             window.refresh();
             _ = window.draw(cx);
         });
+    }
+
+    #[gpui::test]
+    fn sidebar_rows_close_and_remove_from_their_context_menus(cx: &mut TestAppContext) {
+        use super::{project_menu, tab_menu};
+        use crate::workspace_state::{Project, ReviewTab, TabKind};
+        use gpui_kit::{Action, SharedString, test::TestQueryExt};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            crate::app::bind_shortcuts(cx);
+        });
+        let tab = |id: &str, kind, label: &str| ReviewTab {
+            id: id.into(),
+            kind,
+            label: label.into(),
+            request: crate::model::ReviewRequest::working_tree("/test-repo"),
+            scope_key: None,
+            head_sha: None,
+            file: None,
+        };
+        let data_dir =
+            std::env::temp_dir().join(format!("rev-sidebar-menu-{}", std::process::id()));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = Rev {
+                data_dir: data_dir.clone(),
+                ..fixture(window, cx)
+            };
+            app.workspace.projects = vec![Project {
+                repo: "/test-repo".into(),
+                name: "test-repo".into(),
+                collapsed: false,
+                tabs: vec![
+                    tab("current", TabKind::Current, "Working tree"),
+                    tab("feature", TabKind::Branch, "feature-branch"),
+                ],
+            }];
+            app.workspace.active_tab_id = Some("current".into());
+            app
+        });
+        cx.update(|window, cx| {
+            let focus = view.read(cx).focus.clone();
+            focus.focus(window, cx);
+        });
+        draw(cx);
+        assert!(
+            cx.update(|window, _| window.try_find_by_label("Close feature-branch").is_none()),
+            "rows no longer show a close button"
+        );
+        assert!(cx.update(|window, _| {
+            window
+                .try_find_by_label("Open a branch or PR in test-repo")
+                .is_some()
+        }));
+
+        let labels = |items: Vec<(SharedString, Box<dyn Action>)>| {
+            items
+                .into_iter()
+                .map(|(label, _)| label.to_string())
+                .collect::<Vec<_>>()
+        };
+        let (project, current, feature) = cx.update(|_, cx| {
+            let project = view.read(cx).workspace.projects[0].clone();
+            (
+                project.clone(),
+                project.tabs[0].clone(),
+                project.tabs[1].clone(),
+            )
+        });
+        assert!(
+            tab_menu(&current).is_empty(),
+            "the working tree cannot be closed"
+        );
+        assert_eq!(labels(tab_menu(&feature)), ["Close tab"]);
+        assert_eq!(
+            labels(project_menu(&project)),
+            ["Collapse", "Remove from sidebar"]
+        );
+
+        let run = |cx: &mut VisualTestContext,
+                   items: Vec<(SharedString, Box<dyn Action>)>,
+                   label: &str| {
+            let (_, action) = items.into_iter().find(|(item, _)| item == label).unwrap();
+            cx.update(|window, cx| window.dispatch_action(action, cx));
+            draw(cx);
+        };
+        run(cx, tab_menu(&feature), "Close tab");
+        let tabs = cx.update(|_, cx| view.read(cx).workspace.projects[0].tabs.len());
+        assert_eq!(tabs, 1);
+
+        run(cx, project_menu(&project), "Collapse");
+        let project = cx.update(|_, cx| view.read(cx).workspace.projects[0].clone());
+        assert!(project.collapsed);
+        assert_eq!(labels(project_menu(&project))[0], "Expand");
+
+        run(cx, project_menu(&project), "Remove from sidebar");
+        assert!(cx.update(|_, cx| view.read(cx).workspace.projects.is_empty()));
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[gpui::test]
+    fn sidebar_header_is_as_tall_as_the_title_bar(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_view, cx) = cx.add_window_view(fixture);
+        draw(cx);
+        let header = cx.debug_bounds("sidebar-header").unwrap();
+        assert_eq!(header.size.height, px(super::HEADER_HEIGHT));
     }
 
     #[gpui::test]
