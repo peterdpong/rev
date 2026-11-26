@@ -83,6 +83,25 @@ pub(super) fn empty_state(content: impl IntoElement) -> Div {
         )
 }
 
+pub(super) fn list_empty_state(label: impl Into<SharedString>) -> Div {
+    div()
+        .pt(px(24.))
+        .px_2()
+        .text_center()
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .text_color(rgb(MUTED))
+        .child(label.into())
+}
+
+pub(super) fn watermark() -> Div {
+    div().debug_selector(|| "watermark".into()).child(
+        Icon::new(IconName::GitCompareArrows)
+            .size(px(128.))
+            .text_color(rgb(SELECTED)),
+    )
+}
+
 pub(super) fn loading_spinner() -> Spinner {
     Spinner::new()
         .icon(Icon::new(IconName::LoaderCircle))

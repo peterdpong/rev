@@ -269,6 +269,11 @@ impl Rev {
                     .overflow_y_scroll()
                     .px(px(UI_SPACING))
                     .pb(px(UI_SPACING))
+                    .when(self.workspace.projects.is_empty(), |d| {
+                        d.child(
+                            list_empty_state("No repos").debug_selector(|| "sidebar-empty".into()),
+                        )
+                    })
                     .child(projects),
             )
             .into_any_element()
@@ -316,11 +321,13 @@ impl Render for Rev {
                     .flex_1()
                     .h_full()
                     .child(empty_state(
-                        pill_button("welcome-open", "Open folder", None)
-                            .child(shortcut_hint("⌘O"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
-                            ),
+                        column().items_center().gap(px(32.)).child(watermark()).child(
+                            pill_button("welcome-open", "Open folder", None)
+                                .child(shortcut_hint("⌘O"))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
+                                ),
+                        ),
                     ))
                     .into_any_element()
             };
@@ -539,6 +546,10 @@ mod tests {
         draw(cx);
         let open_folder = cx.update(|window, _| window.find_by_label("Open folder").bounds());
         assert_eq!(open_folder.size.height, px(super::HEADER_PILL_HEIGHT));
+        assert!(cx.debug_bounds("sidebar-empty").is_some());
+        let watermark = cx.debug_bounds("watermark").unwrap();
+        assert_eq!(watermark.center().x, open_folder.center().x);
+        assert!(watermark.bottom() < open_folder.top());
         cx.simulate_mouse_move(open_folder.center(), None, Default::default());
         draw(cx);
         cx.simulate_click(open_folder.center(), Default::default());

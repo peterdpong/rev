@@ -296,16 +296,7 @@ impl Render for FileList {
                 } else {
                     format!("No files match “{}”", self.filter_text)
                 };
-                d.child(
-                    div()
-                        .pt(px(24.))
-                        .px_2()
-                        .text_center()
-                        .text_size(px(12.))
-                        .line_height(px(HEADER_PILL_LINE_HEIGHT))
-                        .text_color(rgb(MUTED))
-                        .child(label),
-                )
+                d.child(list_empty_state(label))
             })
             .when(!empty, |d| {
                 d.child(
