@@ -220,18 +220,20 @@ fn pull_request_skeleton(width: Option<Pixels>) -> impl IntoElement {
 
 impl Rev {
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> BaseButton {
-        icon_button(
+        shortcut_icon_button(
             "toggle-sidebar",
             if self.sidebar_collapsed {
-                "Show sidebar (⌘B)"
+                "Show sidebar"
             } else {
-                "Hide sidebar (⌘B)"
+                "Hide sidebar"
             },
             if self.sidebar_collapsed {
                 IconName::PanelLeftOpen
             } else {
                 IconName::PanelLeftClose
             },
+            &ToggleSidebar,
+            "Rev",
         )
         .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)))
     }
@@ -365,7 +367,13 @@ impl Rev {
                                 .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(
-                                    icon_button("refresh", "Refresh", IconName::RefreshCw)
+                                    shortcut_icon_button(
+                                        "refresh",
+                                        "Refresh",
+                                        IconName::RefreshCw,
+                                        &Refresh,
+                                        "Rev",
+                                    )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.refresh(window, cx)
                                         })),

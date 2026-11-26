@@ -255,7 +255,13 @@ impl Rev {
                             .child("Repos"),
                     )
                     .child(
-                        icon_button("add-project", "Open repository", IconName::Plus)
+                        shortcut_icon_button(
+                            "add-project",
+                            "Open repository",
+                            IconName::Plus,
+                            &OpenProject,
+                            "Rev",
+                        )
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
                             ),

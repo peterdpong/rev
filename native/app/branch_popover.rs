@@ -485,7 +485,13 @@ impl Rev {
                     })
                     .child(div().flex_1().min_w_0())
                     .child(
-                        icon_button("close-popover", "Close", IconName::Close)
+                        shortcut_icon_button(
+                            "close-popover",
+                            "Close",
+                            IconName::Close,
+                            &ClosePopover,
+                            "RevPopover",
+                        )
                             .flex_shrink_0()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.close_branch_popover(window, cx)
