@@ -11,6 +11,7 @@ const COPY_PATH_BUTTON_SIZE: f32 = 20.;
 
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
+    LoadFile(String),
     VisibleFileChanged(String),
 }
 
@@ -26,6 +27,8 @@ pub(super) struct DiffFileStatus {
     pub counts: (usize, usize),
     pub viewed: bool,
     pub disabled: bool,
+    pub deferred: bool,
+    pub loading: bool,
 }
 
 pub(super) struct DiffView {
@@ -44,10 +47,12 @@ impl DiffView {
         let state = cx.new(|cx| DiffState::new([], cx));
         let subscriptions = vec![
             cx.observe(&state, |_, _, cx| cx.notify()),
-            cx.subscribe(&state, |_, _, event, cx| {
-                if let DiffEvent::VisibleFileChanged(path) = event {
+            cx.subscribe(&state, |_, _, event, cx| match event {
+                DiffEvent::FileExpanded(path) => cx.emit(DiffViewEvent::LoadFile(path.to_string())),
+                DiffEvent::VisibleFileChanged(path) => {
                     cx.emit(DiffViewEvent::VisibleFileChanged(path.to_string()));
                 }
+                _ => {}
             }),
         ];
 
@@ -84,21 +89,22 @@ impl DiffView {
     ) {
         self.files = files.into_iter().collect();
         let path = self.status.path.clone();
-        self.show_files(path.as_deref(), false, cx);
+        self.show_files(path.as_deref(), cx);
     }
 
-    pub(super) fn refresh_files(
-        &mut self,
-        files: Vec<DiffFile>,
-        preserve_scroll: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.files = files;
-        let path = self.status.path.clone();
-        self.show_files(path.as_deref(), preserve_scroll, cx);
+    pub(super) fn replace_file(&mut self, file: DiffFile, cx: &mut Context<Self>) {
+        if let Some(slot) = self
+            .files
+            .iter_mut()
+            .find(|slot| slot.path() == file.path())
+        {
+            *slot = file.clone();
+        }
+        self.state
+            .update(cx, |state, cx| state.replace_file(file, cx));
     }
 
-    fn show_files(&mut self, path: Option<&str>, preserve_scroll: bool, cx: &mut Context<Self>) {
+    fn show_files(&mut self, path: Option<&str>, cx: &mut Context<Self>) {
         let files = if self.single_file {
             path.and_then(|path| self.files.iter().find(|file| file.path().as_str() == path))
                 .cloned()
@@ -108,21 +114,14 @@ impl DiffView {
             self.files.clone()
         };
 
-        self.state.update(cx, |state, cx| {
-            let scroll = state.list().logical_scroll_top();
-            let horizontal = state.horizontal_scroll().offset();
-            state.set_files(files, cx);
-            if preserve_scroll {
-                state.list().scroll_to(scroll);
-                state.horizontal_scroll().set_offset(horizontal);
-            }
-        });
+        self.state
+            .update(cx, |state, cx| state.set_files(files, cx));
     }
 
     pub(super) fn focus_file(&mut self, path: &str, cx: &mut Context<Self>) {
         let shown = self.state.read(cx).files().first().map(|file| file.path().to_string());
         if self.single_file && shown.as_deref() != Some(path) {
-            self.show_files(Some(path), false, cx);
+            self.show_files(Some(path), cx);
         }
 
         self.state.update(cx, |state, cx| {
@@ -139,7 +138,7 @@ impl DiffView {
     pub(super) fn toggle_single_file(&mut self, cx: &mut Context<Self>) {
         self.single_file = !self.single_file;
         let path = self.status.path.clone();
-        self.show_files(path.as_deref(), false, cx);
+        self.show_files(path.as_deref(), cx);
         if let Some(path) = path {
             self.state
                 .update(cx, |state, cx| state.scroll_to_file(&path, cx));
@@ -178,6 +177,7 @@ impl DiffView {
     fn diff_file_header(&self, file: &DiffFile, cx: &mut Context<Self>) -> AnyElement {
         let path = file.path().to_string();
         let status = self.status.files.get(&path);
+        let load_path = path.clone();
         let viewed = status.is_some_and(|status| status.viewed);
         let (added, removed) = status.map_or((file.additions(), file.deletions()), |status| status.counts);
         row()
@@ -210,6 +210,16 @@ impl DiffView {
                             .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
                     ),
             )
+            .when(status.is_some_and(|status| status.deferred), |d| {
+                d.child(div().text_size(px(11.)).text_color(rgb(MUTED)).child("Large diff"))
+                    .child(button(SharedString::from(format!("load-diff-{path}")),
+                        if status.is_some_and(|status| status.loading) { "Loading…" } else { "Load diff" })
+                        .disabled(status.is_some_and(|status| status.loading))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.state.update(cx, |state, cx| state.set_file_collapsed(&load_path, false, cx));
+                            cx.emit(DiffViewEvent::LoadFile(load_path.clone()));
+                        })))
+            })
             .child(
                 viewed_button(
                     viewed,
@@ -360,7 +370,7 @@ mod tests {
                  diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-a\n+b\n",
             )
             .unwrap();
-            view.refresh_files(files, false, cx);
+            view.set_files(files, cx);
             view.focus_file("b.rs", cx);
             view.sync_status(DiffViewStatus { path: Some("b.rs".into()), ..Default::default() }, cx);
         });
@@ -423,6 +433,50 @@ mod tests {
         assert!(!collapsed, "copying leaves the file expanded");
         let copied_label = cx.update(|window, _| window.find_by_label("Copied").bounds());
         assert_eq!(copied_label, copy, "relabel the button after copying");
+    }
+
+    #[gpui::test]
+    fn a_file_loaded_in_single_file_mode_stays_loaded_after_switching_back(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(DiffView::new);
+        let deletions = |cx: &mut TestAppContext| {
+            view.read_with(cx, |view, cx| {
+                view.state()
+                    .read(cx)
+                    .files()
+                    .iter()
+                    .map(|file| (file.path().to_string(), file.deletions()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        view.update(cx, |view, cx| {
+            view.set_files(
+                [
+                    DiffFile::placeholder("large.rs", "Large diff"),
+                    DiffFile::placeholder("small.rs", "Large diff"),
+                ],
+                cx,
+            );
+            view.toggle_single_file(cx);
+            view.focus_file("small.rs", cx);
+        });
+
+        let loaded = DiffFile::parse(
+            "diff --git a/large.rs b/large.rs\n--- a/large.rs\n+++ b/large.rs\n@@ -1,2 +1 @@\n-a\n-b\n+c\n",
+        )
+        .unwrap();
+        view.update(cx, |view, cx| {
+            view.replace_file(loaded.into_iter().next().unwrap(), cx);
+            view.focus_file("large.rs", cx);
+        });
+        assert_eq!(deletions(cx), [("large.rs".into(), 2)]);
+
+        view.update(cx, |view, cx| view.toggle_single_file(cx));
+        assert_eq!(
+            deletions(cx),
+            [("large.rs".into(), 2), ("small.rs".into(), 0)]
+        );
     }
 
     #[gpui::test]
@@ -489,5 +543,69 @@ mod tests {
             view.clear_selection(cx);
             assert!(view.state.read(cx).selected_lines().is_none());
         });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.state.update(cx, |state, cx| {
+                    state.begin_line_selection(
+                        crate::diff::DiffLinePosition::new("file.rs", DiffSide::Modified, 2),
+                        false, window, cx,
+                    );
+                });
+                assert!(view.is_selecting(cx));
+                view.state.update(cx, |state, cx| state.set_files([], cx));
+                assert!(!view.is_selecting(cx));
+            });
+        });
     }
+
+    #[gpui::test]
+    fn deferred_file_buttons_emit_the_path_and_expand_the_file(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        use super::{DiffFileStatus, DiffViewEvent};
+        use std::cell::RefCell;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                view.set_files([DiffFile::placeholder("large.rs", "Large diff")], cx);
+                view.state.update(cx, |state, cx| state.set_file_collapsed("large.rs", true, cx));
+                view.sync_status(DiffViewStatus {
+                    path: Some("large.rs".into()),
+                    files: [("large.rs".into(), DiffFileStatus {
+                        deferred: true, disabled: true, ..Default::default()
+                    })].into(),
+                    ..Default::default()
+                }, cx);
+                view
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        let paths = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|_, cx| {
+            let paths = paths.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if let DiffViewEvent::LoadFile(path) = event {
+                    paths.borrow_mut().push(path.clone());
+                }
+            })
+        });
+        cx.run_until_parked();
+        let button = cx.update(|window, cx| {
+            window.refresh();
+            _ = window.draw(cx);
+            window.find_by_label("Load diff").bounds()
+        });
+        cx.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+        assert!(!paths.borrow().is_empty());
+        assert!(paths.borrow().iter().all(|path| path == "large.rs"));
+        cx.update(|_, cx| assert!(!view.read(cx).state.read(cx).is_file_collapsed("large.rs")));
+    }
+
 }
