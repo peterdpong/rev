@@ -650,7 +650,12 @@ fn render_diff(
             )
         })
         .when(has_rows, |this| {
-            this.child(Scrollbar::vertical(&scrollbar))
+            this.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(Scrollbar::vertical(&scrollbar).viewport_from_layout()),
+            )
                 .when(!soft_wrap, |this| {
                     this.child(Scrollbar::horizontal(&horizontal))
                 })

@@ -4,7 +4,8 @@ use gpui::{
 };
 
 use super::{Diff, DiffState, document::fixture};
-use gpui::{ListOffset, TouchPhase};
+use gpui::{ListOffset, MouseButton, TouchPhase};
+use gpui_kit::component::{Theme, scroll::ScrollbarMode};
 use std::time::Duration;
 
 /// Every line changed, so the unified patch is two rows per line.
@@ -205,5 +206,47 @@ fn the_current_file_header_sticks_until_the_next_one_pushes_it_out(cx: &mut Test
     assert_eq!(
         cx.update(|_, cx| state.read(cx).visible_file().cloned()),
         Some("second.txt".into())
+    );
+}
+
+#[gpui::test]
+fn the_scrollbar_stays_at_the_visible_edge_of_a_wide_patch(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        super::test_init(cx);
+        Theme::set_scrollbar_mode(ScrollbarMode::Always, cx);
+    });
+    let wide = "x".repeat(200);
+    let original = (0..LINES)
+        .map(|ix| format!("old {ix} {wide}\n"))
+        .collect::<String>();
+    let modified = (0..LINES)
+        .map(|ix| format!("new {ix} {wide}\n"))
+        .collect::<String>();
+    let state =
+        cx.new(|cx| DiffState::new([fixture::modified("wide.txt", &original, &modified)], cx));
+    let (_, cx) = cx.add_window_view({
+        let state = state.clone();
+        move |_, _| Host { state }
+    });
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let list = cx.update(|_, cx| state.read(cx).list().clone());
+    assert!(
+        list.viewport_bounds().right() > px(400.),
+        "the patch is wider than the diff"
+    );
+
+    let track = point(px(395.), px(150.));
+    cx.simulate_mouse_move(track, None, Default::default());
+    frame(cx);
+    cx.simulate_mouse_down(track, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(track, MouseButton::Left, Default::default());
+    frame(cx);
+
+    assert!(
+        list.logical_scroll_top().item_ix > LINES,
+        "clicking the track scrolled to row {}",
+        list.logical_scroll_top().item_ix
     );
 }
