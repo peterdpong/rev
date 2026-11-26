@@ -36,7 +36,7 @@ impl RenderOnce for FolderIcon {
             .relative()
             .size(px(14.))
             .flex_shrink_0()
-            .text_color(rgb(MUTED))
+            .text_color(rgb(palette().muted))
             .child(
                 Icon::new(IconName::FolderClosed)
                     .absolute()
@@ -76,19 +76,19 @@ pub(super) fn file_header_row() -> Div {
         .flex_shrink_0()
         .px(px(UI_SPACING))
         .gap(px(UI_SPACING))
-        .bg(rgb(SUBPANEL))
+        .bg(rgb(palette().subpanel))
         .border_b_1()
-        .border_color(rgb(BORDER))
+        .border_color(rgb(palette().border))
         .text_size(px(12.))
         .line_height(px(HEADER_PILL_LINE_HEIGHT))
 }
 
 pub(super) fn selected_surface<T: Styled>(element: T) -> T {
     element
-        .bg(rgb(SELECTED))
+        .bg(rgb(palette().selected))
         .border_1()
-        .border_color(rgb(SELECTED_BORDER))
-        .text_color(rgb(TEXT))
+        .border_color(rgb(palette().selected_border))
+        .text_color(rgb(palette().text))
         .shadow_sm()
 }
 
@@ -100,16 +100,16 @@ pub(super) fn viewed_button(viewed: bool, disabled: bool) -> BaseButton {
         .flex_shrink_0()
         .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(SURFACE))
-        .text_color(rgb(TEXT))
+        .border_color(rgb(palette().control_border))
+        .bg(rgb(palette().surface))
+        .text_color(rgb(palette().text))
         .text_size(px(13.))
         .font_weight(FontWeight::SEMIBOLD)
         .when(viewed, selected_surface)
         .when(!disabled, |d| {
-            d.hover(move |d| d.bg(rgb(if viewed { SELECTED } else { HOVER })))
+            d.hover(move |d| d.bg(rgb(if viewed { palette().selected } else { palette().hover })))
         })
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .focus_visible(|d| d.border_color(rgb(palette().focus)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .disabled(disabled)
         .role(accesskit::Role::CheckBox)
@@ -128,9 +128,9 @@ pub(super) fn viewed_button(viewed: bool, disabled: bool) -> BaseButton {
                 .justify_center()
                 .rounded(px(2.))
                 .border_1()
-                .border_color(rgb(MUTED))
+                .border_color(rgb(palette().muted))
                 .when(viewed, |d| {
-                    d.bg(rgb(0x737373)).border_color(rgb(FOCUS)).child(
+                    d.bg(rgb(0x737373)).border_color(rgb(palette().focus)).child(
                         Icon::new(IconName::Check)
                             .size(px(12.))
                             .text_color(rgb(0xffffff)),
@@ -151,9 +151,9 @@ pub(super) fn header_pill() -> Div {
         .px(px(HEADER_PILL_PADDING))
         .gap(px(6.))
         .rounded(px(CONTROL_RADIUS))
-        .bg(rgb(SURFACE))
+        .bg(rgb(palette().surface))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
+        .border_color(rgb(palette().control_border))
         .text_size(px(12.))
         .line_height(px(HEADER_PILL_LINE_HEIGHT))
 }
@@ -167,11 +167,11 @@ fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Base
         .flex_shrink_0()
         .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(SURFACE))
-        .text_color(rgb(TEXT))
+        .border_color(rgb(palette().control_border))
+        .bg(rgb(palette().surface))
+        .text_color(rgb(palette().text))
         .text_size(px(12.))
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .focus_visible(|d| d.border_color(rgb(palette().focus)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .accessibility_label(label.clone())
         .child(label)
@@ -179,10 +179,10 @@ fn button_base(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Base
 
 pub(super) fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
     button_base(id, label)
-        .bg(rgb(TEXT))
-        .text_color(rgb(BG))
-        .border_color(rgb(TEXT))
-        .hover(|d| d.bg(rgb(0xffffff)).border_color(rgb(0xffffff)))
+        .bg(rgb(palette().text))
+        .text_color(rgb(palette().bg))
+        .border_color(rgb(palette().text))
+        .hover(|d| d.bg(rgb(palette().strong)).border_color(rgb(palette().strong)))
 }
 
 pub(super) fn choice_button(id: impl Into<ElementId>, selected: bool) -> BaseButton {
@@ -200,8 +200,8 @@ pub(super) fn choice_button(id: impl Into<ElementId>, selected: bool) -> BaseBut
         .border_1()
         .border_color(rgba(0x00000000))
         .when(selected, selected_surface)
-        .hover(move |d| d.bg(rgb(if selected { SELECTED } else { HOVER })))
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .hover(move |d| d.bg(rgb(if selected { palette().selected } else { palette().hover })))
+        .focus_visible(|d| d.border_color(rgb(palette().focus)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .aria_selected(selected)
 }
@@ -218,9 +218,9 @@ pub(super) fn icon_button(
         .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
-        .text_color(rgb(MUTED))
-        .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .text_color(rgb(palette().muted))
+        .hover(|d| d.bg(rgb(palette().hover)).text_color(rgb(palette().text)))
+        .focus_visible(|d| d.border_color(rgb(palette().focus)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .child(Icon::new(icon).size(px(14.)))
         .accessibility_label(label.clone())
@@ -228,7 +228,7 @@ pub(super) fn icon_button(
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
-    button_base(id, label).hover(|d| d.bg(rgb(HOVER)))
+    button_base(id, label).hover(|d| d.bg(rgb(palette().hover)))
 }
 
 const PILL_RESIZE: std::time::Duration = std::time::Duration::from_millis(180);
@@ -251,7 +251,7 @@ pub(super) fn sliding_pill_width(
         let run = TextRun {
             len: label.len(),
             font: font(".AppleSystemUIFont"),
-            color: rgb(TEXT).into(),
+            color: rgb(palette().text).into(),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -331,9 +331,9 @@ impl RenderOnce for CopyButton {
         let mut button = BaseButton::new(self.id)
             .debug_selector(move || selector.to_string())
             .flex_shrink_0()
-            .text_color(rgb(MUTED))
-            .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
-            .focus_visible(|d| d.border_color(rgb(FOCUS)))
+            .text_color(rgb(palette().muted))
+            .hover(|d| d.bg(rgb(palette().hover)).text_color(rgb(palette().text)))
+            .focus_visible(|d| d.border_color(rgb(palette().focus)))
             .accessibility_label(label.clone())
             .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
             .child(

@@ -15,8 +15,8 @@ fn branch_pill() -> Div {
         .gap_0()
         .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(SURFACE))
+        .border_color(rgb(palette().control_border))
+        .bg(rgb(palette().surface))
         .overflow_hidden()
 }
 
@@ -27,7 +27,7 @@ fn branch_name(name: String, cx: &App) -> Div {
         .truncate()
         .font_family(cx.theme().mono_font_family.clone())
         .text_size(px(12.))
-        .text_color(rgb(TEXT))
+        .text_color(rgb(palette().text))
         .child(name)
 }
 
@@ -46,7 +46,7 @@ pub(super) fn branch_comparison(base: String, head: String, cx: &App) -> Statefu
             Icon::new(IconName::ArrowLeft)
                 .size(px(12.))
                 .flex_shrink_0()
-                .text_color(rgb(MUTED)),
+                .text_color(rgb(palette().muted)),
         )
         .child(
             branch_pill()
@@ -58,7 +58,7 @@ pub(super) fn branch_comparison(base: String, head: String, cx: &App) -> Statefu
                         .h_full()
                         .px(px(5.))
                         .border_l_1()
-                        .border_color(rgb(CONTROL_BORDER)),
+                        .border_color(rgb(palette().control_border)),
                 ),
         )
 }

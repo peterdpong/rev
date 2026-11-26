@@ -223,8 +223,8 @@ impl FileList {
             .border_color(rgba(0x00000000))
             .text_size(px(12.))
             .when(selected, selected_surface)
-            .hover(move |d| if selected { d } else { d.bg(rgb(HOVER)) })
-            .focus_visible(|d| d.border_color(rgb(FOCUS)))
+            .hover(move |d| if selected { d } else { d.bg(rgb(palette().hover)) })
+            .focus_visible(|d| d.border_color(rgb(palette().focus)))
             .accessibility_label(path.clone());
 
         let item = match &entry.kind {
@@ -238,7 +238,7 @@ impl FileList {
                     })
                     .size(px(12.))
                     .flex_shrink_0()
-                    .text_color(rgb(MUTED)),
+                    .text_color(rgb(palette().muted)),
                 )
                 .child(FolderIcon {
                     id: format!("file-folder-{repo}-{path}").into(),
@@ -259,7 +259,7 @@ impl FileList {
                         Icon::new(IconName::Check)
                             .size(px(14.))
                             .flex_shrink_0()
-                            .text_color(rgb(SUCCESS)),
+                            .text_color(rgb(palette().success)),
                     )
                 })
                 .on_click(cx.listener(move |list, _, _, cx| {
@@ -291,7 +291,7 @@ impl Render for FileList {
             .overflow_hidden()
             .p(px(UI_SPACING))
             .when(empty, |d| {
-                d.child(div().p_2().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                d.child(div().p_2().text_size(px(12.)).text_color(rgb(palette().muted)).child(
                     if self.filter_text.is_empty() {
                         "No changed files"
                     } else {
@@ -317,11 +317,11 @@ impl Render for FileList {
 
         column()
             .w(px(210.))
-            .bg(rgb(SUBPANEL))
+            .bg(rgb(palette().subpanel))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(palette().border))
             .child(
                 file_header_row().child(
                     Input::new(&self.filter)
@@ -334,15 +334,15 @@ impl Render for FileList {
                         .py_0()
                         .gap(px(6.))
                         .rounded(px(CONTROL_RADIUS))
-                        .bg(rgb(SURFACE))
+                        .bg(rgb(palette().surface))
                         .border_1()
-                        .border_color(rgb(BORDER))
+                        .border_color(rgb(palette().border))
                         .text_size(px(12.))
                         .line_height(px(HEADER_PILL_LINE_HEIGHT))
                         .prefix(
                             Icon::new(IconName::Search)
                                 .size(px(14.))
-                                .text_color(rgb(MUTED)),
+                                .text_color(rgb(palette().muted)),
                         )
                         .cleanable(true)
                         .aria_label("Find a file"),
@@ -355,15 +355,15 @@ impl Render for FileList {
 
 fn file_status_icon(id: impl Into<ElementId>, status: &str) -> Stateful<Div> {
     let (icon, label, color) = match status {
-        "A" => (IconName::FilePlus, "Added", SUCCESS),
-        "M" => (IconName::FilePenLine, "Modified", WARNING),
-        "D" => (IconName::FileMinus, "Deleted", DANGER),
-        "R" => (IconName::FileSymlink, "Renamed", BLUE),
-        "C" => (IconName::Copy, "Copied", BLUE),
-        "T" => (IconName::FileType, "File type changed", PURPLE),
-        "U" => (IconName::FileExclamationPoint, "Unmerged", DANGER),
-        "?" => (IconName::FileQuestionMark, "Untracked", BLUE),
-        _ => (IconName::FileQuestionMark, "Unknown status", MUTED),
+        "A" => (IconName::FilePlus, "Added", palette().success),
+        "M" => (IconName::FilePenLine, "Modified", palette().warning),
+        "D" => (IconName::FileMinus, "Deleted", palette().danger),
+        "R" => (IconName::FileSymlink, "Renamed", palette().blue),
+        "C" => (IconName::Copy, "Copied", palette().blue),
+        "T" => (IconName::FileType, "File type changed", palette().purple),
+        "U" => (IconName::FileExclamationPoint, "Unmerged", palette().danger),
+        "?" => (IconName::FileQuestionMark, "Untracked", palette().blue),
+        _ => (IconName::FileQuestionMark, "Unknown status", palette().muted),
     };
 
     div()

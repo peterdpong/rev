@@ -22,10 +22,7 @@ pub use state::{DiffEvent, DiffState};
 
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
-use crate::theme::{
-    CONTROL_RADIUS, DIFF_ADDED_BG, DIFF_ADDED_EMPHASIS, DIFF_DELETED_BG, DIFF_DELETED_EMPHASIS,
-    HOVER, MUTED, TEXT, UI_SPACING,
-};
+use crate::theme::{CONTROL_RADIUS, UI_SPACING, palette};
 
 use gpui::{
     AnyElement, App, Axis, ClickEvent, ClipboardItem, Context, ElementId, Entity, Focusable as _,
@@ -1267,8 +1264,8 @@ fn render_file_header(
                         .size(px(24.))
                         .flex_shrink_0()
                         .rounded(px(CONTROL_RADIUS))
-                        .text_color(rgb(MUTED))
-                        .hover(|this| this.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+                        .text_color(rgb(palette().muted))
+                        .hover(|this| this.bg(rgb(palette().hover)).text_color(rgb(palette().text)))
                         .child(
                             Icon::new(if collapsed {
                                 IconName::ChevronRight
@@ -1728,9 +1725,9 @@ fn code_line(
     let (line_background, inline_background) = if conflict_part.is_some() {
         (status.opacity(0.16), status.opacity(0.32))
     } else if side == DiffSide::Original {
-        (rgb(DIFF_DELETED_BG).into(), rgb(DIFF_DELETED_EMPHASIS).into())
+        (rgb(palette().diff_deleted_bg).into(), rgb(palette().diff_deleted_emphasis).into())
     } else {
-        (rgb(DIFF_ADDED_BG).into(), rgb(DIFF_ADDED_EMPHASIS).into())
+        (rgb(palette().diff_added_bg).into(), rgb(palette().diff_added_emphasis).into())
     };
     let selected = code.is_selected(file, side, ix)
         || (code.mode == DiffMode::Unified

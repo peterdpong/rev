@@ -9,9 +9,9 @@ const POPOVER_RISE: f32 = 6.;
 
 pub(super) fn popover_surface() -> Div {
     column()
-        .bg(rgb(SURFACE))
+        .bg(rgb(palette().surface))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
+        .border_color(rgb(palette().control_border))
         .rounded(px(POPOVER_RADIUS))
         .shadow_lg()
 }

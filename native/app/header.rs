@@ -154,7 +154,7 @@ impl RenderOnce for PrDescription {
                             .overflow_y_scroll()
                             .map(|d| {
                                 if pr.body.trim().is_empty() {
-                                    d.text_color(rgb(MUTED)).child("No description provided.")
+                                    d.text_color(rgb(palette().muted)).child("No description provided.")
                                 } else {
                                     let body = pr.body.trim_end().to_owned();
                                     d.child(
@@ -173,14 +173,14 @@ impl RenderOnce for PrDescription {
 
 fn pull_request_meta(pr: &PullRequest) -> Div {
     let status = pr.status().map(|status| match status {
-        PullRequestStatus::Open => ("Open", SUCCESS),
-        PullRequestStatus::Draft => ("Draft", MUTED),
-        PullRequestStatus::Merged => ("Merged", PURPLE),
-        PullRequestStatus::Closed => ("Closed", DANGER),
+        PullRequestStatus::Open => ("Open", palette().success),
+        PullRequestStatus::Draft => ("Draft", palette().muted),
+        PullRequestStatus::Merged => ("Merged", palette().purple),
+        PullRequestStatus::Closed => ("Closed", palette().danger),
     });
     row()
         .gap(px(4.))
-        .text_color(rgb(MUTED))
+        .text_color(rgb(palette().muted))
         .child(format!("#{}", pr.number))
         .when(!pr.author.is_empty(), |d| {
             d.child("·").child(pr.author.clone())
@@ -207,7 +207,7 @@ fn pull_request_skeleton(width: Option<Pixels>) -> impl IntoElement {
                 .flex_1()
                 .h(px(8.))
                 .rounded_full()
-                .bg(rgb(SELECTED))
+                .bg(rgb(palette().selected))
                 .with_animation(
                     "pr-title-pulse",
                     Animation::new(std::time::Duration::from_millis(1200))
@@ -258,9 +258,9 @@ impl Rev {
         TitleBar::new()
             .h(px(HEADER_HEIGHT))
             .pl_0()
-            .bg(rgb(BG))
+            .bg(rgb(palette().bg))
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(palette().border))
             .child(
                 div()
                     .w(px(COLLAPSED_HEADER_WIDTH
@@ -268,9 +268,9 @@ impl Rev {
                             * sidebar_openness))
                     .h_full()
                     .flex_shrink_0()
-                    .bg(rgb(PANEL))
+                    .bg(rgb(palette().panel))
                     .border_r_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(rgb(palette().border))
                     .flex()
                     .items_center()
                     .justify_end()
@@ -295,7 +295,7 @@ impl Rev {
                                     Icon::new(IconName::Folder)
                                         .size(px(14.))
                                         .flex_shrink_0()
-                                        .text_color(rgb(MUTED)),
+                                        .text_color(rgb(palette().muted)),
                                 )
                                 .child(div().min_w_0().truncate().child(review.name.clone())),
                         )
@@ -316,8 +316,8 @@ impl Rev {
                                                 .max_w_full()
                                                 .when_some(width, |d, w| d.w(w))
                                                 .hover(|d| {
-                                                    d.bg(rgb(HOVER))
-                                                        .border_color(rgb(SELECTED_BORDER))
+                                                    d.bg(rgb(palette().hover))
+                                                        .border_color(rgb(palette().selected_border))
                                                 })
                                                 .child(
                                                     div().min_w_0().child(PrDescription {
@@ -343,7 +343,7 @@ impl Rev {
                                                     Icon::new(IconName::GitBranch)
                                                         .size(px(14.))
                                                         .flex_shrink_0()
-                                                        .text_color(rgb(MUTED)),
+                                                        .text_color(rgb(palette().muted)),
                                                 )
                                                 .child(
                                                     div()
@@ -393,12 +393,12 @@ impl Rev {
         row()
             .id("diff-view-header")
             .debug_selector(|| "diff-view-header".into())
-            .bg(rgb(SUBPANEL))
+            .bg(rgb(palette().subpanel))
             .flex_shrink_0()
             .p(px(UI_SPACING))
             .gap(px(UI_SPACING))
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(palette().border))
             .child(
                 column()
                     .flex_1()
@@ -416,11 +416,11 @@ impl Rev {
                                 .line_height(px(14.))
                                 .child(
                                     div()
-                                        .text_color(rgb(MUTED))
+                                        .text_color(rgb(palette().muted))
                                         .child(format!("{} files", review.files.len())),
                                 )
-                                .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
-                                .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
+                                .child(div().text_color(rgb(palette().success)).child(format!("+{added}")))
+                                .child(div().text_color(rgb(palette().danger)).child(format!("−{removed}"))),
                         )
                     }),
             )

@@ -220,8 +220,8 @@ impl DiffView {
                     .child(
                         row()
                             .flex_shrink_0()
-                            .child(div().text_color(rgb(SUCCESS)).child(format!("+{added}")))
-                            .child(div().text_color(rgb(DANGER)).child(format!("−{removed}"))),
+                            .child(div().text_color(rgb(palette().success)).child(format!("+{added}")))
+                            .child(div().text_color(rgb(palette().danger)).child(format!("−{removed}"))),
                     ),
             )
             .child(
@@ -242,13 +242,13 @@ impl Render for DiffView {
         let content = if self.status.loading && self.state.read(cx).files().is_empty() {
             div()
                 .p_6()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child("Loading…")
                 .into_any_element()
         } else if self.status.path.is_none() {
             div()
                 .p_6()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child("No changes")
                 .into_any_element()
         } else {
