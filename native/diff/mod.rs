@@ -465,6 +465,8 @@ impl RenderOnce for Diff {
     }
 }
 
+pub(crate) const DIFF_END_PADDING: f32 = 48.;
+
 fn render_diff(
     props: Diff,
     state: &mut DiffState,
@@ -599,7 +601,8 @@ fn render_diff(
                     })
                     .when(soft_wrap, |list| list.w_full())
                     .when(!soft_wrap, |list| list.w(content_width).min_w_full())
-                    .h_full(),
+                    .h_full()
+                    .pb(px(DIFF_END_PADDING)),
                 ))
                 .into_any_element(),
             scrollbar.clone(),

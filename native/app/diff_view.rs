@@ -490,4 +490,47 @@ mod tests {
             assert!(view.state.read(cx).selected_lines().is_none());
         });
     }
+
+    #[gpui::test]
+    fn the_last_file_header_stops_short_of_the_bottom(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let patch: String = (0..6)
+            .map(|i| format!("diff --git a/f{i}.rs b/f{i}.rs\n--- a/f{i}.rs\n+++ b/f{i}.rs\n@@ -1,3 +1,3 @@\n-a\n+b\n-c\n+d\n-e\n+f\n"))
+            .collect();
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                view.set_files(DiffFile::parse(&patch).unwrap(), cx);
+                view.sync_status(DiffViewStatus { path: Some("f0.rs".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        draw(cx);
+        cx.update(|_, cx| {
+            let state = host.read(cx).view.read(cx).state().clone();
+            state.update(cx, |state, cx| state.set_file_collapsed("f5.rs", true, cx));
+        });
+        for _ in 0..4 {
+            draw(cx);
+            cx.update(|_, cx| {
+                let state = host.read(cx).view.read(cx).state().clone();
+                state.read(cx).list().scroll_by(px(10_000.));
+            });
+        }
+        draw(cx);
+        let heading = cx.debug_bounds("diff-heading-f5.rs").unwrap();
+        let gap = px(300.) - heading.bottom();
+        assert!(gap >= px(48.), "leave room under the last header: {gap:?}");
+    }
 }
