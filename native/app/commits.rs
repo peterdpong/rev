@@ -251,7 +251,7 @@ impl Rev {
     ) -> AnyElement {
         let label = CommitPicker::label(review);
         // Padding, border, chevron and the gap before it.
-        const FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + 12. + 6.;
+        const FIXED_WIDTH: f32 = HEADER_PILL_PADDING * 2. + 2. + PILL_ICON_SIZE + 6.;
         let width = sliding_pill_width(
             "commit-pill-width",
             &label,
@@ -265,22 +265,10 @@ impl Rev {
         let requested = self.commit_picker.open;
         let open = self.commit_picker.ready();
         let this = cx.entity().downgrade();
-        let trigger = BaseButton::new("commit-picker-trigger")
+        let trigger = pill_surface(BaseButton::new("commit-picker-trigger"))
             .debug_selector(|| "commit-picker-pill".into())
-            .h(px(HEADER_PILL_HEIGHT))
             .max_w(px(MAX_PILL_WIDTH))
             .when_some(width, |d, w| d.w(w))
-            .min_w_0()
-            .px(px(HEADER_PILL_PADDING))
-            .gap(px(6.))
-            .rounded(px(CONTROL_RADIUS))
-            .bg(rgb(SURFACE))
-            .border_1()
-            .border_color(rgb(CONTROL_BORDER))
-            .text_size(px(12.))
-            .line_height(px(HEADER_PILL_LINE_HEIGHT))
-            .text_color(rgb(TEXT))
-            .hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
             .styles(|styles| {
                 styles.selected(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
             })
@@ -291,7 +279,7 @@ impl Rev {
             .child(div().flex_1().min_w_0().truncate().child(label))
             .child(
                 Icon::new(IconName::ChevronDown)
-                    .size(px(12.))
+                    .size(px(PILL_ICON_SIZE))
                     .flex_shrink_0()
                     .text_color(rgb(MUTED)),
             );
@@ -449,7 +437,7 @@ impl Rev {
             )
             .when(picker.has_more && !picker.loading, |body| {
                 body.child(
-                    button("older-commits", "Load older commits")
+                    pill_button("older-commits", "Load older commits", None)
                         .w_full()
                         .on_click(
                             cx.listener(|this, _, window, cx| this.load_more_commits(window, cx)),

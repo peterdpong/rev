@@ -7,7 +7,6 @@ use crate::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-const COPY_PATH_BUTTON_SIZE: f32 = 20.;
 
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
@@ -197,11 +196,7 @@ impl DiffView {
                     .min_w_0()
                     .child(div().min_w_0().truncate().child(path.clone()))
                     .child(
-                        CopyButton::new(format!("copy-path-{path}"), path.clone(), "Copy file path")
-                            .size(px(COPY_PATH_BUTTON_SIZE))
-                            .rounded(px(CONTROL_RADIUS))
-                            .border_1()
-                            .border_color(rgba(0x00000000)),
+                        CopyButton::new(format!("copy-path-{path}"), path.clone(), "Copy file path"),
                     )
                     .child(
                         row()
@@ -438,7 +433,7 @@ mod tests {
             copy.left() > heading.left() && copy.right() < heading.right(),
             "sit inside the file header: {heading:?}, {copy:?}"
         );
-        assert_eq!(copy.size.height, px(super::COPY_PATH_BUTTON_SIZE));
+        assert_eq!(copy.size.height, px(crate::app::controls::HEADER_PILL_HEIGHT));
         let labelled = cx.update(|window, _| window.find_by_label("Copy file path").bounds());
         assert_eq!(labelled, copy);
 

@@ -6,17 +6,14 @@ use gpui_kit::{
     component::{ActiveTheme as _, Icon},
 };
 
-pub(super) const BRANCH_PILL_HEIGHT: f32 = 20.;
-
 fn branch_pill() -> Div {
     row()
-        .h(px(BRANCH_PILL_HEIGHT))
+        .h(px(HEADER_PILL_HEIGHT))
         .min_w_0()
         .gap_0()
         .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(SURFACE))
+        .border_color(rgb(BORDER))
         .overflow_hidden()
 }
 
@@ -49,16 +46,18 @@ pub(super) fn branch_comparison(base: String, head: String, cx: &App) -> Statefu
                 .text_color(rgb(MUTED)),
         )
         .child(
-            branch_pill()
-                .debug_selector(|| "branch-head".into())
+            row()
+                .min_w_0()
                 .flex_shrink_1()
-                .child(branch_name(head.clone(), cx))
+                .gap(px(3.))
                 .child(
-                    CopyButton::new("copy-branch", head, "Copy branch name")
-                        .h_full()
-                        .px(px(5.))
-                        .border_l_1()
-                        .border_color(rgb(CONTROL_BORDER)),
+                    branch_pill()
+                        .debug_selector(|| "branch-head".into())
+                        .flex_shrink_1()
+                        .child(branch_name(head.clone(), cx)),
+                )
+                .child(
+                    CopyButton::new("copy-branch", head, "Copy branch name"),
                 ),
         )
 }
