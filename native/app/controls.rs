@@ -213,6 +213,21 @@ pub(super) fn icon_button(
     icon: IconName,
 ) -> BaseButton {
     let label = label.into();
+    icon_button_base(id, label.clone(), icon).with_tooltip(label)
+}
+
+pub(super) fn shortcut_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: IconName,
+    action: &dyn Action,
+    context: &'static str,
+) -> BaseButton {
+    let label = label.into();
+    icon_button_base(id, label.clone(), icon).with_shortcut_tooltip(label, action, context)
+}
+
+fn icon_button_base(id: impl Into<ElementId>, label: SharedString, icon: IconName) -> BaseButton {
     BaseButton::new(id)
         .size(px(ICON_BUTTON_SIZE))
         .flex_shrink_0()
@@ -224,8 +239,7 @@ pub(super) fn icon_button(
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .child(Icon::new(icon).size(px(14.)))
-        .accessibility_label(label.clone())
-        .with_tooltip(label.clone())
+        .accessibility_label(label)
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
