@@ -1,4 +1,3 @@
-use super::popover::POPOVER_RADIUS;
 use crate::theme::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -72,20 +71,16 @@ pub(super) enum EmptyGlyph {
     Spinner,
 }
 
-pub(super) fn empty_state(
-    glyph: EmptyGlyph,
-    title: impl Into<SharedString>,
-    detail: Option<SharedString>,
-) -> Div {
+pub(super) fn empty_state(glyph: EmptyGlyph, title: impl Into<SharedString>) -> Div {
     let glyph = match glyph {
         EmptyGlyph::Icon(icon) => Icon::new(icon)
-            .size(px(18.))
+            .size(px(20.))
             .text_color(rgb(MUTED))
             .into_any_element(),
         EmptyGlyph::Spinner => Spinner::new()
             .icon(Icon::new(IconName::LoaderCircle))
             .color(rgb(MUTED).into())
-            .with_size(px(18.))
+            .with_size(px(20.))
             .into_any_element(),
     };
 
@@ -98,38 +93,15 @@ pub(super) fn empty_state(
         .child(
             div()
                 .debug_selector(|| "empty-state-glyph".into())
-                .size(px(40.))
                 .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(POPOVER_RADIUS))
-                .bg(rgb(SURFACE))
-                .border_1()
-                .border_color(rgb(CONTROL_BORDER))
                 .child(glyph),
         )
         .child(
-            column()
-                .items_center()
-                .gap(px(4.))
-                .max_w(px(300.))
-                .text_center()
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(TEXT))
-                        .child(title.into()),
-                )
-                .when_some(detail, |d, detail| {
-                    d.child(
-                        div()
-                            .text_size(px(12.))
-                            .line_height(px(HEADER_PILL_LINE_HEIGHT))
-                            .text_color(rgb(MUTED))
-                            .child(detail),
-                    )
-                }),
+            div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(TEXT))
+                .child(title.into()),
         )
 }
 

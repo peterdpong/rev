@@ -227,14 +227,9 @@ impl Render for DiffView {
         let state = self.state.clone();
         let header_owner = cx.weak_entity();
         let content = if self.status.loading && self.state.read(cx).files().is_empty() {
-            empty_state(EmptyGlyph::Spinner, "Loading changes…", None).into_any_element()
+            empty_state(EmptyGlyph::Spinner, "Loading changes…").into_any_element()
         } else if self.status.path.is_none() {
-            empty_state(
-                EmptyGlyph::Icon(IconName::CircleCheck),
-                "No changes",
-                Some("There's nothing to review in this comparison.".into()),
-            )
-            .into_any_element()
+            empty_state(EmptyGlyph::Icon(IconName::CircleCheck), "No changes").into_any_element()
         } else {
             Diff::new(&self.state)
                 .size_full()

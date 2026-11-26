@@ -319,10 +319,6 @@ impl Render for Rev {
                         empty_state(
                             EmptyGlyph::Icon(IconName::FolderGit2),
                             "Open a repository",
-                            Some(
-                                "Choose a folder to review its working tree, branches and pull requests."
-                                    .into(),
-                            ),
                         )
                         .child(
                             primary_button("welcome-open", "Open folder").on_click(
