@@ -4,7 +4,6 @@ use crate::{
     diff::{Diff, DiffEvent, DiffFile, DiffHunkSeparator, DiffMode, DiffState},
     theme::*,
 };
-use gpui_kit::assets::IconName;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -227,9 +226,9 @@ impl Render for DiffView {
         let state = self.state.clone();
         let header_owner = cx.weak_entity();
         let content = if self.status.loading && self.state.read(cx).files().is_empty() {
-            empty_state(EmptyGlyph::Spinner, "Loading changes…").into_any_element()
+            empty_state(loading_spinner()).into_any_element()
         } else if self.status.path.is_none() {
-            empty_state(EmptyGlyph::Icon(IconName::CircleCheck), "No changes").into_any_element()
+            empty_state("No changes").into_any_element()
         } else {
             Diff::new(&self.state)
                 .size_full()
@@ -320,7 +319,7 @@ mod tests {
                 })
             });
             draw(cx);
-            let glyph = cx.debug_bounds("empty-state-glyph").unwrap();
+            let glyph = cx.debug_bounds("empty-state").unwrap();
             assert_eq!(glyph.center().x, px(350.), "loading: {loading}");
             assert!(
                 glyph.top() > px(75.) && glyph.bottom() < px(225.),

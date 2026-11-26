@@ -66,43 +66,32 @@ pub(super) fn row() -> Div {
     div().flex().items_center().gap_2()
 }
 
-pub(super) enum EmptyGlyph {
-    Icon(IconName),
-    Spinner,
-}
-
-pub(super) fn empty_state(glyph: EmptyGlyph, title: impl Into<SharedString>) -> Div {
-    let glyph = match glyph {
-        EmptyGlyph::Icon(icon) => Icon::new(icon)
-            .size(px(20.))
-            .text_color(rgb(MUTED))
-            .into_any_element(),
-        EmptyGlyph::Spinner => Spinner::new()
-            .icon(Icon::new(IconName::LoaderCircle))
-            .color(rgb(MUTED).into())
-            .with_size(px(20.))
-            .into_any_element(),
-    };
-
+pub(super) fn empty_state(content: impl IntoElement) -> Div {
     column()
         .size_full()
         .items_center()
         .justify_center()
-        .gap(px(UI_SPACING * 2.))
         .p(px(POPOVER_PADDING))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .text_color(rgb(MUTED))
         .child(
             div()
-                .debug_selector(|| "empty-state-glyph".into())
+                .debug_selector(|| "empty-state".into())
                 .flex()
-                .child(glyph),
+                .child(content),
         )
-        .child(
-            div()
-                .text_size(px(14.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(TEXT))
-                .child(title.into()),
-        )
+}
+
+pub(super) fn loading_spinner() -> Spinner {
+    Spinner::new()
+        .icon(Icon::new(IconName::LoaderCircle))
+        .color(rgb(MUTED).into())
+        .with_size(px(16.))
+}
+
+pub(super) fn shortcut_hint(keys: &'static str) -> Div {
+    div().text_color(rgb(MUTED)).child(keys)
 }
 
 pub(super) fn column() -> Div {
@@ -269,7 +258,7 @@ pub(super) fn icon_button(
 pub(super) fn pill_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
-    icon: IconName,
+    icon: Option<IconName>,
 ) -> BaseButton {
     let label = label.into();
     BaseButton::new(id)
@@ -288,12 +277,14 @@ pub(super) fn pill_button(
         .focus_visible(|d| d.border_color(rgb(FOCUS)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .accessibility_label(label.clone())
-        .child(
-            Icon::new(icon)
-                .size(px(14.))
-                .flex_shrink_0()
-                .text_color(rgb(MUTED)),
-        )
+        .when_some(icon, |d, icon| {
+            d.child(
+                Icon::new(icon)
+                    .size(px(14.))
+                    .flex_shrink_0()
+                    .text_color(rgb(MUTED)),
+            )
+        })
         .child(label)
 }
 

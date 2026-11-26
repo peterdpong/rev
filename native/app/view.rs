@@ -315,17 +315,13 @@ impl Render for Rev {
                 div()
                     .flex_1()
                     .h_full()
-                    .child(
-                        empty_state(
-                            EmptyGlyph::Icon(IconName::FolderGit2),
-                            "Open a repository",
-                        )
-                        .child(
-                            pill_button("welcome-open", "Open folder", IconName::FolderOpen).on_click(
+                    .child(empty_state(
+                        pill_button("welcome-open", "Open folder", None)
+                            .child(shortcut_hint("⌘O"))
+                            .on_click(
                                 cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
                             ),
-                        ),
-                    )
+                    ))
                     .into_any_element()
             };
 
@@ -533,6 +529,7 @@ mod tests {
             gpui_kit::init(cx);
             crate::diff::init(cx);
             crate::theme::init(cx);
+            crate::app::bind_shortcuts(cx);
         });
         let (view, cx) = cx.add_window_view(|window, cx| {
             let mut app = fixture(window, cx);
@@ -558,6 +555,17 @@ mod tests {
             assert!(app.review.is_none());
             assert!(app.error.is_none());
         });
+
+        cx.update(|window, cx| {
+            let focus = view.read(cx).focus.clone();
+            focus.focus(window, cx);
+        });
+        cx.simulate_keystrokes("cmd-o");
+        assert!(
+            cx.did_prompt_for_paths(),
+            "⌘O, shown in the button, opens the picker"
+        );
+        cx.simulate_path_prompt_response(|_| None);
     }
 
     #[gpui::test]
