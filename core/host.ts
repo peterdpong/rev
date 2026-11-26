@@ -12,6 +12,7 @@ import {
 } from './git';
 import { readReviewState, updateReviewState } from './review-state';
 import { ReviewCache } from './review-cache';
+import { checkConnections, type ConnectionStatus } from './connections';
 import { workingTrees, type WorkingTreeState } from './git/worktree';
 import type {
   Checkout,
@@ -50,6 +51,7 @@ type HostParams = {
   };
   fetch: { repo: string; review?: ReviewRequest };
   pr: { repo: string; value: string; base?: string };
+  connections: void;
 };
 
 type HostResults = {
@@ -77,13 +79,15 @@ type HostResults = {
   viewed: ReviewState;
   fetch: { request: ReviewRequest } | true;
   pr: ReviewRequest;
+  connections: ConnectionStatus[];
 };
 
 type HostMethod = keyof HostParams;
 
 type HostCall =
   | { [M in HostMethod]: [method: M, params: HostParams[M]] }[HostMethod]
-  | [method: 'init'];
+  | [method: 'init']
+  | [method: 'connections'];
 
 const REPO_METHODS: ReadonlySet<string> = new Set<HostMethod>([
   'review',
@@ -113,6 +117,7 @@ export class HostService {
   private reviewCache = new ReviewCache();
   constructor(readonly initial?: ReviewRequest) {}
   call(method: 'init'): Promise<HostResults['init']>;
+  call(method: 'connections'): Promise<HostResults['connections']>;
   call<M extends HostMethod>(
     method: M,
     params: HostParams[M],
@@ -253,6 +258,9 @@ export class HostService {
       }
       case 'pr':
         result = await importPR(p.repo, p.value, p.base);
+        break;
+      case 'connections':
+        result = await checkConnections();
         break;
       default:
         throw new Error('Unknown action.');

@@ -24,6 +24,7 @@ mod diff_view;
 mod file_list;
 mod file_tree;
 mod header;
+mod connections;
 mod popover;
 mod settings_modal;
 mod branch_popover;
@@ -74,6 +75,7 @@ pub struct Rev {
     settings_open: bool,
     settings_focus: FocusHandle,
     settings_section: settings_modal::SettingsSection,
+    connections: connections::Connections,
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
@@ -151,6 +153,7 @@ impl Rev {
             settings_open: false,
             settings_focus: cx.focus_handle(),
             settings_section: Default::default(),
+            connections: Default::default(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,

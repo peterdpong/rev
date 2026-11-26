@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 const SETTINGS_WIDTH: f32 = 560.;
 const SETTINGS_NAV_WIDTH: f32 = 150.;
-const SETTINGS_ROW_HEIGHT: f32 = 44.;
+pub(super) const SETTINGS_ROW_HEIGHT: f32 = 44.;
 const SEGMENT_HEIGHT: f32 = HEADER_PILL_HEIGHT - 4.;
 const THEME_CARD_WIDTH: f32 = 116.;
 const THEME_PREVIEW_HEIGHT: f32 = 68.;
@@ -22,6 +22,7 @@ pub(super) enum SettingsSection {
     #[default]
     General,
     Appearance,
+    Connections,
 }
 
 impl Rev {
@@ -68,8 +69,16 @@ impl Rev {
         }
     }
 
-    fn show_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+    fn show_settings_section(
+        &mut self,
+        section: SettingsSection,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         self.settings_section = section;
+        if section == SettingsSection::Connections && self.connections.statuses.is_none() {
+            self.check_connections(window, cx);
+        }
         cx.notify();
     }
 
@@ -140,6 +149,7 @@ impl Rev {
                                             [
                                                 (SettingsSection::General, "General"),
                                                 (SettingsSection::Appearance, "Appearance"),
+                                                (SettingsSection::Connections, "Connections"),
                                             ]
                                             .into_iter()
                                             .map(|(section, label)| {
@@ -149,8 +159,8 @@ impl Rev {
                                                 )
                                                 .h(px(LIST_ROW_HEIGHT))
                                                 .child(label)
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.show_settings_section(section, cx)
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    this.show_settings_section(section, window, cx)
                                                 }))
                                             }),
                                         ),
@@ -158,6 +168,7 @@ impl Rev {
                                 .child(match self.settings_section {
                                     SettingsSection::General => self.general_settings(cx),
                                     SettingsSection::Appearance => self.appearance_settings(cx),
+                                    SettingsSection::Connections => self.connection_settings(cx),
                                 }),
                         ),
                 ),

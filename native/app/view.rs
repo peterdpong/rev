@@ -493,6 +493,7 @@ mod tests {
             settings_open: false,
             settings_focus: cx.focus_handle(),
             settings_section: Default::default(),
+            connections: Default::default(),
             review: Some(Review {
                 files,
                 ..Default::default()
@@ -1309,5 +1310,36 @@ mod tests {
         draw(cx);
         assert!(cx.debug_bounds("settings-modal").is_none());
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[gpui::test]
+    fn connections_section_lists_tool_status(cx: &mut TestAppContext) {
+        use crate::app::connections::{ConnectionState, ConnectionStatus};
+        use crate::app::settings_modal::SettingsSection;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| fixture(window, cx));
+        cx.update(|window, cx| {
+            view.update(cx, |app, cx| {
+                app.connections.statuses = Some(Ok(vec![ConnectionStatus {
+                    id: "gh".into(),
+                    name: "GitHub CLI".into(),
+                    description: "Pull request details".into(),
+                    state: ConnectionState::SignedOut,
+                    version: Some("2.62.0".into()),
+                    account: None,
+                    detail: Some("Run gh auth login in a terminal.".into()),
+                }]));
+                app.open_settings(window, cx);
+                app.settings_section = SettingsSection::Connections;
+            })
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("settings-modal").is_some());
+        assert!(cx.debug_bounds("connection-gh").is_some());
     }
 }
