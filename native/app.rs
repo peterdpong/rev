@@ -24,6 +24,7 @@ mod file_list;
 mod file_tree;
 mod header;
 mod popover;
+mod tooltip;
 mod branch_popover;
 mod view;
 mod working_tree;
@@ -45,7 +46,12 @@ gpui_kit::actions!(
     ]
 );
 
-pub fn bind_shortcuts(cx: &mut App) {
+pub fn init(cx: &mut App) {
+    bind_shortcuts(cx);
+    tooltip::init(cx);
+}
+
+fn bind_shortcuts(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-o", OpenProject, Some("Rev")),

@@ -77,7 +77,7 @@ fn main() -> anyhow::Result<()> {
             gpui_kit::init(cx);
             diff::init(cx);
             crate::theme::init(cx);
-            app::bind_shortcuts(cx);
+            app::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             if let Ok(service) = &backend {
                 let service = service.clone();
