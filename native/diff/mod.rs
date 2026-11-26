@@ -607,6 +607,35 @@ fn render_diff(
             state.selection().clone(),
             state.geometry().clone(),
         ))
+        .child(
+            gpui::canvas(
+                {
+                    let state = cx.entity();
+                    move |bounds, _, cx| {
+                        state.update(cx, |state, cx| {
+                            // Runs after the list's prepaint, which drops
+                            // every row height when its width changes.
+                            let rehinted = state.keep_row_height_hint();
+                            // The estimate shapes the widest candidates only;
+                            // grow to fit any wider line once it is painted.
+                            let painted = if soft_wrap {
+                                px(0.)
+                            } else {
+                                let painted = state.geometry().borrow().painted_width();
+                                code_width(painted, gutter_width, rem, mode)
+                            };
+                            state.notify_visible_file(cx);
+                            if state.record_paint(bounds.size, painted) || rehinted {
+                                cx.notify();
+                            }
+                        });
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
         .when_some(sticky, |this, (file, next)| {
             let code = sticky_code;
             this.child(StickyHeader::new(
@@ -736,35 +765,6 @@ fn render_diff(
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
         }))
-        .child(
-            gpui::canvas(
-                {
-                    let state = cx.entity();
-                    move |bounds, _, cx| {
-                        state.update(cx, |state, cx| {
-                            // Runs after the list's prepaint, which drops
-                            // every row height when its width changes.
-                            let rehinted = state.keep_row_height_hint();
-                            // The estimate shapes the widest candidates only;
-                            // grow to fit any wider line once it is painted.
-                            let painted = if soft_wrap {
-                                px(0.)
-                            } else {
-                                let painted = state.geometry().borrow().painted_width();
-                                code_width(painted, gutter_width, rem, mode)
-                            };
-                            state.notify_visible_file(cx);
-                            if state.record_paint(bounds.size, painted) || rehinted {
-                                cx.notify();
-                            }
-                        });
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .size_full(),
-        )
         .test_support()
         .track_focus(&state.focus_handle(cx))
         .key_context("RevDiff")
