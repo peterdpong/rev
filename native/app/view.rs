@@ -321,7 +321,7 @@ impl Render for Rev {
                             "Open a repository",
                         )
                         .child(
-                            primary_button("welcome-open", "Open folder").on_click(
+                            pill_button("welcome-open", "Open folder", IconName::FolderOpen).on_click(
                                 cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
                             ),
                         ),
@@ -541,6 +541,7 @@ mod tests {
         });
         draw(cx);
         let open_folder = cx.update(|window, _| window.find_by_label("Open folder").bounds());
+        assert_eq!(open_folder.size.height, px(super::HEADER_PILL_HEIGHT));
         cx.simulate_mouse_move(open_folder.center(), None, Default::default());
         draw(cx);
         cx.simulate_click(open_folder.center(), Default::default());
