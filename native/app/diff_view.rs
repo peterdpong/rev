@@ -1,13 +1,19 @@
 use std::collections::HashMap;
-use super::controls::*;
+use super::{CloseFind, FindNext, FindPrevious, controls::*, popover::*};
 use crate::{
     diff::{Diff, DiffEvent, DiffFile, DiffHunkSeparator, DiffMode, DiffState},
     theme::*,
 };
+use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 const COPY_PATH_BUTTON_SIZE: f32 = 20.;
+const FIND_PADDING: f32 = 4.;
+const FIND_TOP: f32 = 52.;
+const FIND_RIGHT: f32 = UI_SPACING;
 
 pub(super) enum DiffViewEvent {
     ToggleViewed(String),
@@ -34,6 +40,10 @@ pub(super) struct DiffView {
     wrap: bool,
     files: Vec<DiffFile>,
     single_file: bool,
+    find: Option<Entity<InputState>>,
+    find_open: bool,
+    find_status: (SharedString, usize),
+    _find_subscription: Option<Subscription>,
     _state_subscriptions: Vec<Subscription>,
 }
 
@@ -57,6 +67,10 @@ impl DiffView {
             wrap: false,
             files: Vec::new(),
             single_file: false,
+            find: None,
+            find_open: false,
+            find_status: Default::default(),
+            _find_subscription: None,
             _state_subscriptions: subscriptions,
         }
     }
@@ -130,6 +144,167 @@ impl DiffView {
             state.set_file_collapsed(path, false, cx);
             state.scroll_to_file(path, cx);
         });
+    }
+
+    /// Opens the find bar and selects its query, replacing the query with
+    /// the selected text when the selection is within one line.
+    pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.state.read(cx).selected_text(cx);
+        let selected = selected.trim_end_matches(['\n', '\r']);
+        let input = self.find_input(window, cx);
+        input.update(cx, |input, cx| {
+            if !selected.is_empty() && !selected.contains('\n') {
+                input.set_value(selected.to_owned(), window, cx);
+            }
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        self.find_open = true;
+        let query = input.read(cx).value();
+        self.state
+            .update(cx, |state, cx| state.set_search_query(&query, cx));
+        cx.notify();
+    }
+
+    pub(super) fn toggle_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find_open {
+            self.close_find(window, cx);
+        } else {
+            self.open_find(window, cx);
+        }
+    }
+
+    pub(super) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.find_open {
+            return;
+        }
+        self.find_open = false;
+        self.state.update(cx, |state, cx| {
+            state.set_search_query("", cx);
+            window.focus(&state.focus_handle(cx), cx);
+        });
+        cx.notify();
+    }
+
+    fn find_input(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+        if let Some(input) = &self.find {
+            return input.clone();
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find"));
+        let subscription =
+            cx.subscribe_in(&input, window, |this, input, event: &InputEvent, _, cx| {
+                if let InputEvent::Change = event {
+                    let query = input.read(cx).value();
+                    this.state
+                        .update(cx, |state, cx| state.set_search_query(&query, cx));
+                }
+            });
+        self._find_subscription = Some(subscription);
+        self.find = Some(input.clone());
+        input
+    }
+
+    fn find_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let input = self.find.clone()?;
+        let open = self.find_open;
+        let motion = PopoverMotion::new("diff-find-motion", open, window, cx);
+        if !motion.visible() {
+            return None;
+        }
+        if open {
+            let state = self.state.read(cx);
+            let count = state.search_match_count();
+            let status = match (state.current_search_match(), count) {
+                _ if state.search_query().is_empty() => String::new(),
+                (_, 0) => "No results".to_owned(),
+                (Some(current), count) => format!("{} of {count}", current + 1),
+                (None, count) => format!("{count} results"),
+            };
+            self.find_status = (status.into(), count);
+        }
+        let (status, count) = self.find_status.clone();
+        let step = |forward: bool| {
+            cx.listener(move |this: &mut Self, _, _, cx| {
+                this.state
+                    .update(cx, |state, cx| state.select_search_match(forward, cx));
+            })
+        };
+        let bar = popover_surface()
+            .id("diff-find")
+            .key_context("RevFind")
+            .on_action(cx.listener(|this, _: &CloseFind, window, cx| this.close_find(window, cx)))
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
+                this.state
+                    .update(cx, |state, cx| state.select_search_match(true, cx));
+            }))
+            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
+                this.state
+                    .update(cx, |state, cx| state.select_search_match(false, cx));
+            }))
+            .flex_row()
+            .items_center()
+            .gap(px(2.))
+            .p(px(FIND_PADDING))
+            .text_size(px(12.))
+            .line_height(px(HEADER_PILL_LINE_HEIGHT))
+            .child(
+                Input::new(&input)
+                    .id("diff-find-input")
+                    .focus_bordered(false)
+                    .small()
+                    .w(px(220.))
+                    .min_h(px(CONTROL_HEIGHT))
+                    .max_h(px(CONTROL_HEIGHT))
+                    .px(px(CONTROL_PADDING))
+                    .py_0()
+                    .gap(px(6.))
+                    .rounded(px(CONTROL_RADIUS))
+                    .bg(rgb(SUBPANEL))
+                    .border_1()
+                    .border_color(rgb(BORDER))
+                    .text_size(px(12.))
+                    .line_height(px(HEADER_PILL_LINE_HEIGHT))
+                    .prefix(
+                        Icon::new(IconName::Search)
+                            .size(px(14.))
+                            .text_color(rgb(MUTED)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("diff-find-status")
+                    .debug_selector(|| "diff-find-status".into())
+                    .min_w(px(68.))
+                    .px(px(6.))
+                    .text_color(rgb(MUTED))
+                    .child(status),
+            )
+            .child(
+                icon_button(
+                    "diff-find-previous",
+                    "Previous match (⇧↩)",
+                    IconName::ArrowUp,
+                )
+                .disabled(count == 0)
+                .on_click(step(false)),
+            )
+            .child(
+                icon_button("diff-find-next", "Next match (↩)", IconName::ArrowDown)
+                    .disabled(count == 0)
+                    .on_click(step(true)),
+            )
+            .child(
+                icon_button("diff-find-close", "Close (esc)", IconName::Close)
+                    .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
+            );
+        Some(
+            div()
+                .absolute()
+                .top(px(FIND_TOP))
+                .right(px(FIND_RIGHT))
+                .child(motion.surface(bar.into_any_element(), open))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn is_single_file(&self) -> bool {
@@ -222,7 +397,8 @@ impl DiffView {
 }
 
 impl Render for DiffView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let find_bar = self.find_bar(window, cx);
         let state = self.state.clone();
         let header_owner = cx.weak_entity();
         let content = if self.status.loading && self.state.read(cx).files().is_empty() {
@@ -261,7 +437,9 @@ impl Render for DiffView {
             .flex_1()
             .min_w_0()
             .h_full()
+            .relative()
             .child(div().id("diff-surface").flex_1().min_h_0().overflow_hidden().child(content))
+            .children(find_bar)
             .into_any_element()
     }
 }
@@ -269,6 +447,7 @@ impl Render for DiffView {
 #[cfg(test)]
 mod tests {
     use super::{DiffView, DiffViewStatus};
+    use crate::app::controls::MOTION_DURATION;
     use crate::diff::{DiffFile, DiffLineRange, DiffSide};
     use gpui_kit::{
         AppContext, Context, Entity, IntoElement, Render, TestAppContext, Window, div, prelude::*,
@@ -489,5 +668,107 @@ mod tests {
             view.clear_selection(cx);
             assert!(view.state.read(cx).selected_lines().is_none());
         });
+    }
+
+    #[gpui::test]
+    fn find_prefills_a_one_line_selection_and_steps_with_enter(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            super::super::bind_shortcuts(cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            view: cx.new(|cx| {
+                let mut view = DiffView::new(cx);
+                let files = DiffFile::parse(
+                    "diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1,2 +1,2 @@\n needle\n-old needle\n+new needle\n",
+                )
+                .unwrap();
+                view.set_files(files, cx);
+                view.sync_status(DiffViewStatus { path: Some("file.rs".into()), ..Default::default() }, cx);
+                view
+            }),
+        });
+        let view = cx.update(|_, cx| host.read(cx).view.clone());
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+        let status = |cx: &mut gpui_kit::VisualTestContext| {
+            view.read_with(cx, |view, cx| {
+                let state = view.state.read(cx);
+                (
+                    state.search_query().to_owned(),
+                    state.current_search_match(),
+                    state.search_match_count(),
+                )
+            })
+        };
+        draw(cx);
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.state.update(cx, |state, cx| {
+                    state.set_selected_lines(
+                        Some(DiffLineRange::new("file.rs", DiffSide::Modified, 1, 1)),
+                        cx,
+                    )
+                });
+                view.open_find(window, cx);
+            })
+        });
+        cx.executor().advance_clock(MOTION_DURATION);
+        draw(cx);
+        assert_eq!(status(cx), ("needle".into(), Some(0), 3));
+        assert!(cx.debug_bounds("diff-find-status").is_some());
+
+        cx.simulate_keystrokes("enter");
+        assert_eq!(status(cx).1, Some(1));
+        cx.simulate_keystrokes("shift-enter shift-enter");
+        assert_eq!(status(cx).1, Some(2), "wraps back to the last match");
+
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert_eq!(status(cx), (String::new(), None, 0));
+        assert!(
+            cx.debug_bounds("diff-find-status").is_some(),
+            "stays on screen while it animates out"
+        );
+        cx.executor().advance_clock(MOTION_DURATION);
+        draw(cx);
+        assert!(cx.debug_bounds("diff-find-status").is_none());
+
+        cx.update(|window, cx| view.update(cx, |view, cx| view.toggle_find(window, cx)));
+        assert_eq!(
+            status(cx).0,
+            "needle",
+            "toggling reopens with the last query"
+        );
+        cx.update(|window, cx| view.update(cx, |view, cx| view.toggle_find(window, cx)));
+        assert_eq!(status(cx).0, "", "toggling again closes it");
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.state.update(cx, |state, cx| {
+                    state.set_selected_lines(
+                        Some(DiffLineRange::new("file.rs", DiffSide::Modified, 1, 2)),
+                        cx,
+                    )
+                });
+                view.open_find(window, cx);
+            })
+        });
+        assert_eq!(
+            status(cx).0,
+            "needle",
+            "a multi-line selection keeps the last query"
+        );
+
+        cx.simulate_input("old");
+        assert_eq!(status(cx), ("old".into(), Some(0), 1));
     }
 }

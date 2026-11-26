@@ -47,7 +47,7 @@ impl PopoverMotion {
         self.surface(content.into_any_element(), true)
     }
 
-    fn surface(&self, content: AnyElement, interactive: bool) -> Div {
+    pub(super) fn surface(&self, content: AnyElement, interactive: bool) -> Div {
         div()
             .relative()
             .top(px(-POPOVER_RISE * (1. - self.progress)))

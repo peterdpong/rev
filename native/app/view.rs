@@ -375,6 +375,11 @@ impl Render for Rev {
                     this.navigate_file(-1, window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, _: &FindInDiff, window, cx| {
+                if this.review.is_some() && !this.branch_popover.is_open() {
+                    this.diff.update(cx, |diff, cx| diff.toggle_find(window, cx));
+                }
+            }))
             .on_action(cx.listener(|this, _: &MarkViewed, window, cx| {
                 if !this.branch_popover.is_open() {
                     this.mark_viewed(window, cx);
