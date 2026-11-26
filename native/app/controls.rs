@@ -1,10 +1,11 @@
+use super::tooltip::TooltipExt as _;
 use crate::theme::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use gpui_kit::{
     assets::IconName,
     base::{Button as BaseButton, motion},
-    component::{Icon, tooltip::Tooltip},
+    component::Icon,
 };
 
 pub(super) const LIST_ROW_HEIGHT: f32 = 26.;
@@ -224,7 +225,7 @@ pub(super) fn icon_button(
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .child(Icon::new(icon).size(px(14.)))
         .accessibility_label(label.clone())
-        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+        .with_tooltip(label.clone())
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {
@@ -335,7 +336,7 @@ impl RenderOnce for CopyButton {
             .hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
             .focus_visible(|d| d.border_color(rgb(FOCUS)))
             .accessibility_label(label.clone())
-            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+            .with_tooltip(label.clone())
             .child(
                 Icon::new(if copied {
                     IconName::Check
