@@ -566,12 +566,12 @@ impl Rev {
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
-                        this.error = Some(format!("Could not open the folder picker: {error}"));
+                        this.error = Some(format!("Could not open the repository picker: {error}"));
                         cx.notify();
                     }
                     Err(_) => {
                         this.error =
-                            Some("The folder picker closed unexpectedly. Try again.".into());
+                            Some("The repository picker closed unexpectedly. Try again.".into());
                         cx.notify();
                     }
                 }

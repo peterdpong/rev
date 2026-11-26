@@ -226,17 +226,9 @@ impl Render for DiffView {
         let state = self.state.clone();
         let header_owner = cx.weak_entity();
         let content = if self.status.loading && self.state.read(cx).files().is_empty() {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child("Loading…")
-                .into_any_element()
+            empty_state(loading_spinner()).into_any_element()
         } else if self.status.path.is_none() {
-            div()
-                .p_6()
-                .text_color(rgb(MUTED))
-                .child("No changes")
-                .into_any_element()
+            empty_state("No changes").into_any_element()
         } else {
             Diff::new(&self.state)
                 .size_full()
@@ -294,6 +286,45 @@ mod tests {
     impl Render for ResizableHost {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div().w(px(self.width)).h(px(300.)).child(self.view.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn loading_and_empty_states_sit_in_the_middle_of_the_diff(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let view = cx.new(DiffView::new);
+        let (_, cx) = cx.add_window_view(|_, _| Host { view: view.clone() });
+        let draw = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.refresh();
+                _ = window.draw(cx);
+            });
+        };
+
+        for loading in [true, false] {
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    view.sync_status(
+                        DiffViewStatus {
+                            loading,
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+            });
+            draw(cx);
+            let glyph = cx.debug_bounds("empty-state").unwrap();
+            assert_eq!(glyph.center().x, px(350.), "loading: {loading}");
+            assert!(
+                glyph.top() > px(75.) && glyph.bottom() < px(225.),
+                "loading: {loading}, glyph: {glyph:?}"
+            );
         }
     }
 

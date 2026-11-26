@@ -291,13 +291,12 @@ impl Render for FileList {
             .overflow_hidden()
             .p(px(UI_SPACING))
             .when(empty, |d| {
-                d.child(div().p_2().text_size(px(12.)).text_color(rgb(MUTED)).child(
-                    if self.filter_text.is_empty() {
-                        "No changed files"
-                    } else {
-                        "No matching files"
-                    },
-                ))
+                let label = if self.filter_text.is_empty() {
+                    "No changed files".to_string()
+                } else {
+                    format!("No files match “{}”", self.filter_text)
+                };
+                d.child(list_empty_state(label))
             })
             .when(!empty, |d| {
                 d.child(

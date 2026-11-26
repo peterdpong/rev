@@ -4,7 +4,7 @@ use gpui_kit::*;
 use gpui_kit::{
     assets::IconName,
     base::{Button as BaseButton, motion},
-    component::{Icon, tooltip::Tooltip},
+    component::{Icon, Sizable as _, spinner::Spinner, tooltip::Tooltip},
 };
 
 pub(super) const LIST_ROW_HEIGHT: f32 = 26.;
@@ -64,6 +64,52 @@ pub(super) fn motion_transition() -> motion::Transition {
 
 pub(super) fn row() -> Div {
     div().flex().items_center().gap_2()
+}
+
+pub(super) fn empty_state(content: impl IntoElement) -> Div {
+    column()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .p(px(POPOVER_PADDING))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .text_color(rgb(MUTED))
+        .child(
+            div()
+                .debug_selector(|| "empty-state".into())
+                .flex()
+                .child(content),
+        )
+}
+
+pub(super) fn list_empty_state(label: impl Into<SharedString>) -> Div {
+    div()
+        .py(px(4.))
+        .px(px(8.))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .text_color(rgb(MUTED))
+        .child(label.into())
+}
+
+pub(super) fn watermark() -> Div {
+    div().debug_selector(|| "watermark".into()).child(
+        Icon::new(IconName::GitCompareArrows)
+            .size(px(128.))
+            .text_color(rgb(SELECTED)),
+    )
+}
+
+pub(super) fn loading_spinner() -> Spinner {
+    Spinner::new()
+        .icon(Icon::new(IconName::LoaderCircle))
+        .color(rgb(MUTED).into())
+        .with_size(px(16.))
+}
+
+pub(super) fn shortcut_hint(keys: &'static str) -> Div {
+    div().text_color(rgb(MUTED)).child(keys)
 }
 
 pub(super) fn column() -> Div {
@@ -225,6 +271,39 @@ pub(super) fn icon_button(
         .child(Icon::new(icon).size(px(14.)))
         .accessibility_label(label.clone())
         .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+}
+
+pub(super) fn pill_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<IconName>,
+) -> BaseButton {
+    let label = label.into();
+    BaseButton::new(id)
+        .h(px(HEADER_PILL_HEIGHT))
+        .flex_shrink_0()
+        .px(px(HEADER_PILL_PADDING))
+        .gap(px(6.))
+        .rounded(px(CONTROL_RADIUS))
+        .bg(rgb(SURFACE))
+        .border_1()
+        .border_color(rgb(CONTROL_BORDER))
+        .text_color(rgb(TEXT))
+        .text_size(px(12.))
+        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+        .hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
+        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
+        .accessibility_label(label.clone())
+        .when_some(icon, |d, icon| {
+            d.child(
+                Icon::new(icon)
+                    .size(px(14.))
+                    .flex_shrink_0()
+                    .text_color(rgb(MUTED)),
+            )
+        })
+        .child(label)
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> BaseButton {

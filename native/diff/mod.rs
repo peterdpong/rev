@@ -1321,8 +1321,14 @@ fn file_annotations(
 /// Summarizes a file without source rows: binary, metadata-only or empty.
 fn render_notice(file: &DiffFile, cx: &App) -> AnyElement {
     if let Some(message) = file.notice() {
-        return div().w_full().px_3().py_3().text_sm()
-            .text_color(cx.theme().muted_foreground).child(message.clone()).into_any_element();
+        return div()
+            .w_full()
+            .px_3()
+            .py_2()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(message.clone())
+            .into_any_element();
     }
     let message = if !file.has_changes() {
         t!("Diff.NoChanges")
@@ -1346,7 +1352,7 @@ fn render_notice(file: &DiffFile, cx: &App) -> AnyElement {
                 .cloned()
                 .map(|line| div().child(line)),
         )
-        .child(div().text_sm().child(message.to_string()))
+        .child(div().child(message.to_string()))
         .into_any_element()
 }
 

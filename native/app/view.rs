@@ -269,6 +269,12 @@ impl Rev {
                     .overflow_y_scroll()
                     .px(px(UI_SPACING))
                     .pb(px(UI_SPACING))
+                    .when(self.workspace.projects.is_empty(), |d| {
+                        d.child(
+                            list_empty_state("No repositories")
+                                .debug_selector(|| "sidebar-empty".into()),
+                        )
+                    })
                     .child(projects),
             )
             .into_any_element()
@@ -312,21 +318,17 @@ impl Render for Rev {
                     )
                     .into_any_element()
             } else {
-                column()
+                div()
                     .flex_1()
                     .h_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_size(px(24.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Open a review"),
-                    )
-                    .child(row().child(
-                        primary_button("welcome-open", "Open folder").on_click(
-                            cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
+                    .child(empty_state(
+                        column().items_center().gap(px(32.)).child(watermark()).child(
+                            pill_button("welcome-open", "Open repository", None)
+                                .debug_selector(|| "welcome-open".into())
+                                .child(shortcut_hint("⌘O"))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
+                                ),
                         ),
                     ))
                     .into_any_element()
@@ -530,12 +532,11 @@ mod tests {
 
     #[gpui::test]
     fn welcome_screen_opens_and_can_choose_a_repository(cx: &mut TestAppContext) {
-        use gpui_kit::test::TestQueryExt;
-
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::diff::init(cx);
             crate::theme::init(cx);
+            crate::app::bind_shortcuts(cx);
         });
         let (view, cx) = cx.add_window_view(|window, cx| {
             let mut app = fixture(window, cx);
@@ -543,7 +544,12 @@ mod tests {
             app
         });
         draw(cx);
-        let open_folder = cx.update(|window, _| window.find_by_label("Open folder").bounds());
+        let open_folder = cx.debug_bounds("welcome-open").unwrap();
+        assert_eq!(open_folder.size.height, px(super::HEADER_PILL_HEIGHT));
+        assert!(cx.debug_bounds("sidebar-empty").is_some());
+        let watermark = cx.debug_bounds("watermark").unwrap();
+        assert_eq!(watermark.center().x, open_folder.center().x);
+        assert!(watermark.bottom() < open_folder.top());
         cx.simulate_mouse_move(open_folder.center(), None, Default::default());
         draw(cx);
         cx.simulate_click(open_folder.center(), Default::default());
@@ -560,6 +566,17 @@ mod tests {
             assert!(app.review.is_none());
             assert!(app.error.is_none());
         });
+
+        cx.update(|window, cx| {
+            let focus = view.read(cx).focus.clone();
+            focus.focus(window, cx);
+        });
+        cx.simulate_keystrokes("cmd-o");
+        assert!(
+            cx.did_prompt_for_paths(),
+            "⌘O, shown in the button, opens the picker"
+        );
+        cx.simulate_path_prompt_response(|_| None);
     }
 
     #[gpui::test]
