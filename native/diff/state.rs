@@ -18,6 +18,7 @@ use super::{
     DiffLinePosition, DiffLineRange, DiffMode, DiffSide,
     conflict::ConflictPart,
     presentation::{FilePresentation, PresentationOptions, SyntaxHighlighters},
+    search::{SearchMatch, SearchResults},
     selection::SelectionGeometry,
 };
 
@@ -262,6 +263,9 @@ pub struct DiffState {
     /// The list width the row-height hint was last applied at.
     hinted_width: Option<Pixels>,
     annotations: HashSet<(Option<DiffLinePosition>, SharedString, ElementId)>,
+    search_query: String,
+    search: Rc<SearchResults>,
+    search_current: Option<usize>,
     window: Option<WindowId>,
     /// Bumped when files or presentation options change, so a preparation
     /// started for earlier ones never installs its results.
@@ -395,6 +399,9 @@ impl DiffState {
             row_height: None,
             hinted_width: None,
             annotations: HashSet::new(),
+            search_query: String::new(),
+            search: Rc::default(),
+            search_current: None,
             window: None,
             presentation_generation: 0,
             preparing: None,
@@ -1382,6 +1389,93 @@ impl DiffState {
         }
         self.rows = Rc::new(rows);
         self.apply_row_height_hint();
+        self.refresh_search();
+    }
+
+    /// Highlights every match of `query` in the shown lines, ignoring ASCII
+    /// case, and reveals the first match at or below the top of the viewport.
+    pub fn set_search_query(&mut self, query: &str, cx: &mut Context<Self>) {
+        if self.search_query == query {
+            return;
+        }
+        self.search_query = query.to_owned();
+        self.search_current = None;
+        self.refresh_search();
+        let top = self.list.logical_scroll_top().item_ix;
+        let matches = self.search.matches();
+        self.search_current = matches
+            .iter()
+            .position(|found| found.row >= top)
+            .or((!matches.is_empty()).then_some(0));
+        self.reveal_search_match();
+        cx.notify();
+    }
+
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    pub fn search_match_count(&self) -> usize {
+        self.search.matches().len()
+    }
+
+    /// The index of the match last moved to, among [`Self::search_match_count`].
+    pub fn current_search_match(&self) -> Option<usize> {
+        self.search_current
+    }
+
+    /// Moves to the next match, or the previous one when `forward` is false,
+    /// wrapping at either end.
+    pub fn select_search_match(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let count = self.search.matches().len();
+        if count == 0 {
+            return;
+        }
+        self.search_current = Some(match (self.search_current, forward) {
+            (Some(current), true) => (current + 1) % count,
+            (Some(current), false) => (current + count - 1) % count,
+            (None, true) => 0,
+            (None, false) => count - 1,
+        });
+        self.reveal_search_match();
+        cx.notify();
+    }
+
+    pub(crate) fn search(&self) -> &Rc<SearchResults> {
+        &self.search
+    }
+
+    /// Finds matches in the current rows, keeping the current match when it
+    /// is still shown and otherwise moving to the next one from its row.
+    fn refresh_search(&mut self) {
+        let previous: Option<SearchMatch> = self
+            .search_current
+            .and_then(|ix| self.search.matches().get(ix))
+            .cloned();
+        self.search = Rc::new(SearchResults::find(
+            &self.files,
+            &self.rows,
+            self.mode,
+            &self.search_query,
+        ));
+        let matches = self.search.matches();
+        self.search_current = previous.and_then(|previous| {
+            matches
+                .iter()
+                .position(|found| {
+                    (found.file, found.side, found.line, &found.range)
+                        == (previous.file, previous.side, previous.line, &previous.range)
+                })
+                .or_else(|| matches.iter().position(|found| found.row >= previous.row))
+                .or((!matches.is_empty()).then_some(0))
+        });
+    }
+
+    fn reveal_search_match(&self) {
+        let current = self.search_current;
+        if let Some(found) = current.and_then(|ix| self.search.matches().get(ix)) {
+            self.list.scroll_to_reveal_item(found.row);
+        }
     }
 
     fn project_rows(&self) -> Vec<DisplayRow> {

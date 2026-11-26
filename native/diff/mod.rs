@@ -10,6 +10,7 @@ mod parser;
 #[cfg(test)]
 mod parser_tests;
 mod presentation;
+mod search;
 mod selection;
 mod state;
 mod sticky;
@@ -550,6 +551,8 @@ fn render_diff(
         on_line_hover: props.on_line_hover,
         selection: state.selection().clone(),
         selected: state.selected_span(),
+        search: state.search().clone(),
+        search_current: state.current_search_match(),
         drag_anchor: state.drag_anchor().cloned(),
         geometry: state.geometry().clone(),
         state: cx.entity(),
@@ -821,6 +824,8 @@ struct CodePresentation {
     on_line_hover: Option<HoverHandler>,
     selection: gpui_kit::base::TextSelectionHandle,
     selected: Option<SelectedLines>,
+    search: Rc<search::SearchResults>,
+    search_current: Option<usize>,
     drag_anchor: Option<DiffLinePosition>,
     geometry: Rc<std::cell::RefCell<selection::SelectionGeometry>>,
     state: Entity<DiffState>,
@@ -1595,6 +1600,18 @@ fn line_highlights(
             )
         }));
     }
+    for (found_ix, found) in code.search.on_line(file, side, ix) {
+        let opacity = if code.search_current == Some(found_ix) {
+            0.6
+        } else {
+            0.25
+        };
+        let style = HighlightStyle {
+            background_color: Some(cx.theme().warning.opacity(opacity)),
+            ..Default::default()
+        };
+        highlights.push((found.range.clone(), style));
+    }
     if selected {
         highlights.push((
             0..line.display().len(),
@@ -2016,6 +2033,8 @@ mod newline_tests;
 mod review_tests;
 #[cfg(test)]
 mod scroll_tests;
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod selection_tests;
 #[cfg(test)]

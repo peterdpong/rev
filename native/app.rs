@@ -41,7 +41,11 @@ gpui_kit::actions!(
         ToggleSidebar,
         NextFile,
         PreviousFile,
-        MarkViewed
+        MarkViewed,
+        FindInDiff,
+        FindNext,
+        FindPrevious,
+        CloseFind
     ]
 );
 
@@ -54,6 +58,10 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("cmd-f", FindInDiff, Some("Rev")),
+        KeyBinding::new("escape", CloseFind, Some("RevFind")),
+        KeyBinding::new("enter", FindNext, Some("RevFind > Input")),
+        KeyBinding::new("shift-enter", FindPrevious, Some("RevFind > Input")),
         KeyBinding::new("escape", ClosePopover, Some("RevPopover")),
         KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", ClosePopover, Some("Rev")),
