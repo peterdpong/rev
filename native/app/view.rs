@@ -501,6 +501,7 @@ mod tests {
             without_pull_request: Default::default(),
             pull_request_loading: false,
             revalidate_pull_request: false,
+            pr_actions: Default::default(),
             focus: cx.focus_handle(),
             branch_popover: super::BranchPopover::new(cx),
             folder_picker_open: false,
@@ -1265,5 +1266,59 @@ mod tests {
             cx.debug_bounds("pr-description-content").is_none(),
             "unmount after the fade finishes"
         );
+    }
+
+    #[gpui::test]
+    fn pr_actions_offer_draft_toggle_and_confirm_merges(cx: &mut TestAppContext) {
+        use crate::app::pr_actions::MergeMethod;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let url = "https://github.com/rev-test/widget/pull/7".to_string();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.review.as_mut().unwrap().pull_request = Some(crate::model::PullRequest {
+                number: 7,
+                title: "Add PR controls".into(),
+                url: url.clone(),
+                state: "OPEN".into(),
+                base_ref_name: "main".into(),
+                ..Default::default()
+            });
+            app
+        });
+        draw(cx);
+        let pill = cx.debug_bounds("pr-status-pill").expect("status pill");
+        cx.simulate_click(pill.center(), Default::default());
+        draw(cx);
+        assert!(cx.debug_bounds("pr-actions-menu").is_some());
+        assert!(cx.debug_bounds("pr-draft-toggle").is_some());
+
+        cx.update(|_, cx| {
+            view.update(cx, |app, cx| {
+                assert_eq!(app.pr_actions.url, url);
+                app.pr_actions.methods = Some(Ok(vec![MergeMethod::Squash, MergeMethod::Rebase]));
+                cx.notify();
+            })
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("pr-merge-rebase").is_some());
+        let squash = cx.debug_bounds("pr-merge-squash").expect("squash option");
+        cx.simulate_click(squash.center(), Default::default());
+        draw(cx);
+        cx.update(|_, cx| {
+            assert_eq!(view.read(cx).pr_actions.confirm, Some(MergeMethod::Squash))
+        });
+        assert!(cx.debug_bounds("confirm-merge").is_some());
+        assert!(cx.debug_bounds("pr-merge-squash").is_none());
+
+        let cancel = cx.debug_bounds("cancel-merge").unwrap();
+        cx.simulate_click(cancel.center(), Default::default());
+        draw(cx);
+        assert!(cx.debug_bounds("confirm-merge").is_none());
+        assert!(cx.debug_bounds("pr-merge-squash").is_some());
     }
 }
