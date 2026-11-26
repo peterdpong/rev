@@ -312,23 +312,24 @@ impl Render for Rev {
                     )
                     .into_any_element()
             } else {
-                column()
+                div()
                     .flex_1()
                     .h_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_4()
                     .child(
-                        div()
-                            .text_size(px(24.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Open a review"),
-                    )
-                    .child(row().child(
-                        primary_button("welcome-open", "Open folder").on_click(
-                            cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
+                        empty_state(
+                            EmptyGlyph::Icon(IconName::FolderGit2),
+                            "Open a repository",
+                            Some(
+                                "Choose a folder to review its working tree, branches and pull requests."
+                                    .into(),
+                            ),
+                        )
+                        .child(
+                            primary_button("welcome-open", "Open folder").on_click(
+                                cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
+                            ),
                         ),
-                    ))
+                    )
                     .into_any_element()
             };
 

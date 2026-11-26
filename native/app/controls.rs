@@ -1,10 +1,11 @@
+use super::popover::POPOVER_RADIUS;
 use crate::theme::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use gpui_kit::{
     assets::IconName,
     base::{Button as BaseButton, motion},
-    component::{Icon, tooltip::Tooltip},
+    component::{Icon, Sizable as _, spinner::Spinner, tooltip::Tooltip},
 };
 
 pub(super) const LIST_ROW_HEIGHT: f32 = 26.;
@@ -64,6 +65,72 @@ pub(super) fn motion_transition() -> motion::Transition {
 
 pub(super) fn row() -> Div {
     div().flex().items_center().gap_2()
+}
+
+pub(super) enum EmptyGlyph {
+    Icon(IconName),
+    Spinner,
+}
+
+pub(super) fn empty_state(
+    glyph: EmptyGlyph,
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+) -> Div {
+    let glyph = match glyph {
+        EmptyGlyph::Icon(icon) => Icon::new(icon)
+            .size(px(18.))
+            .text_color(rgb(MUTED))
+            .into_any_element(),
+        EmptyGlyph::Spinner => Spinner::new()
+            .icon(Icon::new(IconName::LoaderCircle))
+            .color(rgb(MUTED).into())
+            .with_size(px(18.))
+            .into_any_element(),
+    };
+
+    column()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap(px(UI_SPACING * 2.))
+        .p(px(POPOVER_PADDING))
+        .child(
+            div()
+                .debug_selector(|| "empty-state-glyph".into())
+                .size(px(40.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(POPOVER_RADIUS))
+                .bg(rgb(SURFACE))
+                .border_1()
+                .border_color(rgb(CONTROL_BORDER))
+                .child(glyph),
+        )
+        .child(
+            column()
+                .items_center()
+                .gap(px(4.))
+                .max_w(px(300.))
+                .text_center()
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(TEXT))
+                        .child(title.into()),
+                )
+                .when_some(detail, |d, detail| {
+                    d.child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(HEADER_PILL_LINE_HEIGHT))
+                            .text_color(rgb(MUTED))
+                            .child(detail),
+                    )
+                }),
+        )
 }
 
 pub(super) fn column() -> Div {

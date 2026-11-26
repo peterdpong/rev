@@ -291,13 +291,27 @@ impl Render for FileList {
             .overflow_hidden()
             .p(px(UI_SPACING))
             .when(empty, |d| {
-                d.child(div().p_2().text_size(px(12.)).text_color(rgb(MUTED)).child(
-                    if self.filter_text.is_empty() {
-                        "No changed files"
-                    } else {
-                        "No matching files"
-                    },
-                ))
+                let (icon, label) = if self.filter_text.is_empty() {
+                    (IconName::CircleCheck, "No changed files".to_string())
+                } else {
+                    (
+                        IconName::SearchX,
+                        format!("No files match “{}”", self.filter_text),
+                    )
+                };
+                d.child(
+                    column()
+                        .items_center()
+                        .gap(px(6.))
+                        .pt(px(24.))
+                        .px_2()
+                        .text_center()
+                        .text_size(px(12.))
+                        .line_height(px(HEADER_PILL_LINE_HEIGHT))
+                        .text_color(rgb(MUTED))
+                        .child(Icon::new(icon).size(px(16.)))
+                        .child(div().w_full().child(label)),
+                )
             })
             .when(!empty, |d| {
                 d.child(
