@@ -15,6 +15,7 @@ use std::{
 };
 
 mod branch_comparison;
+mod command_palette;
 mod commits;
 mod continuous;
 use commits::CommitPicker;
@@ -41,7 +42,11 @@ gpui_kit::actions!(
         ToggleSidebar,
         NextFile,
         PreviousFile,
-        MarkViewed
+        MarkViewed,
+        ToggleCommandPalette,
+        ToggleDiffMode,
+        ToggleWrap,
+        ToggleSingleFile
     ]
 );
 
@@ -54,6 +59,7 @@ pub fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new("alt-down", NextFile, Some("Rev")),
         KeyBinding::new("alt-up", PreviousFile, Some("Rev")),
         KeyBinding::new("cmd-shift-v", MarkViewed, Some("Rev")),
+        KeyBinding::new("cmd-k", ToggleCommandPalette, Some("Rev")),
         KeyBinding::new("escape", ClosePopover, Some("RevPopover")),
         KeyBinding::new("cmd-enter", Submit, Some("RevPopover")),
         KeyBinding::new("escape", ClosePopover, Some("Rev")),
@@ -86,6 +92,8 @@ pub struct Rev {
     revalidate_pull_request: bool,
     focus: FocusHandle,
     branch_popover: BranchPopover,
+    command_palette: Option<Entity<gpui_kit::component::command::CommandState>>,
+    command_palette_open: bool,
     folder_picker_open: bool,
     loading: bool,
     patch_loading: bool,
@@ -154,6 +162,8 @@ impl Rev {
 
             focus: cx.focus_handle(),
             branch_popover: BranchPopover::new(cx),
+            command_palette: None,
+            command_palette_open: false,
             folder_picker_open: false,
 
             loading: false,
