@@ -375,6 +375,21 @@ impl Render for Rev {
                     this.navigate_file(-1, window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, _: &ToggleCommandPalette, window, cx| {
+                this.toggle_command_palette(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleDiffMode, _, cx| {
+                this.diff.update(cx, |diff, cx| diff.toggle_mode(cx));
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleWrap, _, cx| {
+                this.diff.update(cx, |diff, cx| diff.toggle_wrap(cx));
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSingleFile, _, cx| {
+                this.diff.update(cx, |diff, cx| diff.toggle_single_file(cx));
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &MarkViewed, window, cx| {
                 if !this.branch_popover.is_open() {
                     this.mark_viewed(window, cx);
@@ -424,6 +439,7 @@ impl Render for Rev {
                         ),
                 )
             })
+            .children(self.command_palette(cx))
     }
 }
 
@@ -503,6 +519,8 @@ mod tests {
             revalidate_pull_request: false,
             focus: cx.focus_handle(),
             branch_popover: super::BranchPopover::new(cx),
+            command_palette: None,
+            command_palette_open: false,
             folder_picker_open: false,
             loading: false,
             patch_loading: false,
@@ -526,6 +544,84 @@ mod tests {
             window.refresh();
             _ = window.draw(cx);
         });
+    }
+
+    #[gpui::test]
+    fn command_palette_switches_tabs_and_runs_actions(cx: &mut TestAppContext) {
+        use crate::workspace_state::{Project, ReviewTab, TabKind};
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+            crate::app::bind_shortcuts(cx);
+        });
+        let tab = |id: &str, kind, label: &str| ReviewTab {
+            id: id.into(),
+            kind,
+            label: label.into(),
+            request: crate::model::ReviewRequest::working_tree("/test-repo"),
+            scope_key: None,
+            head_sha: None,
+            file: None,
+        };
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut app = fixture(window, cx);
+            app.workspace.projects = vec![Project {
+                repo: "/test-repo".into(),
+                name: "test-repo".into(),
+                collapsed: false,
+                tabs: vec![
+                    tab("current", TabKind::Current, "Working tree"),
+                    tab("feature", TabKind::Branch, "feature-branch"),
+                ],
+            }];
+            app.workspace.active_tab_id = Some("current".into());
+            app
+        });
+        cx.update(|window, cx| {
+            let focus = view.read(cx).focus.clone();
+            focus.focus(window, cx);
+        });
+        draw(cx);
+        let open = |cx: &mut VisualTestContext| {
+            draw(cx);
+            cx.debug_bounds("command-palette").is_some()
+        };
+
+        cx.simulate_keystrokes("cmd-k");
+        assert!(open(cx));
+        cx.simulate_keystrokes("cmd-k");
+        assert!(!open(cx), "the shortcut closes it again");
+
+        cx.simulate_keystrokes("cmd-k");
+        cx.simulate_input("split");
+        cx.simulate_keystrokes("enter");
+        assert!(!open(cx));
+        assert!(cx.update(|_, cx| view.read(cx).diff.read(cx).is_split(cx)));
+        assert!(cx.update(|window, cx| view.read(cx).focus.is_focused(window)));
+
+        cx.simulate_keystrokes("cmd-k");
+        cx.simulate_input("feat");
+        cx.simulate_keystrokes("enter");
+        assert!(!open(cx));
+        assert!(
+            cx.update(|_, cx| view.read(cx).loading),
+            "opening the tab loads its review"
+        );
+
+        cx.update(|_, cx| view.update(cx, |app, _| app.loading = false));
+        cx.simulate_keystrokes("cmd-k");
+        cx.simulate_input("x");
+        cx.simulate_keystrokes("escape");
+        assert!(open(cx), "escape clears the query first");
+        cx.simulate_keystrokes("escape");
+        assert!(!open(cx));
+
+        cx.simulate_keystrokes("cmd-k");
+        assert!(open(cx));
+        cx.simulate_click(gpui_kit::point(px(5.), px(5.)), Default::default());
+        assert!(!open(cx), "clicking outside closes it");
     }
 
     #[gpui::test]
