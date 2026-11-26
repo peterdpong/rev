@@ -38,6 +38,7 @@ export {
 } from './refs';
 export {
   REVIEW_MODES,
+  StaleCommitRangeError,
   assertComparison,
   diffArgs,
   inspect,
