@@ -242,17 +242,20 @@ impl Rev {
             .border_color(rgb(BORDER))
             .child(
                 row()
-                    .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
+                    .debug_selector(|| "sidebar-header".into())
+                    .h(px(super::header::DIFF_HEADER_HEIGHT))
                     .flex_shrink_0()
                     .pl(px(UI_SPACING + 8.))
                     .pr(px(UI_SPACING))
                     .justify_between()
+                    .border_b_1()
+                    .border_color(rgb(BORDER))
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(12.))
-                            .text_color(rgb(MUTED))
-                            .child("Repos"),
+                            .text_color(rgb(TEXT))
+                            .child("Repositories"),
                     )
                     .child(
                         icon_button("add-project", "Open repository", IconName::Plus)
@@ -267,8 +270,7 @@ impl Rev {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .px(px(UI_SPACING))
-                    .pb(px(UI_SPACING))
+                    .p(px(UI_SPACING))
                     .when(self.workspace.projects.is_empty(), |d| {
                         d.child(
                             list_empty_state("No repositories")
@@ -528,6 +530,21 @@ mod tests {
             window.refresh();
             _ = window.draw(cx);
         });
+    }
+
+    #[gpui::test]
+    fn sidebar_header_lines_up_with_the_diff_header(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::diff::init(cx);
+            crate::theme::init(cx);
+        });
+        let (_view, cx) = cx.add_window_view(fixture);
+        draw(cx);
+        let sidebar = cx.debug_bounds("sidebar-header").unwrap();
+        let diff = cx.debug_bounds("diff-view-header").unwrap();
+        assert_eq!(sidebar.top(), diff.top());
+        assert_eq!(sidebar.bottom(), diff.bottom());
     }
 
     #[gpui::test]
