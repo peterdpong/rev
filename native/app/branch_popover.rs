@@ -217,7 +217,7 @@ impl Rev {
         self.error = None;
         let request = form.manual_request(cx);
         if request.repo.is_empty() {
-            self.error = Some("Choose a repository folder.".into());
+            self.error = Some("Choose a repository.".into());
             return;
         }
         let head = request.head.as_deref().unwrap_or_default();

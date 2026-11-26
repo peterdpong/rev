@@ -41,7 +41,7 @@ fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
             }
             "--working" => request.mode = Some("working".into()),
             other => anyhow::bail!(
-                "Unknown option: {other}. Use --repo <folder> [--base main] [--head branch] [--working]."
+                "Unknown option: {other}. Use --repo <repository> [--base main] [--head branch] [--working]."
             ),
         }
         i += 1;
@@ -64,7 +64,7 @@ fn initial_review() -> anyhow::Result<Option<ReviewRequest>> {
         request.commit_range.is_none() || request.mode.as_deref() != Some("working"),
         "Commit selections cannot include the working tree."
     );
-    anyhow::ensure!(!request.repo.is_empty(), "Pass --repo <folder>.");
+    anyhow::ensure!(!request.repo.is_empty(), "Pass --repo <repository>.");
     Ok(Some(request))
 }
 

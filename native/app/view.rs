@@ -271,7 +271,8 @@ impl Rev {
                     .pb(px(UI_SPACING))
                     .when(self.workspace.projects.is_empty(), |d| {
                         d.child(
-                            list_empty_state("No repos").debug_selector(|| "sidebar-empty".into()),
+                            list_empty_state("No repositories")
+                                .debug_selector(|| "sidebar-empty".into()),
                         )
                     })
                     .child(projects),
@@ -322,7 +323,8 @@ impl Render for Rev {
                     .h_full()
                     .child(empty_state(
                         column().items_center().gap(px(32.)).child(watermark()).child(
-                            pill_button("welcome-open", "Open folder", None)
+                            pill_button("welcome-open", "Open repository", None)
+                                .debug_selector(|| "welcome-open".into())
                                 .child(shortcut_hint("⌘O"))
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.pick_folder(window, cx)),
@@ -530,8 +532,6 @@ mod tests {
 
     #[gpui::test]
     fn welcome_screen_opens_and_can_choose_a_repository(cx: &mut TestAppContext) {
-        use gpui_kit::test::TestQueryExt;
-
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::diff::init(cx);
@@ -544,7 +544,7 @@ mod tests {
             app
         });
         draw(cx);
-        let open_folder = cx.update(|window, _| window.find_by_label("Open folder").bounds());
+        let open_folder = cx.debug_bounds("welcome-open").unwrap();
         assert_eq!(open_folder.size.height, px(super::HEADER_PILL_HEIGHT));
         assert!(cx.debug_bounds("sidebar-empty").is_some());
         let watermark = cx.debug_bounds("watermark").unwrap();

@@ -85,9 +85,8 @@ pub(super) fn empty_state(content: impl IntoElement) -> Div {
 
 pub(super) fn list_empty_state(label: impl Into<SharedString>) -> Div {
     div()
-        .pt(px(24.))
-        .px_2()
-        .text_center()
+        .py(px(4.))
+        .px(px(8.))
         .text_size(px(12.))
         .line_height(px(HEADER_PILL_LINE_HEIGHT))
         .text_color(rgb(MUTED))
