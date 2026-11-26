@@ -279,7 +279,7 @@ impl Rev {
             .min_w_0()
             .child(
                 div()
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .text_size(px(12.))
                     .child(title.to_string()),
             )
@@ -291,9 +291,9 @@ impl Rev {
                     .max_h(px(CONTROL_HEIGHT))
                     .px(px(CONTROL_PADDING))
                     .rounded(px(CONTROL_RADIUS))
-                    .bg(rgb(BG))
+                    .bg(rgb(palette().bg))
                     .border_1()
-                    .border_color(rgb(CONTROL_BORDER))
+                    .border_color(rgb(palette().control_border))
                     .text_size(px(12.))
                     .disabled(self.submitting)
                     .aria_label(description.to_string()),
@@ -324,7 +324,7 @@ impl Rev {
                             Icon::new(IconName::GitBranch)
                                 .size(px(14.))
                                 .flex_shrink_0()
-                                .text_color(rgb(MUTED)),
+                                .text_color(rgb(palette().muted)),
                         )
                         .child(
                             column()
@@ -336,14 +336,14 @@ impl Rev {
                                 .child(
                                     div()
                                         .text_size(px(11.))
-                                        .text_color(rgb(MUTED))
+                                        .text_color(rgb(palette().muted))
                                         .child("Local branch"),
                                 ),
                         )
                         .child(
                             Icon::new(IconName::ChevronRight)
                                 .size(px(12.))
-                                .text_color(rgb(MUTED)),
+                                .text_color(rgb(palette().muted)),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_local_branch(&branch, serial, window, cx)
@@ -355,7 +355,7 @@ impl Rev {
                     div()
                         .px(px(CONTROL_PADDING))
                         .py(px(UI_SPACING))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .child("Loading local branches…"),
                 );
             } else if let Some(error) = &form.branches_error {
@@ -363,7 +363,7 @@ impl Rev {
                     div()
                         .px(px(CONTROL_PADDING))
                         .py(px(UI_SPACING))
-                        .text_color(rgb(DANGER))
+                        .text_color(rgb(palette().danger))
                         .child(error.clone()),
                 );
             } else if form.local_branches.is_empty() {
@@ -371,7 +371,7 @@ impl Rev {
                     div()
                         .px(px(CONTROL_PADDING))
                         .py(px(UI_SPACING))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .child("No local branches yet."),
                 );
             }
@@ -398,7 +398,7 @@ impl Rev {
                         .gap(px(POPOVER_PADDING))
                         .pt(px(POPOVER_PADDING))
                         .border_t_1()
-                        .border_color(rgb(BORDER))
+                        .border_color(rgb(palette().border))
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Manual diff"))
                         .child(
                             row()
@@ -422,7 +422,7 @@ impl Rev {
                 );
         }
         if let Some(error) = &self.error {
-            body = body.child(div().text_color(rgb(DANGER)).child(error.clone()));
+            body = body.child(div().text_color(rgb(palette().danger)).child(error.clone()));
         }
         {
             let label = if self.submitting {
@@ -458,7 +458,7 @@ impl Rev {
                     .pl(px(POPOVER_PADDING))
                     .pr(px(UI_SPACING))
                     .border_b_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(rgb(palette().border))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -473,11 +473,11 @@ impl Rev {
                         d.child(
                             header_pill()
                                 .max_w(px(200.))
-                                .text_color(rgb(TEXT))
+                                .text_color(rgb(palette().text))
                                 .child(
                                     Icon::new(IconName::Folder)
                                         .size(px(14.))
-                                        .text_color(rgb(MUTED))
+                                        .text_color(rgb(palette().muted))
                                         .flex_shrink_0(),
                                 )
                                 .child(div().min_w_0().truncate().child(name)),
@@ -507,7 +507,7 @@ impl Rev {
                     .py(px(UI_SPACING))
                     .flex_shrink_0()
                     .border_t_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(rgb(palette().border))
                     .child(footer),
             )
             .map(|d| {

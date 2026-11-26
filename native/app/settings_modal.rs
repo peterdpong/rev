@@ -1,7 +1,7 @@
 use super::controls::*;
 use super::popover::*;
 use super::*;
-use crate::settings::{DiffLayout, Settings};
+use crate::settings::{DiffLayout, Settings, ThemePreference};
 use crate::theme::*;
 use gpui_kit::{
     assets::IconName,
@@ -14,6 +14,15 @@ const SETTINGS_WIDTH: f32 = 560.;
 const SETTINGS_NAV_WIDTH: f32 = 150.;
 const SETTINGS_ROW_HEIGHT: f32 = 44.;
 const SEGMENT_HEIGHT: f32 = HEADER_PILL_HEIGHT - 4.;
+const THEME_CARD_WIDTH: f32 = 116.;
+const THEME_PREVIEW_HEIGHT: f32 = 68.;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SettingsSection {
+    #[default]
+    General,
+    Appearance,
+}
 
 impl Rev {
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -31,14 +40,36 @@ impl Rev {
         cx.notify();
     }
 
-    fn update_settings(&mut self, update: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {
+    fn update_settings(
+        &mut self,
+        update: impl FnOnce(&mut Settings),
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         update(&mut self.settings);
         let settings = self.settings.clone();
         self.diff.update(cx, |diff, cx| {
             diff.set_split(settings.diff_layout == DiffLayout::Split, cx);
             diff.set_wrap(settings.wrap_lines, cx);
         });
+        self.apply_theme(window, cx);
         self.save_workspace();
+        cx.notify();
+    }
+
+    pub(super) fn apply_theme(&self, window: &Window, cx: &mut App) {
+        let system_is_light = matches!(
+            window.appearance(),
+            WindowAppearance::Light | WindowAppearance::VibrantLight
+        );
+        let light = self.settings.theme.is_light(system_is_light);
+        if light != (*palette() == LIGHT) {
+            crate::theme::apply(light, cx);
+        }
+    }
+
+    fn show_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.settings_section = section;
         cx.notify();
     }
 
@@ -77,7 +108,7 @@ impl Rev {
                                 .pl(px(POPOVER_PADDING))
                                 .pr(px(UI_SPACING))
                                 .border_b_1()
-                                .border_color(rgb(BORDER))
+                                .border_color(rgb(palette().border))
                                 .child(
                                     div()
                                         .flex_1()
@@ -102,16 +133,32 @@ impl Rev {
                                         .self_stretch()
                                         .p(px(UI_SPACING))
                                         .gap(px(2.))
-                                        .bg(rgb(PANEL))
+                                        .bg(rgb(palette().panel))
                                         .border_r_1()
-                                        .border_color(rgb(BORDER))
-                                        .child(
-                                            choice_button("settings-general", true)
+                                        .border_color(rgb(palette().border))
+                                        .children(
+                                            [
+                                                (SettingsSection::General, "General"),
+                                                (SettingsSection::Appearance, "Appearance"),
+                                            ]
+                                            .into_iter()
+                                            .map(|(section, label)| {
+                                                choice_button(
+                                                    ("settings-section", section as usize),
+                                                    self.settings_section == section,
+                                                )
                                                 .h(px(LIST_ROW_HEIGHT))
-                                                .child("General"),
+                                                .child(label)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.show_settings_section(section, cx)
+                                                }))
+                                            }),
                                         ),
                                 )
-                                .child(self.general_settings(cx)),
+                                .child(match self.settings_section {
+                                    SettingsSection::General => self.general_settings(cx),
+                                    SettingsSection::Appearance => self.appearance_settings(cx),
+                                }),
                         ),
                 ),
             )
@@ -137,9 +184,13 @@ impl Rev {
                     ],
                     {
                         let this = cx.entity().downgrade();
-                        move |layout, _, cx| {
+                        move |layout, window, cx| {
                             _ = this.update(cx, |this, cx| {
-                                this.update_settings(|settings| settings.diff_layout = layout, cx)
+                                this.update_settings(
+                                    |settings| settings.diff_layout = layout,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                     },
@@ -151,14 +202,130 @@ impl Rev {
                     Switch::new("wrap-lines")
                         .checked(settings.wrap_lines)
                         .accessibility_label("Wrap long lines")
-                        .on_change(cx.listener(|this, wrap: &bool, _, cx| {
+                        .on_change(cx.listener(|this, wrap: &bool, window, cx| {
                             let wrap = *wrap;
-                            this.update_settings(|settings| settings.wrap_lines = wrap, cx)
+                            this.update_settings(|settings| settings.wrap_lines = wrap, window, cx)
                         })),
                 )
                 .border_b_0(),
             )
     }
+
+    fn appearance_settings(&self, cx: &mut Context<Self>) -> Div {
+        column()
+            .flex_1()
+            .min_w_0()
+            .px(px(POPOVER_PADDING))
+            .py(px(POPOVER_PADDING))
+            .gap(px(8.))
+            .text_size(px(12.))
+            .child("Theme")
+            .child(
+                row().gap(px(8.)).children(
+                    [
+                        (ThemePreference::System, "System"),
+                        (ThemePreference::Dark, "Dark"),
+                        (ThemePreference::Light, "Light"),
+                    ]
+                    .into_iter()
+                    .map(|(theme, label)| {
+                        let selected = self.settings.theme == theme;
+                        BaseButton::new(("theme", theme as usize))
+                            .debug_selector(move || format!("theme-{label}"))
+                            .w(px(THEME_CARD_WIDTH))
+                            .flex_col()
+                            .items_start()
+                            .gap(px(6.))
+                            .p(px(4.))
+                            .rounded(px(POPOVER_RADIUS))
+                            .border_1()
+                            .border_color(rgb(if selected {
+                                palette().focus
+                            } else {
+                                palette().border
+                            }))
+                            .when(selected, |d| d.bg(rgb(palette().selected)))
+                            .when(!selected, |d| d.hover(|d| d.bg(rgb(palette().hover))))
+                            .focus_visible(|d| d.border_color(rgb(palette().focus)))
+                            .aria_selected(selected)
+                            .accessibility_label(format!("{label} theme"))
+                            .child(theme_preview(theme))
+                            .child(div().px(px(2.)).pb(px(2.)).child(label))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.update_settings(|settings| settings.theme = theme, window, cx)
+                            }))
+                    }),
+                ),
+            )
+    }
+}
+
+fn theme_preview(theme: ThemePreference) -> Div {
+    let preview = div()
+        .relative()
+        .w_full()
+        .h(px(THEME_PREVIEW_HEIGHT))
+        .rounded(px(POPOVER_RADIUS - 4.))
+        .overflow_hidden()
+        .border_1()
+        .border_color(rgb(palette().border));
+    match theme {
+        ThemePreference::Dark => preview.child(mock_window(&DARK)),
+        ThemePreference::Light => preview.child(mock_window(&LIGHT)),
+        ThemePreference::System => preview.child(mock_window(&LIGHT)).child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_1_2()
+                .h_full()
+                .overflow_hidden()
+                .child(div().w(px(THEME_CARD_WIDTH - 10.)).h_full().child(mock_window(&DARK))),
+        ),
+    }
+}
+
+fn mock_window(p: &Palette) -> Div {
+    let bar = |width: f32, color: u32| {
+        div()
+            .h(px(4.))
+            .w(px(width))
+            .rounded(px(2.))
+            .bg(rgb(color))
+    };
+    let pill = |width: f32| {
+        div()
+            .h(px(9.))
+            .w(px(width))
+            .rounded(px(3.))
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(p.control_border))
+    };
+    row()
+        .size_full()
+        .items_start()
+        .gap_0()
+        .bg(rgb(p.bg))
+        .child(
+            div()
+                .w(px(20.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(p.panel))
+                .border_r_1()
+                .border_color(rgb(p.border)),
+        )
+        .child(
+            column()
+                .flex_1()
+                .p(px(6.))
+                .gap(px(5.))
+                .child(row().gap(px(3.)).child(pill(18.)).child(pill(28.)))
+                .child(bar(54., p.diff_added_emphasis))
+                .child(bar(40., p.diff_deleted_emphasis))
+                .child(bar(48., p.selected_border)),
+        )
 }
 
 fn setting_row(label: &'static str, control: impl IntoElement) -> Div {
@@ -166,7 +333,7 @@ fn setting_row(label: &'static str, control: impl IntoElement) -> Div {
         .h(px(SETTINGS_ROW_HEIGHT))
         .justify_between()
         .border_b_1()
-        .border_color(rgb(BORDER))
+        .border_color(rgb(palette().border))
         .child(label)
         .child(control)
 }
@@ -184,8 +351,8 @@ fn segmented<T: Copy + PartialEq + 'static, const N: usize>(
         .gap(px(2.))
         .rounded(px(CONTROL_RADIUS))
         .border_1()
-        .border_color(rgb(CONTROL_BORDER))
-        .bg(rgb(PANEL))
+        .border_color(rgb(palette().control_border))
+        .bg(rgb(palette().panel))
         .children(
             options
                 .into_iter()
@@ -200,12 +367,12 @@ fn segmented<T: Copy + PartialEq + 'static, const N: usize>(
                         .border_1()
                         .border_color(rgba(0x00000000))
                         .text_size(px(12.))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .when(selected, selected_surface)
                         .when(!selected, |d| {
-                            d.hover(|d| d.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+                            d.hover(|d| d.bg(rgb(palette().hover)).text_color(rgb(palette().text)))
                         })
-                        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+                        .focus_visible(|d| d.border_color(rgb(palette().focus)))
                         .aria_selected(selected)
                         .accessibility_label(label)
                         .child(label)

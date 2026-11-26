@@ -73,6 +73,7 @@ pub struct Rev {
     settings: Settings,
     settings_open: bool,
     settings_focus: FocusHandle,
+    settings_section: settings_modal::SettingsSection,
     sidebar_collapsed: bool,
     sidebar_focus: FocusHandle,
     review: Option<Review>,
@@ -149,6 +150,7 @@ impl Rev {
             settings,
             settings_open: false,
             settings_focus: cx.focus_handle(),
+            settings_section: Default::default(),
             sidebar_collapsed: false,
             sidebar_focus: cx.focus_handle(),
             review: None,
@@ -189,6 +191,11 @@ impl Rev {
         };
 
         app.focus.focus(window, cx);
+        app.apply_theme(window, cx);
+        app._subscriptions
+            .push(cx.observe_window_appearance(window, |this, window, cx| {
+                this.apply_theme(window, cx)
+            }));
 
         if app.backend.is_some() {
             let tab = app.workspace.active_tab().cloned();

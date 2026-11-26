@@ -236,7 +236,7 @@ fn commit_selection_mark(selected: bool) -> Div {
         d.child(
             Icon::new(IconName::Check)
                 .size(px(14.))
-                .text_color(rgb(TEXT)),
+                .text_color(rgb(palette().text)),
         )
     })
 }
@@ -274,17 +274,17 @@ impl Rev {
             .px(px(HEADER_PILL_PADDING))
             .gap(px(6.))
             .rounded(px(CONTROL_RADIUS))
-            .bg(rgb(SURFACE))
+            .bg(rgb(palette().surface))
             .border_1()
-            .border_color(rgb(CONTROL_BORDER))
+            .border_color(rgb(palette().control_border))
             .text_size(px(12.))
             .line_height(px(HEADER_PILL_LINE_HEIGHT))
-            .text_color(rgb(TEXT))
-            .hover(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
+            .text_color(rgb(palette().text))
+            .hover(|d| d.bg(rgb(palette().hover)).border_color(rgb(palette().selected_border)))
             .styles(|styles| {
-                styles.selected(|d| d.bg(rgb(HOVER)).border_color(rgb(SELECTED_BORDER)))
+                styles.selected(|d| d.bg(rgb(palette().hover)).border_color(rgb(palette().selected_border)))
             })
-            .focus_visible(|d| d.border_color(rgb(FOCUS)))
+            .focus_visible(|d| d.border_color(rgb(palette().focus)))
             .selected(requested)
             .aria_expanded(open)
             .accessibility_label(format!("Commits: {label}"))
@@ -293,7 +293,7 @@ impl Rev {
                 Icon::new(IconName::ChevronDown)
                     .size(px(12.))
                     .flex_shrink_0()
-                    .text_color(rgb(MUTED)),
+                    .text_color(rgb(palette().muted)),
             );
 
         let popover = AnimatedPopover::new("commit-picker", open, window, cx);
@@ -345,7 +345,7 @@ impl Rev {
                                     .gap(px(UI_SPACING))
                                     .text_size(px(11.))
                                     .line_height(px(14.))
-                                    .text_color(rgb(MUTED))
+                                    .text_color(rgb(palette().muted))
                                     .child(
                                         div()
                                             .font_family("Menlo")
@@ -382,7 +382,7 @@ impl Rev {
             .w(px(MENU_WIDTH))
             .p(px(UI_SPACING))
             .gap(px(UI_SPACING))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .child(
                 choice_button("all-commits", all)
                     .h(px(CONTROL_HEIGHT))
@@ -393,7 +393,7 @@ impl Rev {
                         d.child(
                             div()
                                 .text_size(px(11.))
-                                .text_color(rgb(MUTED))
+                                .text_color(rgb(palette().muted))
                                 .child(if total == 1 {
                                     "1 commit".to_owned()
                                 } else {
@@ -405,7 +405,7 @@ impl Rev {
                         cx.listener(|this, _, window, cx| this.choose_all_commits(window, cx)),
                     ),
             )
-            .child(div().h(px(1.)).flex_shrink_0().bg(rgb(BORDER)))
+            .child(div().h(px(1.)).flex_shrink_0().bg(rgb(palette().border)))
             .when(!picker.commits.is_empty(), |body| {
                 body.child(
                     uniform_list(
@@ -430,7 +430,7 @@ impl Rev {
                         .px(px(CONTROL_PADDING))
                         .py(px(UI_SPACING))
                         .text_size(px(12.))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .child("Loading commits…"),
                 )
             })
@@ -442,7 +442,7 @@ impl Rev {
                             .px(px(CONTROL_PADDING))
                             .py(px(UI_SPACING))
                             .text_size(px(12.))
-                            .text_color(rgb(MUTED))
+                            .text_color(rgb(palette().muted))
                             .child("No commits on this branch."),
                     )
                 },

@@ -28,7 +28,7 @@ fn sidebar_item(
         .rounded(px(CONTROL_RADIUS))
         .border_1()
         .border_color(rgba(0x00000000))
-        .focus_visible(|d| d.border_color(rgb(FOCUS)))
+        .focus_visible(|d| d.border_color(rgb(palette().focus)))
         .styles(|styles| styles.disabled(|d| d.opacity(0.5)))
         .accessibility_label(label.clone())
         .child(icon)
@@ -46,7 +46,7 @@ fn sidebar_row(id: impl Into<ElementId>, selected: bool) -> Stateful<Div> {
         .border_1()
         .border_color(rgba(0x00000000))
         .when(selected, selected_surface)
-        .hover(move |d| if selected { d } else { d.bg(rgb(HOVER)) })
+        .hover(move |d| if selected { d } else { d.bg(rgb(palette().hover)) })
 }
 
 impl Rev {
@@ -194,7 +194,7 @@ impl Rev {
                                     })
                                     .size(px(14.))
                                     .flex_shrink_0()
-                                    .text_color(rgb(MUTED)),
+                                    .text_color(rgb(palette().muted)),
                                 )
                                 .aria_selected(active)
                                 .on_click(cx.listener(
@@ -237,9 +237,9 @@ impl Rev {
             .w(px(SIDEBAR_WIDTH))
             .h_full()
             .flex_shrink_0()
-            .bg(rgb(PANEL))
+            .bg(rgb(palette().panel))
             .border_r_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(palette().border))
             .child(
                 row()
                     .h(px(ICON_BUTTON_SIZE + UI_SPACING * 2.))
@@ -251,7 +251,7 @@ impl Rev {
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(12.))
-                            .text_color(rgb(MUTED))
+                            .text_color(rgb(palette().muted))
                             .child("Repos"),
                     )
                     .child(
@@ -354,8 +354,8 @@ impl Render for Rev {
             .id("rev")
             .relative()
             .size_full()
-            .bg(rgb(BG))
-            .text_color(rgb(TEXT))
+            .bg(rgb(palette().bg))
+            .text_color(rgb(palette().text))
             .text_size(px(13.))
             .font_family(".AppleSystemUIFont")
             .track_focus(&self.focus)
@@ -417,8 +417,8 @@ impl Render for Rev {
                         .p(px(UI_SPACING))
                         .gap(px(UI_SPACING))
                         .border_t_1()
-                        .border_color(rgb(BORDER))
-                        .child(div().flex_1().text_color(rgb(DANGER)).child(error))
+                        .border_color(rgb(palette().border))
+                        .child(div().flex_1().text_color(rgb(palette().danger)).child(error))
                         .child(
                             icon_button("dismiss-error", "Dismiss error", IconName::Close)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -492,6 +492,7 @@ mod tests {
             settings: Default::default(),
             settings_open: false,
             settings_focus: cx.focus_handle(),
+            settings_section: Default::default(),
             review: Some(Review {
                 files,
                 ..Default::default()
